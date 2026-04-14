@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(ls -la \"C:\\\\\\\\Users\\\\\\\\LAP\\\\\\\\Desktop\\\\\\\\VeterinariaSaaS\\\\\\\\backend\\\\\\\\apps\\\\\\\\billing\\\\\\\\\")",
+      "Bash(python3)",
+      "Bash(python3 -m ast apps/billing/services.py)",
+      "Bash(python3.11 -m py_compile apps/billing/services.py)",
+      "Bash(views\")"
+    ]
+  }
+}

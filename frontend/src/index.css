@@ -1,0 +1,6 @@
+/* ─── Entry point ────────────────────────────────────────────
+   Importa los estilos globales en orden correcto.
+   Estilos específicos de página/componente van en *.module.css
+────────────────────────────────────────────────────────────── */
+@import "./styles/tokens.css";
+@import "./styles/global.css";
