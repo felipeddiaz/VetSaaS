@@ -2,6 +2,7 @@ import { useState } from "react";
 import { loginRequest, getMe } from "../auth/login";
 import { useAuth } from "../auth/authContext";
 import { useNavigate } from "react-router-dom";
+import { Icon } from "../components/icons";
 
 const Login = () => {
     const { login, setUserData, initializing } = useAuth();
@@ -66,7 +67,7 @@ const Login = () => {
                         fontSize: "26px", margin: "0 auto 14px",
                         boxShadow: "0 8px 24px rgba(45,212,191,0.3)",
                     }}>
-                        ✦
+                        <Icon.Stethoscope s={28} c="#fff" />
                     </div>
                     <h1 style={{
                         fontSize: "22px", fontWeight: "700",

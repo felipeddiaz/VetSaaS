@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from decimal import Decimal
 from .models import Service, Invoice, InvoiceItem
 
 
@@ -13,6 +14,9 @@ class InvoiceItemSerializer(serializers.ModelSerializer):
     service_name = serializers.CharField(source='service.name', read_only=True)
     product_name = serializers.CharField(source='product.name', read_only=True)
     presentation_name = serializers.SerializerMethodField()
+    unit_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    description = serializers.CharField(read_only=True)
+    discount_amount = serializers.SerializerMethodField()
 
     class Meta:
         model = InvoiceItem
@@ -20,7 +24,9 @@ class InvoiceItemSerializer(serializers.ModelSerializer):
             'id', 'invoice', 'service', 'service_name',
             'presentation', 'presentation_name',
             'product', 'product_name', 'description',
-            'quantity', 'unit_price', 'subtotal',
+            'quantity', 'unit_price',
+            'discount_type', 'discount_value', 'discount_amount',
+            'subtotal',
         ]
         read_only_fields = ['id', 'subtotal', 'invoice']
 
@@ -29,18 +35,26 @@ class InvoiceItemSerializer(serializers.ModelSerializer):
             return str(obj.presentation)   # "Producto — Presentación"
         return None
 
+    def get_discount_amount(self, obj):
+        gross = obj.quantity * obj.unit_price
+        if obj.discount_type == 'percentage':
+            return str((gross * (obj.discount_value / Decimal('100'))).quantize(Decimal('0.01')))
+        elif obj.discount_type == 'fixed':
+            return str(min(obj.discount_value, gross))
+        return '0.00'
+
     def validate(self, data):
         service = data.get('service')
         presentation = data.get('presentation')
         quantity = data.get('quantity')
+        discount_type = data.get('discount_type')
+        discount_value = data.get('discount_value', Decimal('0.00'))
 
         # Validar cantidad
         if quantity is not None and quantity <= 0:
-            raise serializers.ValidationError(
-                "La cantidad debe ser mayor a cero."
-            )
+            raise serializers.ValidationError("La cantidad debe ser mayor a cero.")
 
-        # Regla central: XOR — exactamente uno de los dos
+        # XOR: exactamente uno de los dos
         if service and presentation:
             raise serializers.ValidationError(
                 "Un ítem es o un servicio o una presentación de inventario, no ambos."
@@ -50,7 +64,19 @@ class InvoiceItemSerializer(serializers.ModelSerializer):
                 "Debe especificar 'service' o 'presentation'."
             )
 
-        # Validación de organización (presentation debe ser de la misma org que la factura)
+        # Validación multitenant de service (NUEVO)
+        if service:
+            invoice = self.context.get('invoice')
+            if invoice is None:
+                raise RuntimeError(
+                    "InvoiceItemSerializer requiere 'invoice' en su contexto."
+                )
+            if service.organization_id != invoice.organization_id:
+                raise serializers.ValidationError(
+                    "El servicio no pertenece a la organización de la factura."
+                )
+
+        # Validación de organización (presentation — ya existía)
         if presentation:
             invoice = self.context.get('invoice')
             if invoice is None:
@@ -61,11 +87,27 @@ class InvoiceItemSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     "La presentación no pertenece a la organización de la factura."
                 )
-            # Feedback inmediato (lock real de concurrencia va en confirm_invoice)
             if presentation.stock <= 0:
                 raise serializers.ValidationError(
                     f"'{presentation.product.name}' no tiene stock disponible."
                 )
+
+        # Validación de descuento (NUEVO)
+        if discount_value is not None and discount_value < 0:
+            raise serializers.ValidationError("El valor del descuento no puede ser negativo.")
+
+        if discount_type == 'percentage' and discount_value > 100:
+            raise serializers.ValidationError("El descuento porcentual no puede superar 100%.")
+
+        if discount_type and (discount_value is None or discount_value <= 0):
+            raise serializers.ValidationError(
+                "Si se especifica tipo de descuento, el valor debe ser mayor a cero."
+            )
+
+        if discount_value and discount_value > 0 and not discount_type:
+            raise serializers.ValidationError(
+                "Debe especificar 'discount_type' si indica un valor de descuento."
+            )
 
         return data
 
@@ -90,6 +132,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
         read_only_fields = [
             'id', 'subtotal', 'tax_amount', 'total',
             'created_by', 'paid_at', 'created_at', 'updated_at',
+            'tax_rate',   # NUEVO: se hereda de org, no editable por cliente
         ]
 
     def get_created_by_name(self, obj):

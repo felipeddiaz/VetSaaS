@@ -1,585 +1,292 @@
-Plan: Reestructuración Facturación + Inventario
-
- Context
-
- El módulo de facturación tiene un bug crítico silencioso: confirm_invoice llama
- apply_stock_movement(product=item.product, ...) pero la función espera presentation=....
- El contrato entre frontend y backend está roto (el campo viejo es product, el nuevo debe ser
- presentation_id). No hay datos reales en producción, lo que permite una migración agresiva y limpia.
- El objetivo es que una factura direct_sale descuente stock correctamente, con trazabilidad,
- permisos por rol y aislamiento multitenant garantizado.
-
- ---
- Archivos críticos
-
- ┌───────────────────────────────────────────────────────────┬──────────────────────────────────────────────────────────────────────────────────┐
- │                          Archivo                          │                                       Rol                                        │
- ├───────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────┤
- │ backend/apps/billing/models.py                            │ Invoice, InvoiceItem — agregar presentation FK, cancelled status,                │
- │                                                           │ InvoiceAuditLog                                                                  │
- ├───────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────┤
- │ backend/apps/billing/views.py                             │ confirm_invoice, pay_invoice — transacción atómica, permisos                     │
- ├───────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────┤
- │ backend/apps/billing/serializers.py                       │ InvoiceItemSerializer — validaciones XOR + org                                   │
- ├───────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────┤
- │ backend/apps/billing/signals.py                           │ Agregar signal de auditoría                                                      │
- ├───────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────┤
- │ backend/apps/billing/permissions.py                       │ Nuevo — permisos por rol                                                         │
- ├───────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────┤
- │ backend/apps/billing/services.py                          │ Nuevo — lógica de confirmación y cancelación                                     │
- ├───────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────┤
- │ backend/apps/billing/urls.py                              │ Agregar endpoint /cancel/                                                        │
- ├───────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────┤
- │ backend/apps/inventory/models.py                          │ StockMovement — agregar FK opcional invoice                                      │
- ├───────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────┤
- │ backend/apps/inventory/services.py                        │ apply_stock_movement — agregar param invoice=None                                │
- ├───────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────┤
- │ backend/apps/users/migrations/0003_seed_test_data.py      │ Actualizar para usar presentation                                                │
- ├───────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────┤
- │ backend/apps/users/migrations/0004_seed_more_test_data.py │ Actualizar para usar presentation                                                │
- ├───────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────┤
- │ frontend/src/pages/billing.jsx                            │ Selector de presentaciones, flujo de factura manual                              │
- ├───────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────┤
- │ frontend/src/api/billing.js                               │ Actualizar payload de ítems                                                      │
- └───────────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────────────────────────────┘
-
- ---
- Paso 0 — Estado actual verificado (sin código por escribir)
-
- Hallazgos de la exploración:
- - InvoiceItem.product → FK a inventory.Product (NO a Presentation) ✗
- - confirm_invoice llama apply_stock_movement(product=item.product, ...) — parámetro incorrecto ✗
- - apply_stock_movement espera presentation (objeto Presentation) ✓
- - StockMovement no tiene FK a Invoice — sin trazabilidad factura↔movimiento ✗
- - Frontend carga productos pero no los muestra; product siempre llega null ✗
- - Seed crea InvoiceItem con product= directo ✗
- - No existe InvoiceAuditLog, no hay permisos por rol, no hay estado cancelled ✗
-
- ---
- Paso 1 — Agregar invoice FK a StockMovement
-
- Archivo: backend/apps/inventory/models.py
-
- Agregar FK opcional en StockMovement (después del campo medical_record):
-
- invoice = models.ForeignKey(
-     'billing.Invoice',
-     on_delete=models.SET_NULL,
-     null=True,
-     blank=True,
-     related_name='stock_movements',
- )
-
- Archivo: backend/apps/inventory/services.py
-
- Agregar invoice=None al signature de apply_stock_movement y pasarlo al StockMovement.objects.create(...):
-
- def apply_stock_movement(
-     presentation, quantity, movement_type, organization,
-     reason='', created_by=None, medical_record=None, invoice=None,  # ← agregar
- ):
-     ...
-     StockMovement.objects.create(
-         ...
-         invoice=invoice,  # ← agregar
-     )
-
- Crear migración: python manage.py makemigrations inventory.
-
- ---
- Paso 2 — Migración del modelo InvoiceItem
-
- Archivo: backend/apps/billing/models.py
-
- 2a. Agregar campo presentation a InvoiceItem
-
- class InvoiceItem(models.Model):
-     invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name='items')
-     service = models.ForeignKey(
-         Service, on_delete=models.SET_NULL, null=True, blank=True, related_name='invoice_items'
-     )
-     # DEPRECATED: usar presentation en su lugar. Eliminar en milestone v2.
-     product = models.ForeignKey(
-         'inventory.Product', on_delete=models.SET_NULL,
-         null=True, blank=True, related_name='invoice_items'
-     )
-     presentation = models.ForeignKey(           # ← NUEVO
-         'inventory.Presentation',
-         on_delete=models.PROTECT,
-         null=True,
-         blank=True,
-         related_name='invoice_items',
-     )
-     description = models.CharField(max_length=255)
-     quantity = models.DecimalField(max_digits=10, decimal_places=2, default=1)
-     unit_price = models.DecimalField(max_digits=10, decimal_places=2)
-     subtotal = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-
- presentation se define null=True, blank=True ahora para no romper los registros del seed.
- Después de actualizar el seed y correr las migraciones de datos, se puede hacer otra migración
- para poner null=False (o dejarlo nullable y forzar la regla en el serializer).
-
- 2b. Agregar cancelled a Invoice.STATUS_CHOICES
-
- STATUS_CHOICES = (
-     ('draft', 'Borrador'),
-     ('confirmed', 'Confirmada'),
-     ('paid', 'Pagada'),
-     ('cancelled', 'Cancelada'),   # ← NUEVO
- )
-
- 2c. Nuevo modelo InvoiceAuditLog
-
- Agregar al final de models.py (no hereda de OrganizationalModel — es solo escritura):
-
- class InvoiceAuditLog(models.Model):
-     invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name='audit_logs')
-     previous_status = models.CharField(max_length=20, blank=True)
-     new_status = models.CharField(max_length=20)
-     changed_by = models.ForeignKey(
-         'users.User', on_delete=models.SET_NULL, null=True, blank=True
-     )
-     notes = models.CharField(max_length=255, blank=True)
-     created_at = models.DateTimeField(auto_now_add=True)
-
-     class Meta:
-         ordering = ['created_at']
-
- Crear migración: python manage.py makemigrations billing.
-
- ---
- Paso 3 — Actualizar seeds
-
- Archivos: 0003_seed_test_data.py, 0004_seed_more_test_data.py
-
- En ambos seeds reemplazar el patrón:
-
- # ANTES (contrato viejo):
- InvoiceItem.objects.create(invoice=inv, product=product, ...)
-
- # DESPUÉS (contrato nuevo):
- InvoiceItem.objects.create(invoice=inv, presentation=product.presentation, ...)
-
- El acceso product.presentation funciona porque Presentation tiene OneToOneField a Product
- con related_name='presentation'.
-
- Para aplicar los seeds limpios:
- python manage.py migrate users zero   # revierte seeds
- python manage.py migrate              # re-aplica todas las migraciones con seeds actualizados
-
- ---
- Paso 4 — Validaciones en InvoiceItemSerializer
-
- Archivo: backend/apps/billing/serializers.py
-
- class InvoiceItemSerializer(serializers.ModelSerializer):
-     service_name = serializers.CharField(source='service.name', read_only=True)
-     presentation_name = serializers.SerializerMethodField()   # ← nuevo
-     # product_name mantenido como deprecated para compatibilidad temporal
-
-     class Meta:
-         model = InvoiceItem
-         fields = [
-             'id', 'invoice', 'service', 'service_name',
-             'presentation', 'presentation_name',             # ← nuevo
-             'description', 'quantity', 'unit_price', 'subtotal',
-         ]
-         read_only_fields = ['id', 'subtotal', 'invoice']
-
-     def get_presentation_name(self, obj):
-         if obj.presentation:
-             return str(obj.presentation)   # "Producto — Presentación"
-         return None
-
-     def validate(self, data):
-         service = data.get('service')
-         presentation = data.get('presentation')
-
-         # Regla central: XOR — exactamente uno de los dos
-         if service and presentation:
-             raise serializers.ValidationError(
-                 "Un ítem es o un servicio o una presentación de inventario, no ambos."
-             )
-         if not service and not presentation:
-             raise serializers.ValidationError(
-                 "Debe especificar 'service' o 'presentation'."
-             )
-
-         # Validación de organización (presentation debe ser de la misma org que la factura)
-         if presentation:
-             invoice = self.context.get('invoice')
-             if invoice is None:
-                 raise RuntimeError(
-                     "InvoiceItemSerializer requiere 'invoice' en su contexto."
-                 )
-             if presentation.organization_id != invoice.organization_id:
-                 raise serializers.ValidationError(
-                     "La presentación no pertenece a la organización de la factura."
-                 )
-             # Feedback inmediato (lock real de concurrencia va en confirm_invoice)
-             if presentation.stock <= 0:
-                 raise serializers.ValidationError(
-                     f"'{presentation.product.name}' no tiene stock disponible."
-                 )
-
-         return data
-
- En la vista InvoiceItemCreateView, pasar invoice al contexto del serializer:
-
- def get_serializer_context(self):
-     context = super().get_serializer_context()
-     invoice = get_object_or_404(
-         Invoice.objects.filter(organization=self.request.user.organization),
-         pk=self.kwargs['invoice_pk']
-     )
-     context['invoice'] = invoice
-     return context
-
- ---
- Paso 5 — billing/services.py (nuevo archivo)
-
- Crear backend/apps/billing/services.py con la lógica crítica extraída de la vista:
-
- from django.db import transaction
- from django.core.exceptions import ValidationError
- from inventory.services import apply_stock_movement
-
-
- @transaction.atomic
- def confirm_invoice(invoice, user):
-     """
-     Confirma una factura. Solo direct_sale descuenta stock.
-     Orden estricto: lock → validar → descontar → cambiar estado.
-     """
-     if invoice.status != 'draft':
-         raise ValidationError("Solo se pueden confirmar facturas en borrador.")
-
-     if invoice.invoice_type == 'direct_sale':
-         items_with_presentation = [
-             item for item in invoice.items.select_related('presentation__product').all()
-             if item.presentation_id
-         ]
-
-         # 1. Lock de escritura en todas las presentaciones involucradas
-         presentation_ids = [i.presentation_id for i in items_with_presentation]
-         from inventory.models import Presentation
-         locked = {
-             p.pk: p
-             for p in Presentation.objects.select_for_update().filter(pk__in=presentation_ids)
-         }
-
-         # 2. Validar stock de TODOS los ítems antes de mover ninguno
-         errors = []
-         for item in items_with_presentation:
-             p = locked[item.presentation_id]
-             if p.stock < item.quantity:
-                 errors.append(
-                     f"'{p.product.name}': disponible {p.stock}, requerido {item.quantity}."
-                 )
-         if errors:
-             raise ValidationError(errors)
-
-         # 3. Descontar stock de cada ítem con referencia a la factura
-         for item in items_with_presentation:
-             apply_stock_movement(
-                 presentation=locked[item.presentation_id],
-                 quantity=item.quantity,
-                 movement_type='out',
-                 organization=invoice.organization,
-                 reason=f'Venta directa — Factura #{invoice.pk}',
-                 created_by=user,
-                 invoice=invoice,            # trazabilidad
-             )
-
-     # 4. Cambiar estado AL FINAL (si cualquier cosa falló arriba, esto no se ejecuta)
-     invoice.status = 'confirmed'
-     invoice.save(update_fields=['status', 'updated_at'])
-     _log_status_change(invoice, previous='draft', new='confirmed', user=user)
-
-
- @transaction.atomic
- def cancel_invoice(invoice, user, notes=''):
-     """
-     Cancela una factura. Si estaba confirmed, revierte el stock.
-     Facturas paid no se pueden cancelar directamente.
-     """
-     if invoice.status == 'paid':
-         raise ValidationError("Las facturas pagadas no se pueden cancelar directamente.")
-     if invoice.status == 'cancelled':
-         raise ValidationError("La factura ya está cancelada.")
-
-     previous_status = invoice.status
-
-     if previous_status == 'confirmed' and invoice.invoice_type == 'direct_sale':
-         # Revertir stock: crear movimientos 'in' por cada ítem con presentación
-         for item in invoice.items.select_related('presentation__product').all():
-             if item.presentation_id:
-                 apply_stock_movement(
-                     presentation=item.presentation,
-                     quantity=item.quantity,
-                     movement_type='in',
-                     organization=invoice.organization,
-                     reason=f'Reversión por cancelación — Factura #{invoice.pk}',
-                     created_by=user,
-                     invoice=invoice,
-                 )
-
-     invoice.status = 'cancelled'
-     invoice.save(update_fields=['status', 'updated_at'])
-     _log_status_change(invoice, previous=previous_status, new='cancelled', user=user, notes=notes)
-
-
- def _log_status_change(invoice, previous, new, user, notes=''):
-     from .models import InvoiceAuditLog
-     InvoiceAuditLog.objects.create(
-         invoice=invoice,
-         previous_status=previous,
-         new_status=new,
-         changed_by=user,
-         notes=notes,
-     )
-
- ---
- Paso 6 — Permisos por rol
-
- Nuevo archivo: backend/apps/billing/permissions.py
-
- from rest_framework.permissions import BasePermission
-
- ROLES_THAT_CAN_PAY = {'ADMIN', 'ADMIN_SAAS'}
- ROLES_THAT_CAN_CONFIRM = {'ADMIN', 'ADMIN_SAAS', 'VET', 'ASSISTANT'}
-
-
- class CanConfirmInvoice(BasePermission):
-     def has_permission(self, request, view):
-         return (
-             request.user.is_authenticated
-             and getattr(request.user, 'role', None) in ROLES_THAT_CAN_CONFIRM
-         )
-
-
- class CanPayInvoice(BasePermission):
-     def has_permission(self, request, view):
-         return (
-             request.user.is_authenticated
-             and getattr(request.user, 'role', None) in ROLES_THAT_CAN_PAY
-         )
-
- Aplicar en views.py:
-
- from .permissions import CanConfirmInvoice, CanPayInvoice
-
- @api_view(['PATCH'])
- @permission_classes([CanConfirmInvoice])
- def confirm_invoice_view(request, pk):
-     invoice = get_object_or_404(Invoice, pk=pk, organization=request.user.organization)
-     try:
-         from .services import confirm_invoice
-         confirm_invoice(invoice, user=request.user)
-     except ValidationError as e:
-         return Response({'detail': e.messages}, status=400)
-     return Response(InvoiceSerializer(invoice).data)
-
- @api_view(['PATCH'])
- @permission_classes([CanPayInvoice])
- def pay_invoice_view(request, pk):
-     ...
-
- @api_view(['PATCH'])
- @permission_classes([CanConfirmInvoice])
- def cancel_invoice_view(request, pk):
-     invoice = get_object_or_404(Invoice, pk=pk, organization=request.user.organization)
-     notes = request.data.get('notes', '')
-     try:
-         from .services import cancel_invoice
-         cancel_invoice(invoice, user=request.user, notes=notes)
-     except ValidationError as e:
-         return Response({'detail': e.messages}, status=400)
-     return Response(InvoiceSerializer(invoice).data)
-
- ---
- Paso 7 — Mixin multitenant en vistas de facturación
-
- Archivo: backend/apps/billing/views.py
-
- Agregar mixin al inicio del archivo (reutiliza OrganizationManager.for_user que ya existe):
-
- class BillingOrganizationMixin:
-     """Garantiza que ninguna vista de facturación retorne datos de otra organización."""
-
-     def get_queryset(self):
-         qs = super().get_queryset()
-         return qs.filter(organization=self.request.user.organization)
-
- Aplicar en todas las vistas:
-
- class InvoiceListCreateView(BillingOrganizationMixin, generics.ListCreateAPIView): ...
- class InvoiceDetailView(BillingOrganizationMixin, generics.RetrieveUpdateAPIView): ...
-
- El caso de segundo nivel (ítem de otra org) ya queda cubierto por la validación del serializer
- del Paso 4.
-
- ---
- Paso 8 — URL del endpoint /cancel/
-
- Archivo: backend/apps/billing/urls.py
-
- from .views import cancel_invoice_view
-
- urlpatterns = [
-     ...
-     path('billing/invoices/<int:pk>/cancel/', cancel_invoice_view),  # ← agregar
- ]
-
- ---
- Paso 9 — Frontend
-
- Archivo: frontend/src/pages/billing.jsx
-
- 9a. Estado inicial del formulario de ítems
-
- // Reemplazar:
- const EMPTY_ITEM = { service: "", product: "", description: "", quantity: "1", unit_price: "" };
-
- // Con:
- const EMPTY_ITEM = {
-     service: "",
-     presentation: "",   // ← presentation_id en lugar de product
-     description: "",
-     quantity: "1",
-     unit_price: "",
- };
-
- 9b. Selector de presentaciones
-
- Reemplazar la carga de productos por presentaciones:
-
- // api/inventory.js — agregar función:
- export const getPresentations = (params = {}) =>
-     client.get('inventory/presentations/', { params });
-
- // billing.jsx — estado:
- const [presentations, setPresentations] = useState([]);
-
- // billing.jsx — useEffect:
- useEffect(() => {
-     getPresentations({ active: "true" }).then(r => setPresentations(r.data));
- }, []);
-
- Agregar <select> en el formulario de ítems (cada vez que se abre hacer fetch fresco):
-
- <select
-     value={itemForm.presentation}
-     onChange={e => {
-         const pres = presentations.find(p => p.id === parseInt(e.target.value));
-         setItemForm(f => ({
-             ...f,
-             presentation: e.target.value,
-             service: "",          // XOR: limpiar servicio
-             description: pres ? `${pres.product_name} — ${pres.name}` : f.description,
-             unit_price: pres ? pres.sale_price : f.unit_price,
-         }));
-     }}
- >
-     <option value="">— Seleccionar presentación —</option>
-     {presentations.map(p => (
-         <option key={p.id} value={p.id} disabled={p.stock <= 0}>
-             {p.product_name} — {p.name}
-             {p.stock <= 0 ? ' (sin stock)' : ` (stock: ${p.stock})`}
-         </option>
-     ))}
- </select>
-
- 9c. Payload del ítem al backend
-
- // billing.jsx — addItem():
- await addInvoiceItem(selectedInvoice.id, {
-     service: itemForm.service || null,
-     presentation: itemForm.presentation || null,   // ← antes era product
-     description: itemForm.description,
-     quantity: parseFloat(itemForm.quantity),
-     unit_price: parseFloat(itemForm.unit_price),
- });
-
- 9d. Crear factura manual
-
- Agregar botón "Nueva Factura" en la pantalla de facturación que abre un modal con:
- - Selector de propietario → mascota
- - Tipo de factura (direct_sale)
- - Llama al endpoint POST /billing/invoices/
-
- Archivo: frontend/src/api/billing.js
-
- La función createInvoice ya existe — solo hay que exponerla en la UI.
-
- 9e. Mostrar errores por ítem en la confirmación
-
- // Al confirmar, si el backend retorna { detail: [...] }:
- const handleConfirm = async () => {
-     try {
-         const res = await confirmInvoice(selectedInvoice.id);
-         // actualizar estado local
-     } catch (err) {
-         const errors = err.response?.data?.detail;
-         if (Array.isArray(errors)) {
-             setConfirmErrors(errors);   // mostrar bajo cada ítem problemático
-         }
-     }
- };
-
- ---
- Paso 10 — Endpoint de presentaciones en inventario
-
- Archivo: backend/apps/inventory/views.py
-
- Agregar vista para listar presentaciones (para el selector del frontend):
-
- class PresentationListView(generics.ListAPIView):
-     serializer_class = PresentationSerializer
-     permission_classes = [IsAuthenticated]
-
-     def get_queryset(self):
-         return Presentation.objects.filter(
-             organization=self.request.user.organization,
-             product__is_active=True,
-         ).select_related('product')
-
- Archivo: backend/apps/inventory/urls.py
-
- path('inventory/presentations/', PresentationListView.as_view()),
-
- ---
- Verificación end-to-end
-
- # 1. Aplicar migraciones limpias
- python manage.py migrate users zero
- python manage.py migrate
-
- # 2. Levantar servidor
- python manage.py runserver
-
- # 3. Casos de prueba manuales críticos:
- # a) Crear factura direct_sale, agregar ítem con presentación, confirmar → stock baja
- # b) Ítem con presentación sin stock → error 400 al confirmar (factura queda draft)
- # c) Ítem con service Y presentation → error 400 al crear ítem
- # d) Ítem con org distinta → error 400
- # e) Cancelar factura confirmed → stock se restaura, aparece en audit log
- # f) Usuario con rol VET intenta pagar → 403
- # g) Confirmar factura consultation → stock no cambia
-
- ---
- Orden de implementación recomendado
-
- 1. Paso 1 (StockMovement.invoice FK) → migración inventory
- 2. Paso 2 (InvoiceItem.presentation FK, cancelled, InvoiceAuditLog) → migración billing
- 3. Paso 3 (seeds actualizados + migrate users zero && migrate)
- 4. Paso 5 (billing/services.py — lógica central)
- 5. Paso 4 (serializer validations)
- 6. Paso 6 (permissions.py + vistas)
- 7. Paso 7 (mixin multitenant)
- 8. Paso 8 (URL /cancel/)
- 9. Paso 10 (endpoint presentaciones)
- 10. Paso 9 (frontend)
-
- Regla de oro: los pasos 1-8 son backend puro y se pueden testear con curl/Postman antes de
- tocar el frontend. El paso 9 de frontend empieza solo cuando el backend pasa los casos del Paso 10
+Plan de corrección de base de datos — VetCare SaaS
+
+Ajustado para PostgreSQL · Sin datos reales en producción · Enfoque SaaS escalable
+
+Contexto del problema
+
+El modelo actual tiene una base correcta en términos de entidades y relaciones, pero carece de mecanismos estructurales fuertes que garanticen la integridad de los datos en un entorno multitenant. Actualmente, la coherencia entre organizaciones depende en gran medida de validaciones en la capa de aplicación, lo cual introduce riesgos importantes: un bug, una validación omitida o una operación directa sobre el ORM puede generar mezcla de datos entre clínicas.
+
+Adicionalmente, existen riesgos en la gestión de datos históricos debido al uso de CASCADE en relaciones críticas, ausencia de constraints de negocio a nivel base de datos, y falta de una estrategia global de auditoría, aislamiento y eliminación lógica.
+
+La meta de este plan no es solo corregir errores actuales, sino establecer una base sólida para un SaaS que pueda escalar sin comprometer integridad, trazabilidad ni mantenibilidad.
+
+Paso 0 — Verificación inicial y baseline técnico
+
+Por qué va primero: antes de introducir constraints, índices o cambios en relaciones, es necesario asegurar que el entorno de base de datos está correctamente configurado para soportar las capacidades avanzadas que se van a utilizar.
+
+Qué verificar:
+
+Confirmar uso de PostgreSQL (versión recomendada 13+).
+Verificar que el encoding sea UTF8.
+Confirmar timezone consistente (idealmente UTC en DB).
+Revisar que no existan datos seed que violen futuras constraints.
+Confirmar que el ORM está alineado con la DB (sin drift entre migrations y schema real).
+
+Resultado esperado: entorno listo para aplicar constraints reales sin comportamientos inesperados.
+
+Tiempo estimado: 1–2 horas.
+
+Paso 1 — Corrección de comportamientos de borrado en datos históricos
+
+Por qué es crítico: el uso de CASCADE en entidades clínicas o fiscales puede provocar pérdida irreversible de información. En un SaaS médico, esto no es aceptable ni técnica ni legalmente.
+
+Qué cambiar y por qué:
+
+Appointment.veterinarian → SET_NULL
+La cita debe permanecer aunque el veterinario ya no esté activo.
+MedicalRecord.veterinarian → SET_NULL
+El historial clínico es permanente.
+Prescription.veterinarian → SET_NULL
+Una prescripción no puede desaparecer.
+Invoice.owner → PROTECT
+No se puede eliminar un propietario con facturas.
+Invoice.pet → PROTECT
+Las facturas deben permanecer incluso si la mascota se elimina del sistema lógico.
+Invoice.appointment → PROTECT
+No se puede eliminar una cita con impacto financiero.
+
+Regla general:
+
+Historia clínica → SET_NULL
+Datos financieros → PROTECT
+Detalles dependientes (ej. items) → CASCADE controlado
+
+Tiempo estimado: medio día (sin datos reales simplifica todo).
+
+Paso 2 — Tenant enforcement estructural (nuevo paso crítico)
+
+Por qué es necesario: actualmente el aislamiento multitenant depende de filtros manuales. Esto no es suficiente en un SaaS. Se requiere un mecanismo estructural que reduzca al mínimo el riesgo de fuga de datos.
+
+Estrategia en tres capas:
+
+Capa 1 — OrganizationalModel consistente
+
+Todos los modelos deben heredar de una base común con:
+
+organization = ForeignKey(Organization)
+
+Esto debe ser obligatorio en todas las entidades, incluyendo:
+
+InvoiceItem
+PrescriptionItem
+MedicalRecordProduct
+
+Eliminar modelos sin organization propio.
+
+Capa 2 — Enforcement en ORM (automático)
+
+Implementar:
+
+Custom Manager / QuerySet que filtre automáticamente por organization.
+Middleware o contexto que inyecte organization actual.
+
+Ejemplo conceptual:
+
+objects = TenantManager()
+
+Esto reduce errores humanos en queries.
+
+Capa 3 — Validación fuerte en modelo
+Validaciones en clean()
+Override de save() llamando full_clean()
+
+Esto asegura que ninguna operación (API, admin, shell) pueda violar el tenant.
+
+Capa 4 — Refuerzo en DB (PostgreSQL)
+
+Cuando sea crítico (ej. facturación):
+
+Constraints con SQL personalizado
+Posible uso futuro de Row-Level Security (RLS)
+
+Nota: Django no soporta bien constraints multitabla, pero PostgreSQL sí permite soluciones avanzadas si se requieren.
+
+Tiempo estimado: 1.5–2 días.
+
+Paso 3 — Constraints de coherencia multitenant entre FKs
+
+Por qué sigue siendo necesario: aunque exista enforcement general, las relaciones específicas entre modelos deben validarse explícitamente.
+
+Qué validar por modelo:
+
+Pet → owner debe pertenecer a misma organization.
+Appointment → pet y veterinarian deben coincidir en organization.
+MedicalRecord → pet, veterinarian y appointment deben coincidir.
+Invoice → owner, pet, appointment y medical_record deben ser coherentes.
+InvoiceItem → referencias deben pertenecer a organization de la factura.
+
+Dónde implementar:
+
+Model.clean()
+Serializer
+Tests explícitos de cross-tenant
+
+Adicional en PostgreSQL:
+
+Se pueden agregar constraints SQL avanzadas donde aplique.
+
+Tiempo estimado: 1–1.5 días.
+
+Paso 4 — CheckConstraints de valores y rangos (DB-first)
+
+Por qué en base de datos: PostgreSQL sí aplica estas constraints de forma estricta y eficiente. Esto elimina completamente estados inválidos.
+
+Qué agregar:
+
+En InvoiceItem:
+
+quantity > 0
+unit_price >= 0
+subtotal >= 0
+
+En Invoice:
+
+tax_rate entre 0 y 1
+total >= subtotal
+subtotal >= 0
+
+En Product/Presentation:
+
+stock >= 0
+price > 0
+
+En Appointment:
+
+end_time > start_time
+
+En PrescriptionItem:
+
+quantity > 0
+
+Implementación:
+
+Django CheckConstraint
+o RunSQL si se requiere más control
+
+Tiempo estimado: medio día.
+
+Paso 5 — Regla XOR en InvoiceItem
+
+Por qué es crítica: elimina ambigüedad en el tipo de línea y evita errores en inventario y facturación.
+
+Regla:
+
+exactamente uno de:
+service
+presentation
+
+Implementación en PostgreSQL:
+
+CHECK (
+  (service_id IS NOT NULL)::int +
+  (presentation_id IS NOT NULL)::int = 1
+)
+
+En Django:
+
+CheckConstraint o RunSQL
+
+Dependencia:
+
+ejecutar después de migración de product → presentation
+
+Tiempo estimado: 2–3 horas.
+
+Paso 6 — Auditoría (nuevo)
+
+Por qué es necesaria: en un SaaS necesitas trazabilidad completa.
+
+Qué agregar en base model:
+
+created_at
+updated_at
+created_by
+updated_by
+
+Opcional:
+
+audit logs (tabla separada)
+
+Esto permite:
+
+debugging real
+soporte a clientes
+cumplimiento futuro
+
+Tiempo estimado: medio día.
+
+Paso 7 — Estrategia de eliminación lógica (soft delete)
+
+Por qué: en SaaS casi nunca se elimina físicamente información crítica.
+
+Qué implementar:
+
+is_active = BooleanField(default=True)
+
+O:
+
+deleted_at = DateTimeField(null=True)
+
+Aplicar a:
+
+pets
+owners
+staff
+productos
+
+No aplicar a:
+
+logs históricos
+facturación cerrada
+
+Esto evita pérdida de información y simplifica integridad.
+
+Tiempo estimado: medio día.
+
+Paso 8 — Índices compuestos
+
+Por qué al final: dependen de cómo quedan los modelos después de las correcciones.
+
+Qué agregar:
+
+Appointment → (organization, date, status)
+Invoice → (organization, status, created_at)
+MedicalRecord → (organization, pet_id, date)
+Pet → (organization, owner_id)
+Staff → (organization, role, is_active)
+
+Adicional importante:
+
+(organization, id) implícito para joins eficientes
+
+En PostgreSQL:
+
+usar CREATE INDEX (no concurrente necesario aún)
+
+Tiempo estimado: medio día.
+
+Relación con arquitectura ORM + SQL
+
+Este plan asume una estrategia híbrida:
+
+ORM (Django) para:
+modelado
+validaciones de negocio
+CRUD
+SQL (PostgreSQL) para:
+constraints críticas
+optimización
+enforcement estructural
+
+Esto permite velocidad de desarrollo sin sacrificar integridad.
+
+Orden de ejecución final
+Paso 0 — Verificación
+Paso 1 — Borrados
+Paso 2 — Tenant enforcement global
+Paso 3 — Coherencia multitenant
+Paso 4 — CheckConstraints
+Paso 5 — XOR InvoiceItem
+Paso 6 — Auditoría
+Paso 7 — Soft delete
+Paso 8 — Índices

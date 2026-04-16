@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { getPet } from "../api/pets";
 import { getMedicalRecords, getMedicalRecord } from "../api/medicalRecords";
 import { useAuth } from "../auth/authContext";
+import { Icon } from "../components/icons";
 import api from "../api/client";
 
 const SEX_LABELS = { male: "Macho", female: "Hembra", unknown: "Desconocido" };
@@ -97,7 +98,7 @@ const PetDetail = () => {
         <div>
             {/* Back + Header */}
             <button className="back-btn" onClick={() => navigate("/pets")}>
-                ← Volver a mascotas
+<Icon.ChevronLeft s={14} /> Volver a mascotas
             </button>
             <div className="page-header">
                 <div>
@@ -262,7 +263,7 @@ const PetDetail = () => {
                     <div className="modal modal-md">
                         <div className="modal-header">
                             <h3>Detalle de Consulta</h3>
-                            <button className="modal-close" onClick={() => { setShowRecordDetail(false); setViewingRecord(null); }}>✕</button>
+                            <button className="modal-close" onClick={() => { setShowRecordDetail(false); setViewingRecord(null); }}><Icon.X s={16} /></button>
                         </div>
                         <div className="modal-body">
                             <p style={{ fontSize: "12.5px", color: "var(--c-text-2)", marginBottom: "20px" }}>

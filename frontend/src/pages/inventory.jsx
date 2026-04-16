@@ -4,6 +4,7 @@ import {
     adjustStock, getUnitChoices,
 } from "../api/inventory";
 import { useAuth } from "../auth/authContext";
+import { Icon } from "../components/icons";
 import s from "./inventory.module.css";
 
 // ── Constants ─────────────────────────────────────────────
@@ -57,45 +58,21 @@ const fmtCur = (n, locale = navigator.language) =>
 
 // ── Category icon ─────────────────────────────────────────
 const ICON_COLOR = { medication: "#3b82f6", food: "#0d9488", accessory: "#7c3aed", other: "#94a3b8" };
+const CATEGORY_ICON = { medication: Icon.Pill, food: Icon.ShoppingBag, accessory: Icon.Package, other: Icon.Box };
 
 const CategoryIcon = ({ category, size = 18 }) => {
     const c = ICON_COLOR[category] || ICON_COLOR.other;
-    if (category === "medication") return (
-        <svg width={size} height={size} viewBox="0 0 20 20" fill="none">
-            <rect x="8" y="2" width="4" height="6" rx="1" stroke={c} strokeWidth="1.4" />
-            <path d="M5 8h10l-1 9H6L5 8z" stroke={c} strokeWidth="1.4" strokeLinejoin="round" />
-            <path d="M8 12h4M10 10.5v3" stroke={c} strokeWidth="1.3" strokeLinecap="round" />
-        </svg>
-    );
-    if (category === "food") return (
-        <svg width={size} height={size} viewBox="0 0 20 20" fill="none">
-            <ellipse cx="10" cy="14" rx="7" ry="3.5" stroke={c} strokeWidth="1.4" />
-            <path d="M5 10.5C5 7.46 7.24 5 10 5s5 2.46 5 5.5" stroke={c} strokeWidth="1.4" />
-            <path d="M10 5V3" stroke={c} strokeWidth="1.4" strokeLinecap="round" />
-        </svg>
-    );
-    if (category === "accessory") return (
-        <svg width={size} height={size} viewBox="0 0 20 20" fill="none">
-            <circle cx="10" cy="10" r="7" stroke={c} strokeWidth="1.4" />
-            <circle cx="10" cy="10" r="2.5" stroke={c} strokeWidth="1.4" />
-            <path d="M4 7.5l2 1M16 7.5l-2 1M4 12.5l2-1M16 12.5l-2-1" stroke={c} strokeWidth="1.3" strokeLinecap="round" />
-        </svg>
-    );
-    return (
-        <svg width={size} height={size} viewBox="0 0 20 20" fill="none">
-            <rect x="4" y="4" width="12" height="12" rx="2" stroke={c} strokeWidth="1.4" />
-            <path d="M7 10h6M10 7v6" stroke={c} strokeWidth="1.3" strokeLinecap="round" />
-        </svg>
-    );
+    const IconComp = CATEGORY_ICON[category] || CATEGORY_ICON.other;
+    return <IconComp s={size} c={c} />;
 };
 
 const ICO_CLS = { medication: s.icoMed, food: s.icoFood, accessory: s.icoAcc, other: s.icoOther };
 const BADGE_CLS = { medication: s.badgeBlue, food: s.badgeGreen, accessory: s.badgePurple, other: s.badgeGray };
 
 // ── SortableHeader ────────────────────────────────────────
-const SortHeader = ({ col, label, sortCol, sortDir, onSort, align = "left" }) => {
+    const SortHeader = ({ col, label, sortCol, sortDir, onSort, align = "left" }) => {
     const active = sortCol === col;
-    const arrow = active ? (sortDir === "asc" ? "↑" : "↓") : "↕";
+    const ArrowIcon = active ? (sortDir === "asc" ? Icon.ArrowUp : Icon.ArrowDown) : Icon.ArrowUpDown;
     return (
         <th
             className={`${s.th} ${s.sortable}`}
@@ -104,7 +81,9 @@ const SortHeader = ({ col, label, sortCol, sortDir, onSort, align = "left" }) =>
         >
             <span className={s.thInner}>
                 {label}
-                <span className={`${s.sortArrow} ${active ? s.active : ""}`}>{arrow}</span>
+                <span className={`${s.sortArrow} ${active ? s.active : ""}`}>
+                    <ArrowIcon s={11} c="currentColor" />
+                </span>
             </span>
         </th>
     );
@@ -362,12 +341,12 @@ const Inventory = () => {
         <div>
             {error && (
                 <div className="alert alert-danger">
-                    {error}<button className="alert-close" onClick={() => setError("")}>✕</button>
+                    {error}<button className="alert-close" onClick={() => setError("")}><Icon.X s={14} /></button>
                 </div>
             )}
             {success && (
                 <div className="alert alert-success">
-                    {success}<button className="alert-close" onClick={() => setSuccess("")}>✕</button>
+                    {success}<button className="alert-close" onClick={() => setSuccess("")}><Icon.X s={14} /></button>
                 </div>
             )}
 
@@ -384,9 +363,7 @@ const Inventory = () => {
                             className={s.btnPrime}
                             onClick={() => { setEditing(null); setForm(EMPTY_PRODUCT); setFormErrors({}); setShowProductModal(true); }}
                         >
-                            <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
-                                <path d="M7 1V13M1 7H13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                            </svg>
+                            <Icon.Plus s={13} />
                             Nuevo Producto
                         </button>
                     </div>
@@ -397,49 +374,35 @@ const Inventory = () => {
             <div className={s.stats}>
                 <div className={`${s.sc} ${s.scG}`}>
                     <div className={`${s.scIco} ${s.scIcoG}`}>
-                        <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
-                            <rect x="2" y="4" width="10" height="8" rx="1.5" stroke="var(--c-primary-dark)" strokeWidth="1.3" />
-                            <path d="M5 4V3a2 2 0 014 0v1" stroke="var(--c-primary-dark)" strokeWidth="1.3" />
-                        </svg>
+                        <Icon.Package s={13} c="var(--c-primary-dark)" />
                     </div>
                     <div className={s.scVal}>{metrics.total}</div>
                     <div className={s.scLbl}>Total productos</div>
                 </div>
                 <div className={`${s.sc} ${s.scB}`}>
                     <div className={`${s.scIco} ${s.scIcoB}`}>
-                        <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
-                            <rect x="5" y="1" width="4" height="5" rx="1" stroke="#3b82f6" strokeWidth="1.3" />
-                            <path d="M3 6h8l-.8 7H3.8L3 6z" stroke="#3b82f6" strokeWidth="1.3" strokeLinejoin="round" />
-                        </svg>
+                        <Icon.Syringe s={13} c="#3b82f6" />
                     </div>
                     <div className={s.scVal}>{metrics.medications}</div>
                     <div className={s.scLbl}>Medicamentos</div>
                 </div>
                 <div className={`${s.sc} ${s.scA}`}>
                     <div className={`${s.scIco} ${s.scIcoA}`}>
-                        <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
-                            <path d="M7 2L13 12H1L7 2z" stroke="#f59e0b" strokeWidth="1.3" strokeLinejoin="round" />
-                            <path d="M7 5.5v3M7 10v.5" stroke="#f59e0b" strokeWidth="1.3" strokeLinecap="round" />
-                        </svg>
+                        <Icon.AlertTriangle s={13} c="#f59e0b" />
                     </div>
                     <div className={`${s.scVal} ${metrics.lowStock > 0 ? s.scValAm : ""}`}>{metrics.lowStock}</div>
                     <div className={s.scLbl}>Stock bajo</div>
                 </div>
                 <div className={`${s.sc} ${s.scR}`}>
                     <div className={`${s.scIco} ${s.scIcoR}`}>
-                        <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
-                            <circle cx="7" cy="7" r="5.5" stroke="#ef4444" strokeWidth="1.3" />
-                            <path d="M7 4v3.5M7 9.5v.5" stroke="#ef4444" strokeWidth="1.3" strokeLinecap="round" />
-                        </svg>
+                        <Icon.Clock s={13} c="#ef4444" />
                     </div>
                     <div className={`${s.scVal} ${metrics.outOfStock > 0 ? s.scValRe : ""}`}>{metrics.outOfStock}</div>
                     <div className={s.scLbl}>Sin stock</div>
                 </div>
                 <div className={`${s.sc} ${s.scV}`}>
                     <div className={`${s.scIco} ${s.scIcoV}`}>
-                        <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
-                            <path d="M2 11h10M4 8l3-5 3 5" stroke="#7c3aed" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
+                        <Icon.TrendUp s={13} c="#7c3aed" />
                     </div>
                     <div className={s.scVal} style={{ fontSize: "18px" }}>
                         ${fmtCur(metrics.totalVal)}
@@ -451,26 +414,22 @@ const Inventory = () => {
             {/* ── Alert bar ── */}
             {!alertDismissed && alertProducts.length > 0 && (
                 <div className={s.alertBar}>
-                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-                        <path d="M8 2L14.5 13H1.5L8 2z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
-                        <path d="M8 6.5v3M8 11v.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-                    </svg>
+                    <Icon.AlertTriangle s={14} />
                     <span>
                         <strong>{alertProducts.length} producto{alertProducts.length !== 1 ? "s" : ""}</strong> requieren atención:{" "}
                         {alertProducts.slice(0, 3).map(p => p.name.split(" ").slice(0, 2).join(" ")).join(", ")}
                         {alertProducts.length > 3 ? "…" : ""}.
                     </span>
-                    <button onClick={() => setAlertDismissed(true)}>×</button>
+                    <button onClick={() => setAlertDismissed(true)} style={{ display: "flex", alignItems: "center" }}>
+                        <Icon.X s={14} />
+                    </button>
                 </div>
             )}
 
             {/* ── Toolbar ── */}
             <div className={s.toolbar}>
                 <div className={s.tsearch}>
-                    <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
-                        <circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="1.3" />
-                        <path d="M10.5 10.5L13 13" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-                    </svg>
+                    <Icon.Search s={13} />
                     <input
                         type="text"
                         placeholder="Buscar producto..."
@@ -479,9 +438,7 @@ const Inventory = () => {
                     />
                 </div>
                 <div className={s.tsel}>
-                    <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
-                        <path d="M2 4h10M4 7h6M6 10h2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-                    </svg>
+                    <Icon.Sliders s={13} />
                     <select value={stockFilter} onChange={e => setStockFilter(e.target.value)}>
                         <option value="">Todo el stock</option>
                         <option value="ok">Normal</option>
@@ -491,18 +448,10 @@ const Inventory = () => {
                 </div>
                 <div className={s.viewTog}>
                     <button className={`${s.vt} ${viewMode === "table" ? s.vtOn : ""}`} title="Tabla" onClick={() => setViewMode("table")}>
-                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                            <rect x="1" y="1" width="12" height="12" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
-                            <path d="M1 5h12M1 9h12M5 5v7M9 5v7" stroke="currentColor" strokeWidth="1.3" />
-                        </svg>
+                        <Icon.Rows s={14} />
                     </button>
                     <button className={`${s.vt} ${viewMode === "grid" ? s.vtOn : ""}`} title="Cuadrícula" onClick={() => setViewMode("grid")}>
-                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                            <rect x="1" y="1" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.3" />
-                            <rect x="8" y="1" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.3" />
-                            <rect x="1" y="8" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.3" />
-                            <rect x="8" y="8" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.3" />
-                        </svg>
+                        <Icon.Grid s={14} />
                     </button>
                 </div>
                 <span className={s.ctLbl}>{filteredProducts.length} producto{filteredProducts.length !== 1 ? "s" : ""}</span>
@@ -530,10 +479,9 @@ const Inventory = () => {
             {/* ── Contenido: tabla o grid ── */}
             {filteredProducts.length === 0 ? (
                 <div className={s.listEmpty}>
-                    <svg viewBox="0 0 24 24" fill="none" style={{ width: 32, height: 32, opacity: .18, display: "block", margin: "0 auto" }}>
-                        <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.3" />
-                        <path d="M9 9h.01M15 9h.01M9 14s1 2 3 2 3-2 3-2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-                    </svg>
+                    <span style={{ display: "block", textAlign: "center", opacity: 0.18 }}>
+                        <Icon.Frown s={32} />
+                    </span>
                     <p>{searchText ? `Sin resultados para "${searchText}"` : "No hay productos registrados"}</p>
                 </div>
             ) : viewMode === "table" ? (
@@ -713,7 +661,7 @@ const Inventory = () => {
                     <div className="modal modal-md">
                         <div className="modal-header">
                             <h3>{editing ? "Editar Producto" : "Nuevo Producto"}</h3>
-                            <button className="modal-close" onClick={closeProductModal}>✕</button>
+                            <button className="modal-close" onClick={closeProductModal}><Icon.X s={16} /></button>
                         </div>
                         <div className="modal-body">
                             {error && <div className="alert alert-danger">{error}</div>}
@@ -848,7 +796,7 @@ const Inventory = () => {
                                     {adjustingProduct.name}
                                 </p>
                             </div>
-                            <button className="modal-close" onClick={closeAdjustModal}>✕</button>
+                            <button className="modal-close" onClick={closeAdjustModal}><Icon.X s={16} /></button>
                         </div>
                         <div className="modal-body">
                             {error && <div className="alert alert-danger">{error}</div>}

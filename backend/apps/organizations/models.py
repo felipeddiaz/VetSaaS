@@ -1,3 +1,4 @@
+from decimal import Decimal
 from django.db import models
 from django.core.exceptions import ValidationError
 from django.utils import timezone
@@ -7,6 +8,12 @@ class Organization(models.Model):
     name = models.CharField(max_length=255)
     timezone = models.CharField(max_length=64, default='UTC')
     timezone_updated_at = models.DateTimeField(null=True, blank=True)
+    tax_rate = models.DecimalField(
+        max_digits=5,
+        decimal_places=4,
+        default=Decimal('0.0000'),
+        help_text="Tasa de IVA aplicada automáticamente a nuevos cobros (ej: 0.16 = 16%)"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     def clean(self):

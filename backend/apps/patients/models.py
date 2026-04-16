@@ -1,3 +1,4 @@
+from django.core.exceptions import ValidationError
 from django.db import models
 from apps.core.models import OrganizationalModel
 
@@ -25,3 +26,13 @@ class Pet(OrganizationalModel):
         on_delete=models.CASCADE,
         related_name="pets"
     )
+
+    def clean(self):
+        if self.owner_id and self.organization_id:
+            if self.owner.organization_id != self.organization_id:
+                raise ValidationError("El propietario no pertenece a la misma organizacion que la mascota.")
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["organization", "owner"]),
+        ]

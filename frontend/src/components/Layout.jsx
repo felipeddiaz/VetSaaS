@@ -1,6 +1,7 @@
 import { useAuth } from "../auth/authContext";
 import { useNavigate, useLocation } from "react-router-dom";
 import Sidebar from "./Sidebar";
+import { Icon } from "./icons";
 
 const PAGE_TITLES = {
     "/":               "Dashboard",
@@ -23,7 +24,7 @@ const Layout = ({ children }) => {
         return (
             <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh", background: "var(--c-bg)" }}>
                 <div style={{ textAlign: "center", color: "var(--c-text-3)" }}>
-                    <div style={{ fontSize: "24px", marginBottom: "8px" }}>✦</div>
+                    <div style={{ marginBottom: "8px" }}><Icon.Stethoscope s={32} c="var(--c-text-3)" /></div>
                     <p style={{ fontSize: "13px" }}>Cargando...</p>
                 </div>
             </div>

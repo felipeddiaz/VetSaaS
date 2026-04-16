@@ -20,3 +20,8 @@ class User(AbstractUser):
     role = models.CharField(max_length=15, choices=ROLE_CHOICES, default='ASSISTANT')
     specialty = models.CharField(max_length=100, blank=True, default='')
     is_active = models.BooleanField(default=True)
+
+    class Meta(AbstractUser.Meta):
+        indexes = [
+            models.Index(fields=["organization", "role", "is_active"]),
+        ]

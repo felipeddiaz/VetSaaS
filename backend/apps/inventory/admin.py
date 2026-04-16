@@ -1,16 +1,17 @@
 from django.contrib import admin
+from apps.core.admin import TenantAwareAdmin
 from .models import Product, Presentation, StockMovement, MedicalRecordProduct
 
 
 @admin.register(Product)
-class ProductAdmin(admin.ModelAdmin):
+class ProductAdmin(TenantAwareAdmin):
     list_display = ['name', 'internal_code', 'category', 'requires_prescription', 'is_active', 'organization']
     list_filter = ['is_active', 'category', 'organization']
     search_fields = ['name', 'internal_code']
 
 
 @admin.register(Presentation)
-class PresentationAdmin(admin.ModelAdmin):
+class PresentationAdmin(TenantAwareAdmin):
     list_display = ['product', 'name', 'base_unit', 'stock', 'min_stock', 'sale_price', 'organization']
     list_filter = ['base_unit', 'organization']
     search_fields = ['name', 'product__name']
@@ -18,12 +19,12 @@ class PresentationAdmin(admin.ModelAdmin):
 
 
 @admin.register(StockMovement)
-class StockMovementAdmin(admin.ModelAdmin):
+class StockMovementAdmin(TenantAwareAdmin):
     list_display = ['presentation', 'movement_type', 'quantity', 'reason', 'created_by', 'created_at']
     list_filter = ['movement_type', 'organization']
     readonly_fields = ['created_at']
 
 
 @admin.register(MedicalRecordProduct)
-class MedicalRecordProductAdmin(admin.ModelAdmin):
+class MedicalRecordProductAdmin(TenantAwareAdmin):
     list_display = ['medical_record', 'presentation', 'quantity']

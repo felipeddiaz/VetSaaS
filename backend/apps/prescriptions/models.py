@@ -10,7 +10,9 @@ class Prescription(OrganizationalModel):
     )
     veterinarian = models.ForeignKey(
         'users.User',
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
         related_name='prescriptions'
     )
     pet = models.ForeignKey(
@@ -19,14 +21,13 @@ class Prescription(OrganizationalModel):
         related_name='prescriptions'
     )
     notes = models.TextField(blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    # created_at, updated_at heredados de OrganizationalModel
 
     class Meta:
         ordering = ['-created_at']
 
 
-class PrescriptionItem(models.Model):
+class PrescriptionItem(OrganizationalModel):
     prescription = models.ForeignKey(
         Prescription,
         on_delete=models.CASCADE,
@@ -41,3 +42,17 @@ class PrescriptionItem(models.Model):
     duration = models.CharField(max_length=255, blank=True)
     quantity = models.DecimalField(max_digits=10, decimal_places=2)
     instructions = models.TextField(blank=True)
+
+    def save(self, *args, **kwargs):
+        # Hereda organization de la prescripción — sin query extra
+        if self.prescription_id and not self.organization_id:
+            self.organization_id = self.prescription.organization_id
+        super().save(*args, **kwargs)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(quantity__gt=0),
+                name="prescriptionitem_quantity_positive",
+            ),
+        ]

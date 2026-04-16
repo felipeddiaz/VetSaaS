@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Dog as LucideDog } from "lucide-react";
 import { getPets, createPet, updatePet, deletePet } from "../api/pets";
 import { getMedicalRecords } from "../api/medicalRecords";
 import { getAppointments } from "../api/appointments";
 import { useAuth } from "../auth/authContext";
+import { Icon } from "../components/icons";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const SEX_LABELS = { male: "Macho", female: "Hembra", unknown: "Desconocido" };
@@ -56,125 +56,11 @@ const getWeekRange = () => {
     return { start, end };
 };
 
-// ─── SVG Icons ────────────────────────────────────────────────────────────────
-const Ic = {
-    Bone: ({ s = 20, c = "currentColor" }) => (
-        <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M17 10c.7-.7 1.69 0 2.5 0a2.5 2.5 0 1 0 0-5 .5.5 0 0 1-.5-.5 2.5 2.5 0 1 0-5 0c0 .81.7 1.8 0 2.5l-4.6 4.6c-.7.7-1.69 0-2.5 0a2.5 2.5 0 1 0 0 5 .5.5 0 0 1 .5.5 2.5 2.5 0 1 0 5 0c0-.81-.7-1.8 0-2.5Z" />
-        </svg>
-    ),
-    Cat: ({ s = 20, c = "currentColor" }) => (
-        <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 5c.67 0 1.35.09 2 .26 1.78-2 5.03-2.84 6.42-2.26 1.4.58-.42 7-.42 7 .57 1.07 1 2.24 1 3.44C21 17.9 16.97 21 12 21s-9-3-9-7.56c0-1.25.5-2.4 1-3.44 0 0-1.89-6.42-.5-7 1.39-.58 4.68.2 6.51 2.26A9.06 9.06 0 0 1 12 5z" />
-            <path d="M8 14v.5M16 14v.5" />
-            <path d="M11.25 16.25h1.5L12 17l-.75-.75z" />
-        </svg>
-    ),
-    Dog: ({ s = 20, c = "currentColor" }) => (
-        <LucideDog size={s} color={c} strokeWidth={2} />
-    ),
-    Paw: ({ s = 20, c = "currentColor" }) => (
-        <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="11" cy="4" r="2" />
-            <circle cx="18" cy="8" r="2" />
-            <circle cx="4" cy="8" r="2" />
-            <path d="M9.37 17.74a3.5 3.5 0 0 0 5.26 0L17 14.5a3.5 3.5 0 0 0-2.63-5.87 3.5 3.5 0 0 0-2.37.93 3.5 3.5 0 0 0-2.37-.93A3.5 3.5 0 0 0 7 14.5z" />
-        </svg>
-    ),
-    Calendar: ({ s = 18, c = "currentColor" }) => (
-        <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="3" y="4" width="18" height="18" rx="2" />
-            <line x1="16" y1="2" x2="16" y2="6" />
-            <line x1="8" y1="2" x2="8" y2="6" />
-            <line x1="3" y1="10" x2="21" y2="10" />
-        </svg>
-    ),
-    Search: ({ s = 15, c = "currentColor" }) => (
-        <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="11" cy="11" r="8" />
-            <line x1="21" y1="21" x2="16.65" y2="16.65" />
-        </svg>
-    ),
-    Grid: ({ s = 15, c = "currentColor" }) => (
-        <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="3" y="3" width="7" height="7" rx="1" />
-            <rect x="14" y="3" width="7" height="7" rx="1" />
-            <rect x="3" y="14" width="7" height="7" rx="1" />
-            <rect x="14" y="14" width="7" height="7" rx="1" />
-        </svg>
-    ),
-    Rows: ({ s = 15, c = "currentColor" }) => (
-        <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="3" y="5" width="18" height="4" rx="1" />
-            <rect x="3" y="11" width="18" height="4" rx="1" />
-            <rect x="3" y="17" width="18" height="4" rx="1" />
-        </svg>
-    ),
-    X: ({ s = 15, c = "currentColor" }) => (
-        <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round">
-            <line x1="18" y1="6" x2="6" y2="18" />
-            <line x1="6" y1="6" x2="18" y2="18" />
-        </svg>
-    ),
-    User: ({ s = 15, c = "currentColor" }) => (
-        <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-            <circle cx="12" cy="7" r="4" />
-        </svg>
-    ),
-    Phone: ({ s = 13, c = "currentColor" }) => (
-        <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.18h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.96a16 16 0 0 0 6.13 6.13l1.36-1.36a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z" />
-        </svg>
-    ),
-    Syringe: ({ s = 14, c = "currentColor" }) => (
-        <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="m18 2 4 4" />
-            <path d="m17 7 3-3" />
-            <path d="M19 9 8.7 19.3a1 1 0 0 1-1.4 0l-2.6-2.6a1 1 0 0 1 0-1.4L15 5" />
-            <path d="m9 11 4 4" />
-            <path d="m5 19-3 3" />
-            <path d="m14 4 6 6" />
-        </svg>
-    ),
-    TrendUp: ({ s = 13, c = "currentColor" }) => (
-        <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="22 7 13.5 15.5 8.5 10.5 2 17" />
-            <polyline points="16 7 22 7 22 13" />
-        </svg>
-    ),
-    Edit: ({ s = 13, c = "currentColor" }) => (
-        <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-        </svg>
-    ),
-    Trash: ({ s = 13, c = "currentColor" }) => (
-        <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="3 6 5 6 21 6" />
-            <path d="M19 6l-1 14H6L5 6" />
-            <path d="M10 11v6M14 11v6M9 6V4h6v2" />
-        </svg>
-    ),
-    ChevronRight: ({ s = 15, c = "currentColor" }) => (
-        <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="9 18 15 12 9 6" />
-        </svg>
-    ),
-    AlertTriangle: ({ s = 14, c = "currentColor" }) => (
-        <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-            <line x1="12" y1="9" x2="12" y2="13" />
-            <line x1="12" y1="17" x2="12.01" y2="17" />
-        </svg>
-    ),
-};
-
 // ─── Species Icon helper ──────────────────────────────────────────────────────
 const SpeciesIcon = ({ pet, size = 20, color }) => {
-    if (isCanino(pet)) return <Ic.Bone s={size} c={color} />;
-    if (isFelino(pet)) return <Ic.Cat s={size} c={color} />;
-    return <Ic.Paw s={size} c={color} />;
+    if (isCanino(pet)) return <Icon.Bone s={size} c={color} />;
+    if (isFelino(pet)) return <Icon.Cat s={size} c={color} />;
+    return <Icon.Paw s={size} c={color} />;
 };
 
 const speciesAccent = (pet) => isCanino(pet)
@@ -189,7 +75,7 @@ const PetModal = ({ form, setForm, editing, onSubmit, onClose, error }) => (
         <div className="modal modal-md">
             <div className="modal-header">
                 <h3>{editing ? "Editar Mascota" : "Nueva Mascota"}</h3>
-                <button className="modal-close" onClick={onClose}><Ic.X s={16} /></button>
+                <button className="modal-close" onClick={onClose}><Icon.X s={16} /></button>
             </div>
             <div className="modal-body">
                 {error && <div className="alert alert-danger" style={{ marginBottom: "16px" }}>{error}</div>}
@@ -316,7 +202,7 @@ const PetCard = ({ pet, onSelect, onEdit, onDelete }) => {
                 padding: "8px 10px", borderRadius: "var(--r-md)",
                 background: "var(--c-subtle)", marginBottom: "12px",
             }}>
-                <Ic.User s={14} c="var(--c-text-3)" />
+                <Icon.User s={14} c="var(--c-text-3)" />
                 <div style={{ minWidth: 0 }}>
                     <p style={{ fontSize: "12.5px", fontWeight: "500", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {pet.owner?.name || "Sin propietario"}
@@ -330,10 +216,10 @@ const PetCard = ({ pet, onSelect, onEdit, onDelete }) => {
             {/* Actions */}
             <div style={{ display: "flex", gap: "6px" }} onClick={e => e.stopPropagation()}>
                 <button className="btn btn-secondary btn-sm" style={{ flex: 1 }} onClick={() => onEdit(pet)}>
-                    <Ic.Edit s={13} /> Editar
+                    <Icon.Edit s={13} /> Editar
                 </button>
                 <button className="btn btn-danger btn-sm" onClick={() => onDelete(pet.id)}>
-                    <Ic.Trash s={13} />
+                    <Icon.Trash s={13} />
                 </button>
             </div>
         </div>
@@ -432,7 +318,7 @@ const QuickPanel = ({ pet, records, appointments, loading, onClose, onEdit, navi
                         style={{ padding: "6px", flexShrink: 0 }}
                         onClick={onClose}
                     >
-                        <Ic.X s={15} />
+                        <Icon.X s={15} />
                     </button>
                 </div>
 
@@ -453,13 +339,13 @@ const QuickPanel = ({ pet, records, appointments, loading, onClose, onEdit, navi
                                         background: "var(--c-subtle)", border: "1px solid var(--c-border)",
                                         display: "flex", alignItems: "center", justifyContent: "center",
                                     }}>
-                                        <Ic.User s={16} c="var(--c-text-2)" />
+                                        <Icon.User s={16} c="var(--c-text-2)" />
                                     </div>
                                     <div>
                                         <p style={{ fontWeight: "600", fontSize: "13.5px" }}>{pet.owner?.name || "—"}</p>
                                         {pet.owner?.phone && (
                                             <p style={{ fontSize: "12px", color: "var(--c-text-2)", display: "flex", alignItems: "center", gap: "4px", marginTop: "2px" }}>
-                                                <Ic.Phone s={12} c="var(--c-text-3)" />
+                                                <Icon.Phone s={12} c="var(--c-text-3)" />
                                                 {pet.owner.phone}
                                             </p>
                                         )}
@@ -501,7 +387,7 @@ const QuickPanel = ({ pet, records, appointments, loading, onClose, onEdit, navi
                                                 padding: "10px 12px", borderRadius: "var(--r-md)",
                                                 background: "var(--c-info-bg)", border: "1px solid var(--c-info-border)",
                                             }}>
-                                                <Ic.Calendar s={14} c="var(--c-info-text)" />
+                                                <Icon.Calendar s={14} c="var(--c-info-text)" />
                                                 <div>
                                                     <p style={{ fontWeight: "600", fontSize: "12.5px", color: "var(--c-info-text)" }}>
                                                         {fmtWeekday(appt.date)}
@@ -558,7 +444,7 @@ const QuickPanel = ({ pet, records, appointments, loading, onClose, onEdit, navi
                                         padding: "10px 12px", borderRadius: "var(--r-md)",
                                         background: "var(--c-success-bg)", border: "1px solid var(--c-success-border)",
                                     }}>
-                                        <Ic.Syringe s={14} c="var(--c-success-text)" />
+                                        <Icon.Syringe s={14} c="var(--c-success-text)" />
                                         <div>
                                             <p style={{ fontSize: "12.5px", fontWeight: "600", color: "var(--c-success-text)" }}>Último registro de vacunación</p>
                                             <p style={{ fontSize: "11.5px", color: "var(--c-success-text)", opacity: 0.85, marginTop: "1px" }}>
@@ -575,7 +461,7 @@ const QuickPanel = ({ pet, records, appointments, loading, onClose, onEdit, navi
                                         padding: "10px 12px", borderRadius: "var(--r-md)",
                                         background: "var(--c-warning-bg)", border: "1px solid var(--c-warning-border)",
                                     }}>
-                                        <Ic.AlertTriangle s={14} c="var(--c-warning-text)" />
+                                        <Icon.AlertTriangle s={14} c="var(--c-warning-text)" />
                                         <p style={{ fontSize: "12.5px", color: "var(--c-warning-text)" }}>
                                             Sin registros de vacunación en el historial
                                         </p>
@@ -597,13 +483,13 @@ const QuickPanel = ({ pet, records, appointments, loading, onClose, onEdit, navi
                         onClick={() => { onClose(); navigate(`/pets/${pet.id}`); }}
                     >
                         Ver ficha completa
-                        <Ic.ChevronRight s={14} />
+                        <Icon.ChevronRight s={14} />
                     </button>
                     <button
                         className="btn btn-secondary btn-md"
                         onClick={() => { onClose(); onEdit(pet); }}
                     >
-                        <Ic.Edit s={14} />
+                        <Icon.Edit s={14} />
                         Editar
                     </button>
                 </div>
@@ -825,13 +711,13 @@ const Pets = () => {
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "10px" }}>
                         <p className="stat-label">Total mascotas</p>
                         <div style={iconBox("var(--c-primary-light)")}>
-                            <Ic.Paw s={16} c="var(--c-primary-dark)" />
+                            <Icon.Paw s={16} c="var(--c-primary-dark)" />
                         </div>
                     </div>
                     <p className="stat-value" style={{ color: "var(--c-primary-dark)" }}>{pets.length}</p>
                     {petsThisMonth > 0 ? (
                         <p className="stat-sub" style={{ display: "flex", alignItems: "center", gap: "4px", color: "var(--c-success-text)" }}>
-                            <Ic.TrendUp s={12} c="var(--c-success-text)" />
+                            <Icon.TrendUp s={12} c="var(--c-success-text)" />
                             +{petsThisMonth} este mes
                         </p>
                     ) : (
@@ -844,7 +730,7 @@ const Pets = () => {
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "10px" }}>
                         <p className="stat-label">Caninos</p>
                         <div style={iconBox("#dbeafe")}>
-                            <Ic.Dog s={16} c="#3b82f6" />
+                            <Icon.Dog s={16} c="#3b82f6" />
                         </div>
                     </div>
                     <p className="stat-value" style={{ color: "#1d4ed8" }}>{totalCaninos}</p>
@@ -858,7 +744,7 @@ const Pets = () => {
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "10px" }}>
                         <p className="stat-label">Felinos</p>
                         <div style={iconBox("#fce7f3")}>
-                            <Ic.Cat s={16} c="#ec4899" />
+                            <Icon.Cat s={16} c="#ec4899" />
                         </div>
                     </div>
                     <p className="stat-value" style={{ color: "#be185d" }}>{totalFelinos}</p>
@@ -872,7 +758,7 @@ const Pets = () => {
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "10px" }}>
                         <p className="stat-label">Citas esta semana</p>
                         <div style={iconBox("var(--c-warning-bg)")}>
-                            <Ic.Calendar s={16} c="var(--c-warning-text)" />
+                            <Icon.Calendar s={16} c="var(--c-warning-text)" />
                         </div>
                     </div>
                     <p className="stat-value" style={{ color: "var(--c-warning-text)" }}>{petsWithApptCount}</p>
@@ -887,7 +773,7 @@ const Pets = () => {
                 {/* Search */}
                 <div style={{ position: "relative", flex: "1 1 220px", maxWidth: "300px" }}>
                     <div style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}>
-                        <Ic.Search s={14} c="var(--c-text-3)" />
+                        <Icon.Search s={14} c="var(--c-text-3)" />
                     </div>
                     <input
                         type="text"
@@ -903,8 +789,8 @@ const Pets = () => {
                 <div style={{ display: "flex", gap: "3px", background: "var(--c-subtle)", padding: "3px", borderRadius: "var(--r-md)", border: "1px solid var(--c-border)" }}>
                     {[
                         { key: "all", label: "Todos" },
-                        { key: "caninos", label: "Caninos", icon: <Ic.Dog s={13} /> },
-                        { key: "felinos", label: "Felinos", icon: <Ic.Cat s={13} /> },
+                        { key: "caninos", label: "Caninos", icon: <Icon.Dog s={13} /> },
+                        { key: "felinos", label: "Felinos", icon: <Icon.Cat s={13} /> },
                     ].map(({ key, label, icon }) => (
                         <button
                             key={key}
@@ -959,7 +845,7 @@ const Pets = () => {
                         className="btn btn-ghost btn-sm"
                         onClick={() => { setSearch(""); setFilterSpecies("all"); setFilterSex("all"); setFilterAge("all"); }}
                     >
-                        <Ic.X s={12} />
+                        <Icon.X s={12} />
                         Limpiar
                     </button>
                 )}
@@ -1074,10 +960,10 @@ const Pets = () => {
                                         <td onClick={e => e.stopPropagation()}>
                                             <div style={{ display: "flex", gap: "6px" }}>
                                                 <button className="btn btn-secondary btn-sm" onClick={() => handleEdit(pet)}>
-                                                    <Ic.Edit s={13} /> Editar
+                                                    <Icon.Edit s={13} /> Editar
                                                 </button>
                                                 <button className="btn btn-danger btn-sm" onClick={() => handleDelete(pet.id)}>
-                                                    <Ic.Trash s={13} />
+                                                    <Icon.Trash s={13} />
                                                 </button>
                                             </div>
                                         </td>

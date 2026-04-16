@@ -8,6 +8,7 @@ import { getMedicalRecords } from "../api/medicalRecords";
 import { getPets } from "../api/pets";
 import { getProducts } from "../api/inventory";
 import { useAuth } from "../auth/authContext";
+import { Icon } from "../components/icons";
 
 const EMPTY_ITEM = { product: "", dose: "", duration: "", quantity: "", instructions: "" };
 const EMPTY_FORM = { medical_record: "", pet: "", notes: "", items: [{ ...EMPTY_ITEM }] };
@@ -239,12 +240,12 @@ const Prescriptions = () => {
 
             {error && (
                 <div style={{ backgroundColor: "#fee2e2", color: "#dc2626", padding: "10px", borderRadius: "5px", marginBottom: "15px" }}>
-                    {error} <button onClick={() => setError("")} style={{ float: "right", background: "none", border: "none", cursor: "pointer" }}>✕</button>
+                    {error} <button onClick={() => setError("")} style={{ float: "right", background: "none", border: "none", cursor: "pointer" }}><Icon.X s={14} /></button>
                 </div>
             )}
             {success && (
                 <div style={{ backgroundColor: "#d1fae5", color: "#059669", padding: "10px", borderRadius: "5px", marginBottom: "15px" }}>
-                    {success} <button onClick={() => setSuccess("")} style={{ float: "right", background: "none", border: "none", cursor: "pointer" }}>✕</button>
+                    {success} <button onClick={() => setSuccess("")} style={{ float: "right", background: "none", border: "none", cursor: "pointer" }}><Icon.X s={14} /></button>
                 </div>
             )}
 
@@ -287,7 +288,7 @@ const Prescriptions = () => {
                                         </span>
                                     </div>
                                     <p style={{ margin: 0, color: "#6b7280", fontSize: "0.9rem" }}>
-                                        📅 {formatDate(prescription.created_at)} · Dr. {prescription.veterinarian_name}
+<Icon.CalendarDays s={13} /> {formatDate(prescription.created_at)} · Dr. {prescription.veterinarian_name}
                                     </p>
                                 </div>
                                 <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
@@ -336,7 +337,7 @@ const Prescriptions = () => {
                     <div style={{ backgroundColor: "white", padding: "25px", borderRadius: "10px", width: "600px", maxHeight: "90vh", overflowY: "auto" }}>
                         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "20px" }}>
                             <h3 style={{ margin: 0 }}>{editing ? "Editar Receta" : "Nueva Receta"}</h3>
-                            <button onClick={closeModal} style={{ background: "none", border: "none", fontSize: "20px", cursor: "pointer" }}>✕</button>
+                            <button onClick={closeModal} style={{ background: "none", border: "none", fontSize: "20px", cursor: "pointer" }}><Icon.X s={16} /></button>
                         </div>
 
                         <form onSubmit={handleSubmit}>
@@ -392,7 +393,7 @@ const Prescriptions = () => {
                                             {form.items.length > 1 && (
                                                 <button type="button" onClick={() => removeItem(index)}
                                                     style={{ padding: "2px 8px", backgroundColor: "#ef4444", color: "white", border: "none", borderRadius: "3px", cursor: "pointer", fontSize: "0.8rem" }}>
-                                                    ✕
+                                                    <Icon.X s={11} />
                                                 </button>
                                             )}
                                         </div>
@@ -465,7 +466,7 @@ const Prescriptions = () => {
                     <div style={{ backgroundColor: "white", padding: "25px", borderRadius: "10px", width: "550px", maxHeight: "90vh", overflowY: "auto" }}>
                         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "20px" }}>
                             <h3 style={{ margin: 0 }}>Receta #{viewing.id}</h3>
-                            <button onClick={() => { setShowDetailModal(false); setViewing(null); }} style={{ background: "none", border: "none", fontSize: "20px", cursor: "pointer" }}>✕</button>
+                            <button onClick={() => { setShowDetailModal(false); setViewing(null); }} style={{ background: "none", border: "none", fontSize: "20px", cursor: "pointer" }}><Icon.X s={16} /></button>
                         </div>
 
                         <div style={{ display: "flex", gap: "20px", marginBottom: "16px" }}>

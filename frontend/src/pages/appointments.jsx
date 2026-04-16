@@ -7,6 +7,7 @@ import {
 import { getPets } from "../api/pets";
 import { getStaff } from "../api/staff";
 import { useAuth } from "../auth/authContext";
+import { Icon } from "../components/icons";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 const DAYS_ES  = ["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
@@ -644,7 +645,7 @@ const Appointments = () => {
             {success && (
                 <div className="alert alert-success" style={{marginBottom:"16px"}}>
                     {success}
-                    <button className="alert-close" onClick={()=>setSuccess("")}>✕</button>
+                    <button className="alert-close" onClick={()=>setSuccess("")}><Icon.X s={14} /></button>
                 </div>
             )}
 

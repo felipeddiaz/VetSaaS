@@ -1,3 +1,4 @@
+from django.core.exceptions import ValidationError
 from django.db import models
 from apps.patients.models import Pet
 from apps.users.models import User
@@ -11,8 +12,8 @@ class Appointment(OrganizationalModel):
         ('done', 'Completada'),
     )
 
-    pet = models.ForeignKey("patients.Pet", on_delete=models.CASCADE)
-    veterinarian = models.ForeignKey("users.User", on_delete=models.CASCADE)
+    pet = models.ForeignKey("patients.Pet", on_delete=models.PROTECT)
+    veterinarian = models.ForeignKey("users.User", on_delete=models.SET_NULL, null=True, blank=True)
 
     date = models.DateField()
     start_time = models.TimeField()
@@ -25,6 +26,13 @@ class Appointment(OrganizationalModel):
     notes = models.TextField(blank=True)
 
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="scheduled")
+
+    def clean(self):
+        org = self.organization_id
+        if org and self.pet_id and self.pet.organization_id != org:
+            raise ValidationError("La mascota no pertenece a la misma organizacion que la cita.")
+        if org and self.veterinarian_id and self.veterinarian.organization_id != org:
+            raise ValidationError("El veterinario no pertenece a la misma organizacion que la cita.")
 
     @property
     def medical_record_ids(self):
@@ -39,3 +47,12 @@ class Appointment(OrganizationalModel):
 
     class Meta:
         ordering = ["date", "start_time"]
+        indexes = [
+            models.Index(fields=["organization", "date", "status"]),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(end_time__gt=models.F('start_time')),
+                name="appointment_end_after_start",
+            ),
+        ]

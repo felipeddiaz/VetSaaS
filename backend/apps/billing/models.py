@@ -1,5 +1,7 @@
 from decimal import Decimal
+from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models import Q
 from apps.core.models import OrganizationalModel
 
 
@@ -7,9 +9,7 @@ class Service(OrganizationalModel):
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     base_price = models.DecimalField(max_digits=10, decimal_places=2)
-    is_active = models.BooleanField(default=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    # is_active, created_at, updated_at heredados de OrganizationalModel
 
     def __str__(self):
         return self.name
@@ -57,12 +57,12 @@ class Invoice(OrganizationalModel):
     )
     owner = models.ForeignKey(
         'patients.Owner',
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         related_name='invoices'
     )
     pet = models.ForeignKey(
         'patients.Pet',
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         related_name='invoices'
     )
     created_by = models.ForeignKey(
@@ -88,14 +88,27 @@ class Invoice(OrganizationalModel):
 
     notes = models.TextField(blank=True)
     paid_at = models.DateTimeField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    # created_at, updated_at heredados de OrganizationalModel
+
+    def clean(self):
+        org = self.organization_id
+        if org and self.owner_id and self.owner.organization_id != org:
+            raise ValidationError("El propietario no pertenece a la misma organizacion que la factura.")
+        if org and self.pet_id and self.pet.organization_id != org:
+            raise ValidationError("La mascota no pertenece a la misma organizacion que la factura.")
+        if org and self.appointment_id and self.appointment.organization_id != org:
+            raise ValidationError("La cita no pertenece a la misma organizacion que la factura.")
+        if org and self.medical_record_id and self.medical_record.organization_id != org:
+            raise ValidationError("El registro medico no pertenece a la misma organizacion que la factura.")
 
     def recalculate_totals(self):
         subtotal = sum(item.subtotal for item in self.items.all())
         tax_amount = subtotal * self.tax_rate
         total = subtotal + tax_amount
-        Invoice.objects.filter(pk=self.pk).update(
+        # ⚠️ Uses all_objects intentionally to bypass tenant + soft delete filters.
+        # This is required for internal consistency updates (recalculate totals atomically).
+        # Do NOT replace with objects — will silently update 0 rows outside request context.
+        Invoice.all_objects.filter(pk=self.pk).update(
             subtotal=subtotal,
             tax_amount=tax_amount,
             total=total,
@@ -103,9 +116,26 @@ class Invoice(OrganizationalModel):
 
     class Meta:
         ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=["organization", "status", "created_at"]),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(tax_rate__gte=0) & models.Q(tax_rate__lte=1),
+                name="invoice_tax_rate_range",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(subtotal__gte=0),
+                name="invoice_subtotal_non_negative",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(total__gte=models.F('subtotal')),
+                name="invoice_total_gte_subtotal",
+            ),
+        ]
 
 
-class InvoiceItem(models.Model):
+class InvoiceItem(OrganizationalModel):
     invoice = models.ForeignKey(
         Invoice,
         on_delete=models.CASCADE,
@@ -113,13 +143,6 @@ class InvoiceItem(models.Model):
     )
     service = models.ForeignKey(
         Service,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='invoice_items'
-    )
-    product = models.ForeignKey(
-        'inventory.Product',
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -135,13 +158,43 @@ class InvoiceItem(models.Model):
     # TODO (v2):
     # Hacer 'presentation' obligatorio a nivel DB (null=False)
     # cuando todos los flujos, seeds y frontend estén completamente migrados.
+    DISCOUNT_TYPE_CHOICES = (
+        ('percentage', 'Porcentaje'),
+        ('fixed', 'Monto fijo'),
+    )
+
+    discount_type = models.CharField(
+        max_length=10,
+        choices=DISCOUNT_TYPE_CHOICES,
+        null=True,
+        blank=True,
+    )
+
+    discount_value = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Monto o porcentaje del descuento. 0 = sin descuento."
+    )
     description = models.CharField(max_length=255)
     quantity = models.DecimalField(max_digits=10, decimal_places=2, default=1)
     unit_price = models.DecimalField(max_digits=10, decimal_places=2)
     subtotal = models.DecimalField(max_digits=10, decimal_places=2, default=0)
 
     def save(self, *args, **kwargs):
-        self.subtotal = self.quantity * self.unit_price
+        # Hereda organization del invoice — sin query extra
+        if self.invoice_id and not self.organization_id:
+            self.organization_id = self.invoice.organization_id
+
+        gross = self.quantity * self.unit_price
+        if self.discount_type == 'percentage':
+            discount_amount = gross * (self.discount_value / Decimal('100'))
+        elif self.discount_type == 'fixed':
+            discount_amount = min(self.discount_value, gross)
+        else:
+            discount_amount = Decimal('0.00')
+        self.subtotal = gross - discount_amount
+
         super().save(*args, **kwargs)
         self.invoice.recalculate_totals()
 
@@ -149,6 +202,30 @@ class InvoiceItem(models.Model):
         invoice = self.invoice
         super().delete(*args, **kwargs)
         invoice.recalculate_totals()
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(quantity__gt=0),
+                name="invoiceitem_quantity_positive",
+            ),
+            models.CheckConstraint(
+                condition=Q(unit_price__gte=0),
+                name="invoiceitem_unit_price_non_negative",
+            ),
+            models.CheckConstraint(
+                condition=Q(subtotal__gte=0),
+                name="invoiceitem_subtotal_non_negative",
+            ),
+            # XOR: exactamente uno de service o presentation debe estar presente
+            models.CheckConstraint(
+                condition=(
+                    (Q(service__isnull=False) & Q(presentation__isnull=True)) |
+                    (Q(service__isnull=True)  & Q(presentation__isnull=False))
+                ),
+                name="invoiceitem_exactly_one_source",
+            ),
+        ]
 
 
 class InvoiceAuditLog(models.Model):

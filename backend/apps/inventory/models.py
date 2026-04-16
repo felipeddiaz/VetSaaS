@@ -13,11 +13,9 @@ class Product(OrganizationalModel):
     name = models.CharField(max_length=255)
     internal_code = models.CharField(max_length=100, db_index=True)
     description = models.TextField(blank=True)
-    is_active = models.BooleanField(default=True)
     category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, default='other')
     requires_prescription = models.BooleanField(default=False)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    # is_active, created_at, updated_at heredados de OrganizationalModel
 
     def __str__(self):
         return self.name
@@ -67,6 +65,16 @@ class Presentation(OrganizationalModel):
 
     class Meta:
         ordering = ['product__name']
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(stock__gte=0),
+                name="presentation_stock_non_negative",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(sale_price__gt=0),
+                name="presentation_sale_price_positive",
+            ),
+        ]
 
 
 class StockMovement(OrganizationalModel):
@@ -105,13 +113,13 @@ class StockMovement(OrganizationalModel):
         blank=True,
         related_name='stock_movements_created',
     )
-    created_at = models.DateTimeField(auto_now_add=True)
+    # created_at heredado de OrganizationalModel
 
     class Meta:
         ordering = ['-created_at']
 
 
-class MedicalRecordProduct(models.Model):
+class MedicalRecordProduct(OrganizationalModel):
     """
     Productos consumidos durante una consulta médica.
     El stock se ajusta automáticamente via save() y delete().
@@ -132,6 +140,10 @@ class MedicalRecordProduct(models.Model):
         unique_together = [['medical_record', 'presentation']]
 
     def save(self, *args, **kwargs):
+        # Hereda organization del medical_record — sin query extra
+        if self.medical_record_id and not self.organization_id:
+            self.organization_id = self.medical_record.organization_id
+
         from .services import apply_stock_movement
         if self.pk:
             old = MedicalRecordProduct.objects.get(pk=self.pk)

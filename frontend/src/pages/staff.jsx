@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { getStaff, createStaff, deactivateStaff } from "../api/staff";
 import { useAuth } from "../auth/authContext";
+import { Icon } from "../components/icons";
 
 const EMPTY_FORM = {
     username: "",
@@ -175,7 +176,7 @@ const Staff = () => {
                     <div className="modal modal-lg">
                         <div className="modal-header">
                             <h3>Nuevo Miembro</h3>
-                            <button className="modal-close" onClick={closeModal}>✕</button>
+                            <button className="modal-close" onClick={closeModal}><Icon.X s={16} /></button>
                         </div>
                         <div className="modal-body">
                             {error && <div className="alert alert-danger">{error}</div>}

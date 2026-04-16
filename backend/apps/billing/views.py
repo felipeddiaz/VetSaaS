@@ -91,9 +91,11 @@ class InvoiceListCreateView(BillingOrganizationMixin, generics.ListCreateAPIView
         return queryset
 
     def perform_create(self, serializer):
+        org = self.request.user.organization
         serializer.save(
-            organization=self.request.user.organization,
+            organization=org,
             created_by=self.request.user,
+            tax_rate=org.tax_rate,
         )
 
 
@@ -181,8 +183,24 @@ class InvoiceItemCreateView(BillingOrganizationMixin, generics.CreateAPIView):
             organization=self.request.user.organization,
         )
         if invoice.status != 'draft':
-            raise ValidationError('Solo se pueden agregar ítems a facturas en borrador')
-        serializer.save(invoice=invoice)
+            raise ValidationError('Solo se pueden agregar ítems a cobros en borrador')
+
+        data = serializer.validated_data
+        service = data.get('service')
+        presentation = data.get('presentation')
+
+        if service:
+            unit_price = service.base_price
+            description = service.name
+        else:
+            unit_price = presentation.sale_price
+            description = str(presentation)   # "Producto — Presentación"
+
+        serializer.save(
+            invoice=invoice,
+            unit_price=unit_price,
+            description=description,
+        )
 
 
 class InvoiceItemDetailView(BillingOrganizationMixin, generics.RetrieveUpdateDestroyAPIView):

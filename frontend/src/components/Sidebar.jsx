@@ -1,18 +1,19 @@
 import { Link, useLocation } from "react-router-dom";
 import { useAuth } from "../auth/authContext";
+import { Icon } from "./icons";
 
 const NAV_ITEMS = [
-    { path: "/",               label: "Dashboard",        icon: "▣" },
-    { path: "/pets",           label: "Mascotas",         icon: "◉" },
-    { path: "/appointments",   label: "Citas",            icon: "◷" },
-    { path: "/medical-records",label: "Historial Clínico",icon: "◈" },
-    { path: "/inventory",      label: "Inventario",       icon: "◧" },
-    { path: "/billing",        label: "Facturación",      icon: "◎" },
+    { path: "/",               label: "Dashboard",         icon: Icon.LayoutDashboard },
+    { path: "/pets",           label: "Mascotas",          icon: Icon.PawPrint },
+    { path: "/appointments",   label: "Citas",             icon: Icon.CalendarClock },
+    { path: "/medical-records", label: "Historial Clínico", icon: Icon.FileHeart },
+    { path: "/inventory",      label: "Inventario",        icon: Icon.Package },
+    { path: "/billing",       label: "Cobros",            icon: Icon.Receipt },
 ];
 
 const ADMIN_ITEMS = [
-    { path: "/staff",   label: "Equipo",         icon: "◫" },
-    { path: "/config",  label: "Configuración",  icon: "◌" },
+    { path: "/staff",  label: "Equipo",         icon: Icon.Users },
+    { path: "/config",  label: "Configuración",  icon: Icon.Settings },
 ];
 
 const ROLE_LABELS = {
@@ -35,6 +36,7 @@ const Sidebar = ({ onLogout }) => {
 
     const NavLink = ({ item }) => {
         const active = isActive(item.path);
+        const IconComp = item.icon;
         return (
             <Link
                 to={item.path}
@@ -57,9 +59,7 @@ const Sidebar = ({ onLogout }) => {
                 onMouseEnter={e => { if (!active) e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.04)"; }}
                 onMouseLeave={e => { if (!active) e.currentTarget.style.backgroundColor = "transparent"; }}
             >
-                <span style={{ fontSize: "14px", opacity: active ? 1 : 0.6, flexShrink: 0 }}>
-                    {item.icon}
-                </span>
+                <IconComp s={17} c={active ? "#f1f5f9" : "var(--sidebar-text)"} />
                 {item.label}
             </Link>
         );
@@ -86,9 +86,9 @@ const Sidebar = ({ onLogout }) => {
                         borderRadius: "8px",
                         background: "linear-gradient(135deg, #2dd4bf, #0d9488)",
                         display: "flex", alignItems: "center", justifyContent: "center",
-                        fontSize: "15px", flexShrink: 0,
+                        flexShrink: 0,
                     }}>
-                        ✦
+                        <Icon.Stethoscope s={17} c="#fff" />
                     </div>
                     <div>
                         <div style={{ fontSize: "13px", fontWeight: "700", color: "#f1f5f9", letterSpacing: "0.02em" }}>
@@ -146,7 +146,7 @@ const Sidebar = ({ onLogout }) => {
                     onMouseEnter={e => { e.currentTarget.style.background = "rgba(239,68,68,0.12)"; e.currentTarget.style.color = "#fca5a5"; }}
                     onMouseLeave={e => { e.currentTarget.style.background = "rgba(255,255,255,0.04)"; e.currentTarget.style.color = "var(--sidebar-text)"; }}
                 >
-                    <span style={{ fontSize: "13px" }}>⎋</span>
+                    <Icon.LogOut s={15} c="currentColor" />
                     Cerrar sesión
                 </button>
             </div>

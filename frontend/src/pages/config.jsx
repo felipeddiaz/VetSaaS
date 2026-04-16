@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getServices, createService, updateService, deleteService } from "../api/billing";
 import { useAuth } from "../auth/authContext";
+import { Icon } from "../components/icons";
 
 const EMPTY_SERVICE = { name: "", description: "", base_price: "", is_active: true };
 
@@ -98,13 +99,13 @@ const Config = () => {
             {error && (
                 <div className="alert alert-danger">
                     {error}
-                    <button className="alert-close" onClick={() => setError("")}>✕</button>
+                    <button className="alert-close" onClick={() => setError("")}><Icon.X s={14} /></button>
                 </div>
             )}
             {success && (
                 <div className="alert alert-success">
                     {success}
-                    <button className="alert-close" onClick={() => setSuccess("")}>✕</button>
+                    <button className="alert-close" onClick={() => setSuccess("")}><Icon.X s={14} /></button>
                 </div>
             )}
 
@@ -178,7 +179,7 @@ const Config = () => {
                     <div className="modal modal-sm">
                         <div className="modal-header">
                             <h3>{editingService ? "Editar Servicio" : "Nuevo Servicio"}</h3>
-                            <button className="modal-close" onClick={closeModal}>✕</button>
+                            <button className="modal-close" onClick={closeModal}><Icon.X s={16} /></button>
                         </div>
                         <div className="modal-body">
                             <form onSubmit={handleSubmit}>

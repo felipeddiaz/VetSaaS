@@ -8,6 +8,7 @@ import {
 import { getProducts, getPresentations } from "../api/inventory";
 import { getPets, getOwners } from "../api/pets";
 import { useAuth } from "../auth/authContext";
+import { Icon } from "../components/icons";
 
 const STATUS_BADGE = { draft: "badge-default", confirmed: "badge-info", paid: "badge-success" };
 const STATUS_LABELS = { draft: "Borrador", confirmed: "Confirmada", paid: "Pagada" };
@@ -23,9 +24,9 @@ const EMPTY_SERVICE = { name: "", description: "", base_price: "", is_active: tr
 const EMPTY_ITEM = {
     service: "",
     presentation: "",
-    description: "",
     quantity: "1",
-    unit_price: "",
+    discount_type: "",
+    discount_value: "",
 };
 
 const Billing = () => {
@@ -49,7 +50,7 @@ const Billing = () => {
     const [serviceForm, setServiceForm] = useState(EMPTY_SERVICE);
 
     const [itemForm, setItemForm] = useState(EMPTY_ITEM);
-    const [showItemForm, setShowItemForm] = useState(false);
+    const [itemMode, setItemMode] = useState(null); // null | "service" | "product"
 
     const [showNewInvoiceModal, setShowNewInvoiceModal] = useState(false);
     const [newInvoiceForm, setNewInvoiceForm] = useState({
@@ -111,7 +112,7 @@ const Billing = () => {
             const detail = await getInvoice(invoice.id);
             setSelectedInvoice(detail);
             setShowDetailModal(true);
-            setShowItemForm(false);
+            setItemMode(null);
             setItemForm(EMPTY_ITEM);
             setError("");
         } catch (err) {
@@ -150,23 +151,41 @@ const Billing = () => {
     const handleAddItem = async (e) => {
         e.preventDefault();
         setError("");
-        if (!itemForm.description.trim()) { setError("La descripción es obligatoria"); return; }
-        if (!itemForm.unit_price || Number(itemForm.unit_price) < 0) { setError("El precio debe ser mayor o igual a 0"); return; }
+
+        const hasService = Boolean(itemForm.service);
+        const hasPresentation = Boolean(itemForm.presentation);
+
+        if (!hasService && !hasPresentation) {
+            setError("Selecciona un servicio o una presentación");
+            return;
+        }
+
+        const payload = {
+            service: hasService ? parseInt(itemForm.service) : null,
+            presentation: hasPresentation ? parseInt(itemForm.presentation) : null,
+            quantity: itemForm.quantity,
+            ...(itemForm.discount_type && {
+                discount_type: itemForm.discount_type,
+                discount_value: itemForm.discount_value || "0",
+            }),
+        };
+
         try {
-            await addInvoiceItem(selectedInvoice.id, {
-                service: itemForm.service || null,
-                presentation: itemForm.presentation || null,
-                description: itemForm.description,
-                quantity: itemForm.quantity,
-                unit_price: itemForm.unit_price,
-            });
+            await addInvoiceItem(selectedInvoice.id, payload);
             const updated = await getInvoice(selectedInvoice.id);
             setSelectedInvoice(updated);
             setItemForm(EMPTY_ITEM);
-            setShowItemForm(false);
+            setItemMode(null);
             loadInvoices();
         } catch (err) {
-            setError(err.response?.data?.error || "Error al agregar ítem");
+            const detail = err.response?.data;
+            if (Array.isArray(detail)) {
+                setError(detail.join("; "));
+            } else if (typeof detail === 'object') {
+                setError(Object.values(detail).flat().join("; "));
+            } else {
+                setError("Error al agregar ítem");
+            }
         }
     };
 
@@ -245,7 +264,7 @@ const Billing = () => {
     const closeDetailModal = () => {
         setShowDetailModal(false);
         setSelectedInvoice(null);
-        setShowItemForm(false);
+        setItemMode(null);
         setError("");
     };
 
@@ -269,19 +288,19 @@ const Billing = () => {
     return (
         <div>
             <div className="page-header">
-                <h1 className="page-title">Facturación</h1>
+                <h1 className="page-title">Cobros</h1>
             </div>
 
             {error && (
                 <div className="alert alert-danger">
                     {error}
-                    <button className="alert-close" onClick={() => setError("")}>✕</button>
+                    <button className="alert-close" onClick={() => setError("")}><Icon.X s={14} /></button>
                 </div>
             )}
             {success && (
                 <div className="alert alert-success">
                     {success}
-                    <button className="alert-close" onClick={() => setSuccess("")}>✕</button>
+                    <button className="alert-close" onClick={() => setSuccess("")}><Icon.X s={14} /></button>
                 </div>
             )}
 
@@ -308,14 +327,14 @@ const Billing = () => {
                             setShowNewInvoiceModal(true);
                         }}
                     >
-                        + Nueva Factura
+                        + Nuevo Cobro
                     </button>
                 )}
             </div>
 
             {invoices.length === 0 ? (
                 <div className="empty-state">
-                    <p className="empty-state-title">No hay facturas registradas</p>
+                    <p className="empty-state-title">No hay cobros registrados</p>
                     <p className="empty-state-sub">Las facturas se generan automáticamente al completar una cita</p>
                 </div>
             ) : (
@@ -374,7 +393,7 @@ const Billing = () => {
                     <div className="modal modal-lg">
                         <div className="modal-header">
                             <div>
-                                <h3>Factura #{selectedInvoice.id}</h3>
+                                <h3>Cobro #{selectedInvoice.id}</h3>
                                 <div style={{ display: "flex", gap: "6px", marginTop: "6px", alignItems: "center" }}>
                                     <span className={`badge ${STATUS_BADGE[selectedInvoice.status]}`}>
                                         {STATUS_LABELS[selectedInvoice.status]}
@@ -387,7 +406,7 @@ const Billing = () => {
                                     )}
                                 </div>
                             </div>
-                            <button className="modal-close" onClick={closeDetailModal}>✕</button>
+                            <button className="modal-close" onClick={closeDetailModal}><Icon.X s={16} /></button>
                         </div>
                         <div className="modal-body">
                             {error && <div className="alert alert-danger">{error}</div>}
@@ -417,14 +436,6 @@ const Billing = () => {
                             <div style={{ marginBottom: "16px" }}>
                                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
                                     <p style={{ fontWeight: "600", fontSize: "13px" }}>Ítems</p>
-                                    {canManage && selectedInvoice.status === "draft" && (
-                                        <button
-                                            className="btn btn-primary btn-sm"
-                                            onClick={() => setShowItemForm(!showItemForm)}
-                                        >
-                                            + Agregar ítem
-                                        </button>
-                                    )}
                                 </div>
 
                                 {selectedInvoice.items.length === 0 ? (
@@ -437,6 +448,7 @@ const Billing = () => {
                                                     <th>Descripción</th>
                                                     <th>Cant.</th>
                                                     <th>P. Unit.</th>
+                                                    <th>Descuento</th>
                                                     <th>Subtotal</th>
                                                     <th></th>
                                                 </tr>
@@ -447,6 +459,11 @@ const Billing = () => {
                                                         <td>{item.description}</td>
                                                         <td>{item.quantity}</td>
                                                         <td>${formatCurrency(item.unit_price)}</td>
+                                                        <td style={{ color: "var(--c-text-3)", fontSize: "12px" }}>
+                                                            {item.discount_type === "percentage" && `${item.discount_value}%`}
+                                                            {item.discount_type === "fixed" && `-$${formatCurrency(item.discount_value)}`}
+                                                            {!item.discount_type && "—"}
+                                                        </td>
                                                         <td style={{ fontWeight: "600" }}>${formatCurrency(item.subtotal)}</td>
                                                         <td>
                                                             {canManage && selectedInvoice.status === "draft" && (
@@ -454,7 +471,7 @@ const Billing = () => {
                                                                     className="btn btn-danger btn-xs"
                                                                     onClick={() => handleDeleteItem(item.id)}
                                                                 >
-                                                                    ✕
+                                                                    <Icon.X s={11} />
                                                                 </button>
                                                             )}
                                                         </td>
@@ -465,8 +482,28 @@ const Billing = () => {
                                     </div>
                                 )}
 
-                                {/* Add item form */}
-                                {showItemForm && selectedInvoice.status === "draft" && (
+                                {/* Botones Agregar Servicio / Producto */}
+                                {canManage && selectedInvoice.status === "draft" && (
+                                    <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
+                                        <button
+                                            className="btn btn-secondary btn-sm"
+                                            style={{ flex: 1 }}
+                                            onClick={() => setItemMode(itemMode === "service" ? null : "service")}
+                                        >
+                                            + Agregar Servicio
+                                        </button>
+                                        <button
+                                            className="btn btn-secondary btn-sm"
+                                            style={{ flex: 1 }}
+                                            onClick={() => setItemMode(itemMode === "product" ? null : "product")}
+                                        >
+                                            + Agregar Producto
+                                        </button>
+                                    </div>
+                                )}
+
+                                {/* Sub-formulario SERVICIO */}
+                                {itemMode === "service" && selectedInvoice.status === "draft" && (
                                     <form
                                         onSubmit={handleAddItem}
                                         style={{
@@ -477,80 +514,203 @@ const Billing = () => {
                                     >
                                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "10px" }}>
                                             <div>
-                                                <label className="form-label">SERVICIO (opcional)</label>
+                                                <label className="form-label">SERVICIO *</label>
                                                 <select
                                                     className="select-input"
                                                     value={itemForm.service}
-                                                    onChange={e => onServiceSelect(e.target.value)}
+                                                    onChange={e => setItemForm(f => ({ ...f, service: e.target.value, presentation: "" }))}
+                                                    required
                                                 >
-                                                    <option value="">Sin servicio</option>
+                                                    <option value="">— Seleccionar servicio —</option>
                                                     {services.filter(s => s.is_active).map(s => (
-                                                        <option key={s.id} value={s.id}>{s.name} (${formatCurrency(s.base_price)})</option>
-                                                    ))}
-                                                </select>
-                                            </div>
-                                            <div>
-                                                <label className="form-label">PRESENTACIÓN (opcional)</label>
-                                                <select
-                                                    className="select-input"
-                                                    value={itemForm.presentation}
-                                                    onChange={e => {
-                                                        const pres = presentations.find(p => p.id === parseInt(e.target.value));
-                                                        setItemForm(f => ({
-                                                            ...f,
-                                                            presentation: e.target.value,
-                                                            service: "",
-                                                            description: pres ? `${pres.product_name} — ${pres.name}` : f.description,
-                                                            unit_price: pres ? pres.sale_price : f.unit_price,
-                                                        }));
-                                                    }}
-                                                >
-                                                    <option value="">— Seleccionar presentación —</option>
-                                                    {presentations.map(p => (
-                                                        <option key={p.id} value={p.id} disabled={p.stock <= 0}>
-                                                            {p.product_name} — {p.name}
-                                                            {p.stock <= 0 ? ' (sin stock)' : ` (stock: ${p.stock})`}
+                                                        <option key={s.id} value={s.id}>
+                                                            {s.name} — ${formatCurrency(s.base_price)}
                                                         </option>
                                                     ))}
                                                 </select>
                                             </div>
                                             <div>
-                                                <label className="form-label">DESCRIPCIÓN *</label>
+                                                <label className="form-label">CANTIDAD</label>
                                                 <input
-                                                    type="text"
-                                                    className="input"
-                                                    value={itemForm.description}
-                                                    onChange={e => setItemForm({ ...itemForm, description: e.target.value })}
-                                                    placeholder="Descripción del ítem"
+                                                    type="number" min="0.01" step="0.01" className="input"
+                                                    value={itemForm.quantity}
+                                                    onChange={e => setItemForm(f => ({ ...f, quantity: e.target.value }))}
                                                 />
+                                            </div>
+                                            <div>
+                                                <label className="form-label">DESCUENTO (opcional)</label>
+                                                <select
+                                                    className="select-input"
+                                                    value={itemForm.discount_type}
+                                                    onChange={e => setItemForm(f => ({ ...f, discount_type: e.target.value, discount_value: "" }))}
+                                                >
+                                                    <option value="">Sin descuento</option>
+                                                    <option value="percentage">Porcentaje (%)</option>
+                                                    <option value="fixed">Monto fijo ($)</option>
+                                                </select>
+                                            </div>
+                                            {itemForm.discount_type && (
+                                                <div>
+                                                    <label className="form-label">
+                                                        {itemForm.discount_type === "percentage" ? "PORCENTAJE" : "MONTO A DESCONTAR"}
+                                                    </label>
+                                                    <input
+                                                        type="number" min="0.01" step="0.01" className="input"
+                                                        value={itemForm.discount_value}
+                                                        onChange={e => setItemForm(f => ({ ...f, discount_value: e.target.value }))}
+                                                        placeholder={itemForm.discount_type === "percentage" ? "ej: 10" : "ej: 50.00"}
+                                                    />
+                                                </div>
+                                            )}
+                                        </div>
+                                        {itemForm.service && (
+                                            <div style={{
+                                                gridColumn: "1 / -1",
+                                                background: "var(--c-surface)",
+                                                borderRadius: "var(--r-md)",
+                                                padding: "10px 14px",
+                                                fontSize: "12.5px",
+                                                color: "var(--c-text-2)",
+                                                marginBottom: "10px",
+                                            }}>
+                                                {(() => {
+                                                    const svc = services.find(s => s.id === parseInt(itemForm.service));
+                                                    if (!svc) return null;
+                                                    const qty = Number(itemForm.quantity) || 1;
+                                                    const gross = svc.base_price * qty;
+                                                    let discount = 0;
+                                                    if (itemForm.discount_type === "percentage") {
+                                                        discount = gross * (Number(itemForm.discount_value) / 100);
+                                                    } else if (itemForm.discount_type === "fixed") {
+                                                        discount = Math.min(Number(itemForm.discount_value) || 0, gross);
+                                                    }
+                                                    const net = gross - discount;
+                                                    return (
+                                                        <>
+                                                            <span>Precio unitario: <strong>${formatCurrency(svc.base_price)}</strong></span>
+                                                            {discount > 0 && (
+                                                                <span style={{ marginLeft: "12px", color: "var(--c-warning-text)" }}>
+                                                                    Descuento: -${formatCurrency(discount)}
+                                                                </span>
+                                                            )}
+                                                            <span style={{ marginLeft: "12px", fontWeight: "700", color: "var(--c-success-text)" }}>
+                                                                Total línea: ${formatCurrency(net)}
+                                                            </span>
+                                                        </>
+                                                    );
+                                                })()}
+                                            </div>
+                                        )}
+                                        <div style={{ display: "flex", gap: "8px" }}>
+                                            <button type="submit" className="btn btn-primary btn-sm">Agregar</button>
+                                            <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setItemMode(null); setItemForm(EMPTY_ITEM); }}>Cancelar</button>
+                                        </div>
+                                    </form>
+                                )}
+
+                                {/* Sub-formulario PRODUCTO */}
+                                {itemMode === "product" && selectedInvoice.status === "draft" && (
+                                    <form
+                                        onSubmit={handleAddItem}
+                                        style={{
+                                            background: "var(--c-subtle)", padding: "14px",
+                                            borderRadius: "var(--r-lg)", marginTop: "12px",
+                                            border: "1px solid var(--c-border)",
+                                        }}
+                                    >
+                                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "10px" }}>
+                                            <div>
+                                                <label className="form-label">PRESENTACIÓN *</label>
+                                                <select
+                                                    className="select-input"
+                                                    value={itemForm.presentation}
+                                                    onChange={e => setItemForm(f => ({ ...f, presentation: e.target.value, service: "" }))}
+                                                    required
+                                                >
+                                                    <option value="">— Seleccionar producto —</option>
+                                                    {presentations.map(p => (
+                                                        <option key={p.id} value={p.id} disabled={p.stock <= 0}>
+                                                            {p.product_name} — {p.name}
+                                                            {p.stock <= 0 ? ' (sin stock)' : ` ($${formatCurrency(p.sale_price)} | stock: ${p.stock})`}
+                                                        </option>
+                                                    ))}
+                                                </select>
                                             </div>
                                             <div>
                                                 <label className="form-label">CANTIDAD</label>
                                                 <input
-                                                    type="number"
-                                                    min="0.01"
-                                                    step="0.01"
-                                                    className="input"
+                                                    type="number" min="0.01" step="0.01" className="input"
                                                     value={itemForm.quantity}
-                                                    onChange={e => setItemForm({ ...itemForm, quantity: e.target.value })}
+                                                    onChange={e => setItemForm(f => ({ ...f, quantity: e.target.value }))}
                                                 />
                                             </div>
                                             <div>
-                                                <label className="form-label">PRECIO UNITARIO *</label>
-                                                <input
-                                                    type="number"
-                                                    min="0"
-                                                    step="0.01"
-                                                    className="input"
-                                                    value={itemForm.unit_price}
-                                                    onChange={e => setItemForm({ ...itemForm, unit_price: e.target.value })}
-                                                    placeholder="0.00"
-                                                />
+                                                <label className="form-label">DESCUENTO (opcional)</label>
+                                                <select
+                                                    className="select-input"
+                                                    value={itemForm.discount_type}
+                                                    onChange={e => setItemForm(f => ({ ...f, discount_type: e.target.value, discount_value: "" }))}
+                                                >
+                                                    <option value="">Sin descuento</option>
+                                                    <option value="percentage">Porcentaje (%)</option>
+                                                    <option value="fixed">Monto fijo ($)</option>
+                                                </select>
                                             </div>
+                                            {itemForm.discount_type && (
+                                                <div>
+                                                    <label className="form-label">
+                                                        {itemForm.discount_type === "percentage" ? "PORCENTAJE" : "MONTO A DESCONTAR"}
+                                                    </label>
+                                                    <input
+                                                        type="number" min="0.01" step="0.01" className="input"
+                                                        value={itemForm.discount_value}
+                                                        onChange={e => setItemForm(f => ({ ...f, discount_value: e.target.value }))}
+                                                        placeholder={itemForm.discount_type === "percentage" ? "ej: 10" : "ej: 50.00"}
+                                                    />
+                                                </div>
+                                            )}
                                         </div>
+                                        {itemForm.presentation && (
+                                            <div style={{
+                                                gridColumn: "1 / -1",
+                                                background: "var(--c-surface)",
+                                                borderRadius: "var(--r-md)",
+                                                padding: "10px 14px",
+                                                fontSize: "12.5px",
+                                                color: "var(--c-text-2)",
+                                                marginBottom: "10px",
+                                            }}>
+                                                {(() => {
+                                                    const pres = presentations.find(p => p.id === parseInt(itemForm.presentation));
+                                                    if (!pres) return null;
+                                                    const qty = Number(itemForm.quantity) || 1;
+                                                    const gross = pres.sale_price * qty;
+                                                    let discount = 0;
+                                                    if (itemForm.discount_type === "percentage") {
+                                                        discount = gross * (Number(itemForm.discount_value) / 100);
+                                                    } else if (itemForm.discount_type === "fixed") {
+                                                        discount = Math.min(Number(itemForm.discount_value) || 0, gross);
+                                                    }
+                                                    const net = gross - discount;
+                                                    return (
+                                                        <>
+                                                            <span>Precio unitario: <strong>${formatCurrency(pres.sale_price)}</strong></span>
+                                                            {discount > 0 && (
+                                                                <span style={{ marginLeft: "12px", color: "var(--c-warning-text)" }}>
+                                                                    Descuento: -${formatCurrency(discount)}
+                                                                </span>
+                                                            )}
+                                                            <span style={{ marginLeft: "12px", fontWeight: "700", color: "var(--c-success-text)" }}>
+                                                                Total línea: ${formatCurrency(net)}
+                                                            </span>
+                                                        </>
+                                                    );
+                                                })()}
+                                            </div>
+                                        )}
                                         <div style={{ display: "flex", gap: "8px" }}>
                                             <button type="submit" className="btn btn-primary btn-sm">Agregar</button>
-                                            <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowItemForm(false)}>Cancelar</button>
+                                            <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setItemMode(null); setItemForm(EMPTY_ITEM); }}>Cancelar</button>
                                         </div>
                                     </form>
                                 )}
@@ -558,21 +718,6 @@ const Billing = () => {
 
                             {/* Totals */}
                             <div style={{ borderTop: "1px solid var(--c-border)", paddingTop: "14px", marginBottom: "8px" }}>
-                                {selectedInvoice.status === "draft" && canManage && (
-                                    <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "10px" }}>
-                                        <label style={{ fontSize: "13px", color: "var(--c-text-2)" }}>IVA (%)</label>
-                                        <input
-                                            type="number"
-                                            min="0"
-                                            max="100"
-                                            step="0.01"
-                                            className="input"
-                                            style={{ width: "80px" }}
-                                            defaultValue={(Number(selectedInvoice.tax_rate) * 100).toFixed(0)}
-                                            onBlur={e => handleTaxRateChange((Number(e.target.value) / 100).toFixed(4))}
-                                        />
-                                    </div>
-                                )}
                                 <div style={{ display: "flex", justifyContent: "flex-end" }}>
                                     <div style={{ minWidth: "220px" }}>
                                         {[
@@ -601,8 +746,8 @@ const Billing = () => {
                         {canManage && (
                             <div className="modal-footer">
                                 {selectedInvoice.status === "draft" && (
-                                    <button className="btn btn-info btn-md" style={{ flex: 1 }} onClick={handleConfirm}>
-                                        Confirmar Factura
+                                    <button className="btn btn-primary btn-md" style={{ flex: 1 }} onClick={handleConfirm}>
+                                        Continuar al pago
                                     </button>
                                 )}
                                 {selectedInvoice.status === "confirmed" && (
@@ -629,7 +774,7 @@ const Billing = () => {
                     <div className="modal modal-sm">
                         <div className="modal-header">
                             <h3>Registrar Pago</h3>
-                            <button className="modal-close" onClick={() => setShowPayModal(false)}>✕</button>
+                            <button className="modal-close" onClick={() => setShowPayModal(false)}><Icon.X s={16} /></button>
                         </div>
                         <div className="modal-body">
                             <div className="form-group">
@@ -675,8 +820,8 @@ const Billing = () => {
                 <div className="modal-overlay">
                     <div className="modal modal-lg">
                         <div className="modal-header">
-                            <h3>Nueva Factura</h3>
-                            <button className="modal-close" onClick={() => setShowNewInvoiceModal(false)}>✕</button>
+                            <h3>Nuevo Cobro</h3>
+                            <button className="modal-close" onClick={() => setShowNewInvoiceModal(false)}><Icon.X s={16} /></button>
                         </div>
                         <div className="modal-body">
                             {error && <div className="alert alert-danger">{error}</div>}

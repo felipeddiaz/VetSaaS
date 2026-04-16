@@ -7,6 +7,7 @@ import {
 import { getPets } from "../api/pets";
 import { getProducts, addMedicalRecordProduct, removeMedicalRecordProduct } from "../api/inventory";
 import { useAuth } from "../auth/authContext";
+import { Icon } from "../components/icons";
 import styles from "./medicalRecords.module.css";
 
 const EMPTY_FORM = { pet: "", diagnosis: "", treatment: "", notes: "", weight: "", appointment: null };
@@ -25,65 +26,6 @@ const TYPE_META = {
     urgencia: { color: "#ef4444", bg: "rgba(239,68,68,.08)",   label: "Urgencia" },
     cirugia:  { color: "#8b5cf6", bg: "rgba(139,92,246,.08)",  label: "Cirugía"  },
 };
-
-/* ── SVG Icons ──────────────────────────────────────────────────────────── */
-const DogIcon = ({ size = 20 }) => (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
-        stroke="#0d9488" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M4.5 14C3.7 14 3 13.3 3 12.5V10a5 5 0 0 1 5-5h8a5 5 0 0 1 5 5v2.5c0 .8-.7 1.5-1.5 1.5"/>
-        <path d="M8 5V3.5A1.5 1.5 0 0 1 9.5 2h5A1.5 1.5 0 0 1 16 3.5V5"/>
-        <path d="M9 14v4m6-4v4"/>
-        <path d="M4.5 14h15"/>
-        <circle cx="9.5" cy="11" r="0.9" fill="#0d9488" stroke="none"/>
-        <circle cx="14.5" cy="11" r="0.9" fill="#0d9488" stroke="none"/>
-        <path d="M10.5 13.5c.8.5 2.2.5 3 0"/>
-    </svg>
-);
-
-const CatIcon = ({ size = 20 }) => (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
-        stroke="#7c3aed" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M12 8c-4 0-7 2.5-7 6 0 4 2.5 6 7 6s7-2 7-6c0-3.5-3-6-7-6z"/>
-        <path d="M5 8 3 3l4 3"/>
-        <path d="M19 8l2-5-4 3"/>
-        <circle cx="9.5" cy="14" r="0.85" fill="#7c3aed" stroke="none"/>
-        <circle cx="14.5" cy="14" r="0.85" fill="#7c3aed" stroke="none"/>
-        <path d="M10.5 16.5c.8.5 2.2.5 3 0"/>
-        <path d="M9 11.5 6.5 10M15 11.5l2.5-1.5"/>
-    </svg>
-);
-
-const PawIcon = ({ size = 20 }) => (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
-        stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="7"  cy="7.5" r="1.4"/>
-        <circle cx="12" cy="5.5" r="1.4"/>
-        <circle cx="17" cy="7.5" r="1.4"/>
-        <circle cx="4.5" cy="12" r="1.4"/>
-        <path d="M12 12.5c-3.3 0-5.8 2-5.8 5.2 0 1.8 1.4 3.3 3.5 3.3h4.6c2.1 0 3.5-1.5 3.5-3.3 0-3.2-2.5-5.2-5.8-5.2z"/>
-    </svg>
-);
-
-const SearchIcon = () => (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
-        stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
-    </svg>
-);
-
-const ChevronDownIcon = () => (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-        stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-        <polyline points="6 9 12 15 18 9"/>
-    </svg>
-);
-
-const ChevronUpIcon = () => (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-        stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-        <polyline points="18 15 12 9 6 15"/>
-    </svg>
-);
 
 /* ── Species helpers ──────────────────────────────────────────────────── */
 const SPECIES_DOG = /perro|can[ei]|dog/i;
@@ -264,9 +206,9 @@ const MedicalRecords = () => {
 
     const PetIcon = ({ petId, size = 18 }) => {
         const s = getPetSpecies(petId);
-        if (SPECIES_DOG.test(s)) return <DogIcon size={size} />;
-        if (SPECIES_CAT.test(s)) return <CatIcon size={size} />;
-        return <PawIcon size={size} />;
+        if (SPECIES_DOG.test(s)) return <Icon.Dog size={size} />;
+        if (SPECIES_CAT.test(s)) return <Icon.Cat size={size} />;
+        return <Icon.Paw size={size} />;
     };
 
     /* ── CRUD ────────────────────────────────────────────────────────────── */
@@ -372,8 +314,8 @@ const MedicalRecords = () => {
                 )}
             </div>
 
-            {error   && <div className="alert alert-danger">{error}<button className="alert-close" onClick={() => setError("")}>✕</button></div>}
-            {success && <div className="alert alert-success">{success}<button className="alert-close" onClick={() => setSuccess("")}>✕</button></div>}
+            {error   && <div className="alert alert-danger">{error}<button className="alert-close" onClick={() => setError("")}><Icon.X s={14} /></button></div>}
+            {success && <div className="alert alert-success">{success}<button className="alert-close" onClick={() => setSuccess("")}><Icon.X s={14} /></button></div>}
 
             {/* ── Main two-column layout ───────────────────────────────────── */}
             <div className={styles.pageLayout}>
@@ -383,7 +325,7 @@ const MedicalRecords = () => {
                     <div className={styles.sidebarHeader}>Mascotas</div>
 
                     <div className={styles.sidebarSearchWrap}>
-                        <span className={styles.sidebarSearchIcon}><SearchIcon /></span>
+                        <span className={styles.sidebarIcon.Search}><Icon.Search /></span>
                         <input
                             className={styles.sidebarSearchInput}
                             placeholder="Nombre, raza, especie…"
@@ -404,9 +346,9 @@ const MedicalRecords = () => {
                                     className={`${styles.petListItem}${isActive ? ` ${styles.petListItemActive}` : ""}`}
                                     onClick={() => { setSelectedPet(String(pet.id)); setPage(1); setExpandedId(null); }}>
                                     <div className={styles.petListIcon} style={{ background: getSpeciesBg(sp) }}>
-                                        {SPECIES_DOG.test(sp) ? <DogIcon size={15} /> :
-                                         SPECIES_CAT.test(sp) ? <CatIcon size={15} /> :
-                                         <PawIcon size={15} />}
+                                        {SPECIES_DOG.test(sp) ? <Icon.Dog size={15} /> :
+                                         SPECIES_CAT.test(sp) ? <Icon.Cat size={15} /> :
+                                         <Icon.Paw size={15} />}
                                     </div>
                                     <div className={styles.petListInfo}>
                                         <div className={styles.petListName}>{pet.name}</div>
@@ -430,7 +372,7 @@ const MedicalRecords = () => {
                     {!selectedPet ? (
                         <div className={styles.emptyCenter}>
                             <div className={styles.emptyIconWrap}>
-                                <PawIcon size={40} />
+                                <Icon.Paw size={40} />
                             </div>
                             <p className={styles.emptyTitle}>Selecciona una mascota</p>
                             <p className={styles.emptySub}>
@@ -455,7 +397,7 @@ const MedicalRecords = () => {
                                 </div>
                                 <button className="btn btn-ghost btn-sm"
                                     onClick={() => { setSelectedPet(""); setTypeFilter("all"); setPage(1); setExpandedId(null); }}>
-                                    ✕ Quitar
+<Icon.X s={13} /> Quitar
                                 </button>
                             </div>
 
@@ -471,7 +413,7 @@ const MedicalRecords = () => {
                                     ))}
                                 </div>
                                 <div className={styles.historySearchWrap}>
-                                    <span className={styles.historySearchIcon}><SearchIcon /></span>
+                                    <span className={styles.historyIcon.Search}><Icon.Search /></span>
                                     <input
                                         className={styles.historySearchInput}
                                         placeholder="Buscar en historial…"
@@ -485,7 +427,7 @@ const MedicalRecords = () => {
                             {visibleRecords.length === 0 ? (
                                 <div className={styles.emptyCenter} style={{ minHeight: "240px" }}>
                                     <div className={styles.emptyIconWrap}>
-                                        <PawIcon size={32} />
+                                        <Icon.Paw size={32} />
                                     </div>
                                     <p className={styles.emptyTitle} style={{ fontSize: "15px" }}>
                                         {historySearch || typeFilter !== "all"
@@ -551,7 +493,7 @@ const MedicalRecords = () => {
                                                                             <button
                                                                                 className={`${styles.detailBtn}${isOpen ? ` ${styles.detailBtnOpen}` : ""}`}
                                                                                 onClick={() => setExpandedId(isOpen ? null : record.id)}>
-                                                                                {isOpen ? <><ChevronUpIcon /> Ocultar</> : <><ChevronDownIcon /> Ver detalle</>}
+                                                                                {isOpen ? <><Icon.ChevronUp /> Ocultar</> : <><Icon.ChevronDown /> Ver detalle</>}
                                                                             </button>
                                                                             {canCreate && (
                                                                                 <div className={styles.crudActions}>
@@ -629,7 +571,7 @@ const MedicalRecords = () => {
                     <div className="modal modal-md">
                         <div className="modal-header">
                             <h3>{editing ? "Editar Consulta" : "Nueva Consulta"}</h3>
-                            <button className="modal-close" onClick={closeModal}>✕</button>
+                            <button className="modal-close" onClick={closeModal}><Icon.X s={16} /></button>
                         </div>
                         <div className="modal-body">
                             {!savedRecord ? (
