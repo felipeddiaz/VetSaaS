@@ -2,9 +2,10 @@ from django.db.models import F
 from rest_framework import generics, status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.exceptions import ValidationError
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
+
+from apps.core.permissions import RolePermission, make_permission
 
 from .models import Product, Presentation, StockMovement, MedicalRecordProduct
 from .serializers import (
@@ -18,7 +19,8 @@ from .serializers import (
 
 class ProductListCreateView(generics.ListCreateAPIView):
     serializer_class = ProductSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [RolePermission]
+    resource_name = "inventory"
 
     def get_queryset(self):
         queryset = (
@@ -36,7 +38,8 @@ class ProductListCreateView(generics.ListCreateAPIView):
 
 class ProductDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = ProductSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [RolePermission]
+    resource_name = "inventory"
 
     def get_queryset(self):
         return (
@@ -47,7 +50,7 @@ class ProductDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([make_permission("inventory.list")])
 def low_stock_products(request):
     """Productos activos cuyo stock <= min_stock. Filtrado a nivel DB."""
     products = (
@@ -63,7 +66,7 @@ def low_stock_products(request):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([make_permission("inventory.update")])
 def adjust_stock(request, pk):
     """Ajuste manual de stock (entrada, salida o corrección)."""
     from django.core.exceptions import ValidationError as DjValidationError
@@ -75,8 +78,6 @@ def adjust_stock(request, pk):
         organization=request.user.organization,
     )
 
-    # Después de las migraciones todo producto tiene presentación,
-    # pero validamos defensivamente.
     if not hasattr(product, 'presentation'):
         return Response(
             {'error': 'Este producto no tiene presentación configurada.'},
@@ -110,7 +111,8 @@ def adjust_stock(request, pk):
 
 class StockMovementListView(generics.ListAPIView):
     serializer_class = StockMovementSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [RolePermission]
+    resource_name = "inventory"
 
     def get_queryset(self):
         queryset = (
@@ -118,11 +120,9 @@ class StockMovementListView(generics.ListAPIView):
             .filter(organization=self.request.user.organization)
             .select_related('presentation__product', 'created_by')
         )
-        # Filtrar por product_id (conveniencia para el frontend)
         product_id = self.request.query_params.get('product')
         if product_id:
             queryset = queryset.filter(presentation__product_id=product_id)
-        # Filtrar directamente por presentation_id
         presentation_id = self.request.query_params.get('presentation')
         if presentation_id:
             queryset = queryset.filter(presentation_id=presentation_id)
@@ -130,7 +130,7 @@ class StockMovementListView(generics.ListAPIView):
 
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([make_permission("inventory.list")])
 def unit_choices(request):
     """Catálogo cerrado de unidades base válidas."""
     return Response([
@@ -141,7 +141,8 @@ def unit_choices(request):
 
 class MedicalRecordProductListCreateView(generics.ListCreateAPIView):
     serializer_class = MedicalRecordProductSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [RolePermission]
+    resource_name = "inventory"
 
     def _get_medical_record(self):
         from apps.medical_records.models import MedicalRecord
@@ -168,7 +169,8 @@ class MedicalRecordProductListCreateView(generics.ListCreateAPIView):
 
 
 class MedicalRecordProductDeleteView(generics.DestroyAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [RolePermission]
+    resource_name = "inventory"
 
     def get_object(self):
         from apps.medical_records.models import MedicalRecord
@@ -186,7 +188,8 @@ class MedicalRecordProductDeleteView(generics.DestroyAPIView):
 
 class PresentationListView(generics.ListAPIView):
     serializer_class = PresentationSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [RolePermission]
+    resource_name = "inventory"
 
     def get_queryset(self):
         return Presentation.objects.filter(

@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { getStaff, createStaff, deactivateStaff } from "../api/staff";
 import { useAuth } from "../auth/authContext";
 import { Icon } from "../components/icons";
+import { useConfirm } from "../components/ConfirmDialog";
 
 const EMPTY_FORM = {
     username: "",
@@ -29,6 +30,7 @@ const ROLE_LABELS = {
 
 const Staff = () => {
     const { user, initializing } = useAuth();
+    const confirm = useConfirm();
     const isAdmin = user?.role === "ADMIN";
 
     const [staff, setStaff] = useState([]);
@@ -79,7 +81,13 @@ const Staff = () => {
     };
 
     const handleDeactivate = async (id) => {
-        if (!confirm("¿Desactivar este miembro?")) return;
+        const ok = await confirm({
+            title: "Desactivar miembro",
+            message: "El miembro perderá acceso al sistema. Esta acción se puede revertir desde la base de datos.",
+            confirmText: "Desactivar",
+            dangerMode: true,
+        });
+        if (!ok) return;
         try {
             await deactivateStaff(id);
             fetchStaff();

@@ -6,7 +6,7 @@ logger = logging.getLogger(__name__)
 
 from apps.inventory.services import apply_stock_movement
 from apps.inventory.models import Presentation
-from .models import Invoice, InvoiceAuditLog
+from .models import Invoice, InvoiceAuditLog, InvoiceItem
 
 
 @transaction.atomic
@@ -18,18 +18,21 @@ def confirm_invoice(invoice, user):
     if invoice.status != 'draft':
         raise ValidationError("Solo se pueden confirmar facturas en borrador.")
 
-    # Validación: sin ítems
-    if not invoice.items.exists():
+    # ⚠️ all_objects: servicio crítico — no depender del contexto de tenant.
+    # Regla: services de facturación siempre usan all_objects + filtros explícitos.
+    active_items = InvoiceItem.all_objects.filter(invoice=invoice, is_active=True)
+
+    if not active_items.exists():
         raise ValidationError("No se puede confirmar una factura sin ítems.")
 
     if invoice.invoice_type == 'direct_sale':
         items_with_presentation = [
-            item for item in invoice.items.select_related('presentation__product').all()
+            item for item in active_items.select_related('presentation__product')
             if item.presentation_id
         ]
 
         # Validación defensiva: cantidades válidas
-        for item in invoice.items.all():
+        for item in active_items:
             if item.quantity <= 0:
                 raise ValidationError(
                     f"Cantidad inválida en ítem '{item.description}'."
@@ -91,8 +94,8 @@ def cancel_invoice(invoice, user, notes=''):
     previous_status = invoice.status
 
     if previous_status == 'confirmed' and invoice.invoice_type == 'direct_sale':
-        # Revertir stock: crear movimientos 'in' por cada ítem con presentación
-        for item in invoice.items.select_related('presentation__product').all():
+        # ⚠️ all_objects: mismo criterio que confirm_invoice.
+        for item in InvoiceItem.all_objects.filter(invoice=invoice, is_active=True).select_related('presentation__product'):
             if item.presentation_id:
                 try:
                     apply_stock_movement(

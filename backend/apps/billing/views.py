@@ -1,7 +1,6 @@
 from rest_framework import generics, status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.exceptions import ValidationError
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.core.exceptions import ValidationError as DjValidationError
 from django.db import transaction
@@ -10,10 +9,11 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date
 
 from apps.core.datetime_utils import filter_by_local_day
+from apps.core.permissions import RolePermission
 
 from .models import Service, Invoice, InvoiceItem
 from .serializers import ServiceSerializer, InvoiceSerializer, InvoiceItemSerializer
-from .permissions import CanConfirmInvoice, CanPayInvoice
+from .permissions import CanConfirmInvoice, CanPayInvoice, CanCancelInvoice
 
 
 class BillingOrganizationMixin:
@@ -26,7 +26,8 @@ class BillingOrganizationMixin:
 
 class ServiceListCreateView(BillingOrganizationMixin, generics.ListCreateAPIView):
     serializer_class = ServiceSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [RolePermission]
+    resource_name = "service"
 
     def get_queryset(self):
         queryset = Service.objects.filter(organization=self.request.user.organization)
@@ -41,7 +42,8 @@ class ServiceListCreateView(BillingOrganizationMixin, generics.ListCreateAPIView
 
 class ServiceDetailView(BillingOrganizationMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = ServiceSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [RolePermission]
+    resource_name = "service"
 
     def get_queryset(self):
         return Service.objects.filter(organization=self.request.user.organization)
@@ -49,7 +51,8 @@ class ServiceDetailView(BillingOrganizationMixin, generics.RetrieveUpdateDestroy
 
 class InvoiceListCreateView(BillingOrganizationMixin, generics.ListCreateAPIView):
     serializer_class = InvoiceSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [RolePermission]
+    resource_name = "invoice"
 
     def get_queryset(self):
         queryset = Invoice.objects.filter(
@@ -101,7 +104,8 @@ class InvoiceListCreateView(BillingOrganizationMixin, generics.ListCreateAPIView
 
 class InvoiceDetailView(BillingOrganizationMixin, generics.RetrieveUpdateAPIView):
     serializer_class = InvoiceSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [RolePermission]
+    resource_name = "invoice"
 
     def get_queryset(self):
         return Invoice.objects.filter(organization=self.request.user.organization)
@@ -124,7 +128,7 @@ def confirm_invoice(request, pk):
     invoice = get_object_or_404(Invoice, pk=pk, organization=request.user.organization)
     try:
         confirm_invoice_service(invoice, user=request.user)
-    except ValidationError as e:
+    except DjValidationError as e:
         return Response({'detail': e.messages}, status=status.HTTP_400_BAD_REQUEST)
 
     return Response(InvoiceSerializer(invoice).data)
@@ -165,7 +169,8 @@ def pay_invoice(request, pk):
 
 class InvoiceItemCreateView(BillingOrganizationMixin, generics.CreateAPIView):
     serializer_class = InvoiceItemSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [RolePermission]
+    resource_name = "invoice"
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -194,7 +199,7 @@ class InvoiceItemCreateView(BillingOrganizationMixin, generics.CreateAPIView):
             description = service.name
         else:
             unit_price = presentation.sale_price
-            description = str(presentation)   # "Producto — Presentación"
+            description = str(presentation)
 
         serializer.save(
             invoice=invoice,
@@ -205,15 +210,23 @@ class InvoiceItemCreateView(BillingOrganizationMixin, generics.CreateAPIView):
 
 class InvoiceItemDetailView(BillingOrganizationMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = InvoiceItemSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [RolePermission]
+    resource_name = "invoice"
 
-    def get_object(self):
-        invoice = get_object_or_404(
+    def _get_invoice(self):
+        return get_object_or_404(
             Invoice,
             pk=self.kwargs['invoice_pk'],
             organization=self.request.user.organization,
         )
-        return get_object_or_404(InvoiceItem, pk=self.kwargs['pk'], invoice=invoice)
+
+    def get_object(self):
+        return get_object_or_404(InvoiceItem, pk=self.kwargs['pk'], invoice=self._get_invoice())
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context['invoice'] = self._get_invoice()
+        return context
 
     def update(self, request, *args, **kwargs):
         item = self.get_object()
@@ -235,7 +248,7 @@ class InvoiceItemDetailView(BillingOrganizationMixin, generics.RetrieveUpdateDes
 
 
 @api_view(['PATCH'])
-@permission_classes([CanConfirmInvoice])
+@permission_classes([CanCancelInvoice])
 def cancel_invoice(request, pk):
     invoice = get_object_or_404(Invoice, pk=pk, organization=request.user.organization)
     notes = request.data.get('notes', '')

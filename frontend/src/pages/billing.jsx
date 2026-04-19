@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useConfirm } from "../components/ConfirmDialog";
 import {
     getInvoices, getInvoice, createInvoice, updateInvoice,
     confirmInvoice, payInvoice,
@@ -31,6 +32,7 @@ const EMPTY_ITEM = {
 
 const Billing = () => {
     const { token, user, initializing } = useAuth();
+    const confirm = useConfirm();
     const [loading, setLoading] = useState(true);
 
     const [invoices, setInvoices] = useState([]);
@@ -190,7 +192,8 @@ const Billing = () => {
     };
 
     const handleDeleteItem = async (itemId) => {
-        if (!confirm("¿Eliminar este ítem?")) return;
+        const ok = await confirm({ message: "¿Eliminar este ítem de la factura?", confirmText: "Eliminar", dangerMode: true });
+        if (!ok) return;
         try {
             await deleteInvoiceItem(selectedInvoice.id, itemId);
             const updated = await getInvoice(selectedInvoice.id);
@@ -234,7 +237,8 @@ const Billing = () => {
     };
 
     const handleDeleteService = async (id) => {
-        if (!confirm("¿Eliminar este servicio?")) return;
+        const ok = await confirm({ message: "¿Eliminar este servicio del catálogo?", confirmText: "Eliminar", dangerMode: true });
+        if (!ok) return;
         try {
             await deleteService(id);
             setSuccess("Servicio eliminado");

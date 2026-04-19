@@ -1,11 +1,11 @@
 from rest_framework import generics
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
 from django.utils.dateparse import parse_date
 
 from apps.core.datetime_utils import filter_by_local_day
+from apps.core.permissions import RolePermission, make_permission
 
 from .models import Appointment
 from .serializers import AppointmentSerializer
@@ -13,12 +13,13 @@ from .serializers import AppointmentSerializer
 
 class AppointmentListCreateView(generics.ListCreateAPIView):
     serializer_class = AppointmentSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [RolePermission]
+    resource_name = "appointment"
 
     def get_queryset(self):
         org = self.request.user.organization
         queryset = Appointment.objects.filter(
-            organization=self.request.user.organization,
+            organization=org,
             status__in=['scheduled', 'done']
         )
 
@@ -43,7 +44,8 @@ class AppointmentListCreateView(generics.ListCreateAPIView):
 
 class AppointmentDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = AppointmentSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [RolePermission]
+    resource_name = "appointment"
 
     def get_queryset(self):
         return Appointment.objects.filter(
@@ -58,7 +60,7 @@ class AppointmentDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 
 @api_view(['PATCH'])
-@permission_classes([IsAuthenticated])
+@permission_classes([make_permission("appointment.update")])
 def update_status(request, pk):
     try:
         appointment = Appointment.objects.get(

@@ -1,20 +1,12 @@
-from rest_framework.permissions import BasePermission
+"""
+billing/permissions.py — Permisos de facturación
 
-ROLES_THAT_CAN_PAY = {'ADMIN', 'ADMIN_SAAS'}
-ROLES_THAT_CAN_CONFIRM = {'ADMIN', 'ADMIN_SAAS', 'VET', 'ASSISTANT'}
+Delega al sistema RBAC central (HybridPermission via make_permission).
+Regla 3: acciones custom SIEMPRE definen required_permission.
+"""
+from apps.core.permissions import make_permission
 
-
-class CanConfirmInvoice(BasePermission):
-    def has_permission(self, request, view):
-        return (
-            request.user.is_authenticated
-            and getattr(request.user, 'role', None) in ROLES_THAT_CAN_CONFIRM
-        )
-
-
-class CanPayInvoice(BasePermission):
-    def has_permission(self, request, view):
-        return (
-            request.user.is_authenticated
-            and getattr(request.user, 'role', None) in ROLES_THAT_CAN_PAY
-        )
+# Clases listas para usar en @permission_classes
+CanConfirmInvoice = make_permission("invoice.confirm")
+CanPayInvoice = make_permission("invoice.pay")
+CanCancelInvoice = make_permission("invoice.cancel")

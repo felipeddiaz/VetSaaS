@@ -18,8 +18,7 @@ from django.contrib import admin
 from django.urls import path, include
 from apps.dashboard.views import dashboard_stats
 from apps.users.views import (
-    MeView, 
-    CreateEmployeeView,
+    MeView,
     StaffListView,
     StaffCreateView,
     StaffDeactivateView
@@ -36,22 +35,26 @@ from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
 )
+from apps.core.throttling import LoginRateThrottle
+
+
+class ThrottledTokenObtainPairView(TokenObtainPairView):
+    throttle_classes = [LoginRateThrottle]
 
 router = DefaultRouter()
-router.register(r'pets', PetViewSet)
-router.register(r'owners', OwnerViewSet)
-router.register(r'organizations', OrganizationViewSet)
+router.register(r'pets', PetViewSet, basename='patient')
+router.register(r'owners', OwnerViewSet, basename='owner')
+router.register(r'organizations', OrganizationViewSet, basename='organization')
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/appointments/', AppointmentListCreateView.as_view()),
     path('api/appointments/<int:pk>/', AppointmentDetailView.as_view()),
     path('api/appointments/<int:pk>/status/', update_status),
-    path('api/token/', TokenObtainPairView.as_view()),
+    path('api/token/', ThrottledTokenObtainPairView.as_view()),
     path('api/token/refresh/', TokenRefreshView.as_view()),
     path('api/', include(router.urls)),
     path('api/me/', MeView.as_view()),
-    path('api/employees/', CreateEmployeeView.as_view()),
     path('api/staff/', StaffListView.as_view(), name='staff-list'),
     path('api/staff/create/', StaffCreateView.as_view(), name='staff-create'),
     path('api/staff/<int:pk>/', StaffDeactivateView.as_view(), name='staff-deactivate'),

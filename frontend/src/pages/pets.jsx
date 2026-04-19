@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getPets, createPet, updatePet, deletePet } from "../api/pets";
+import { useConfirm } from "../components/ConfirmDialog";
 import { getMedicalRecords } from "../api/medicalRecords";
 import { getAppointments } from "../api/appointments";
 import { useAuth } from "../auth/authContext";
@@ -508,6 +509,7 @@ const sectionTitle = {
 const Pets = () => {
     const { token, initializing } = useAuth();
     const navigate = useNavigate();
+    const confirm = useConfirm();
 
     const [pets, setPets] = useState([]);
     const [weekAppts, setWeekAppts] = useState([]);
@@ -663,7 +665,13 @@ const Pets = () => {
     };
 
     const handleDelete = async (id) => {
-        if (!confirm("¿Eliminar esta mascota? También se eliminará su historial.")) return;
+        const ok = await confirm({
+            title: "Eliminar mascota",
+            message: "Se eliminará la mascota y todo su historial clínico. Esta acción no se puede deshacer.",
+            confirmText: "Eliminar",
+            dangerMode: true,
+        });
+        if (!ok) return;
         try {
             await deletePet(token, id);
             if (selectedPet?.id === id) closePanel();
@@ -854,7 +862,7 @@ const Pets = () => {
 
                 {/* View toggle */}
                 <div style={{ display: "flex", gap: "3px", background: "var(--c-subtle)", padding: "3px", borderRadius: "var(--r-md)", border: "1px solid var(--c-border)" }}>
-                    {[{ key: "cards", I: Ic.Grid }, { key: "table", I: Ic.Rows }].map(({ key, I }) => (
+                    {[{ key: "cards", I: Icon.Grid }, { key: "table", I: Icon.Rows }].map(({ key, I }) => (
                         <button
                             key={key}
                             onClick={() => setView(key)}

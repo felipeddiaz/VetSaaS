@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { useConfirm } from "../components/ConfirmDialog";
 import {
     getPrescriptions, getPrescription, createPrescription,
     updatePrescription, deletePrescription, downloadPrescriptionPDF,
@@ -15,6 +16,7 @@ const EMPTY_FORM = { medical_record: "", pet: "", notes: "", items: [{ ...EMPTY_
 
 const Prescriptions = () => {
     const { token, user, initializing } = useAuth();
+    const confirm = useConfirm();
     const [searchParams] = useSearchParams();
 
     const [prescriptions, setPrescriptions] = useState([]);
@@ -160,7 +162,8 @@ const Prescriptions = () => {
     };
 
     const handleDelete = async (id) => {
-        if (!confirm("¿Eliminar esta receta?")) return;
+        const ok = await confirm({ message: "¿Eliminar esta receta? El registro médico asociado no se verá afectado.", confirmText: "Eliminar", dangerMode: true });
+        if (!ok) return;
         try {
             await deletePrescription(id);
             setSuccess("Receta eliminada");

@@ -1,12 +1,12 @@
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.core.datetime_utils import filter_by_local_day, org_now_utc, org_today_local
+from apps.core.permissions import make_permission
 
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([make_permission("dashboard.view")])
 def dashboard_stats(request):
     from apps.appointments.models import Appointment
     from apps.medical_records.models import MedicalRecord

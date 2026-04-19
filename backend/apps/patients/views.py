@@ -1,13 +1,17 @@
 from rest_framework.viewsets import ModelViewSet
-from rest_framework.permissions import IsAuthenticated
+
+from apps.core.permissions import RolePermission
+
 from .models import Pet, Owner
 from .serializers import PetSerializer, OwnerSerializer
 
 
 class PetViewSet(ModelViewSet):
-    queryset = Pet.objects.all()
+    """
+    Pacientes (mascotas). basename='patient' → permisos patient.*
+    """
     serializer_class = PetSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [RolePermission]
 
     def get_queryset(self):
         return Pet.objects.filter(
@@ -19,9 +23,11 @@ class PetViewSet(ModelViewSet):
 
 
 class OwnerViewSet(ModelViewSet):
-    queryset = Owner.objects.all()
+    """
+    Propietarios. basename='owner' → permisos owner.*
+    """
     serializer_class = OwnerSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [RolePermission]
 
     def get_queryset(self):
         return Owner.objects.filter(

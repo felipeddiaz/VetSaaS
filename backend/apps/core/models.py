@@ -239,3 +239,78 @@ class OrganizationalModel(models.Model):
         indexes = [
             models.Index(fields=['organization', 'created_at']),
         ]
+
+
+# ---------------------------------------------------------------------------
+# Fase 2 — Modelos para RBAC dinámico
+# ---------------------------------------------------------------------------
+
+class Permission(models.Model):
+    """
+    Permiso atómico en formato "resource.action".
+    Fuente de verdad: PERMISSION_CODES en permissions_codes.py.
+    El seed garantiza que ambos estén sincronizados.
+    """
+    code = models.CharField(max_length=100, unique=True)
+    description = models.CharField(max_length=200, blank=True)
+
+    class Meta:
+        ordering = ["code"]
+        verbose_name = "Permission"
+        verbose_name_plural = "Permissions"
+
+    def __str__(self):
+        return self.code
+
+
+class Role(models.Model):
+    """
+    Rol con permisos configurables por organización.
+    is_system_role=True: el seed lo crea y gestiona; no editable por usuarios.
+    """
+    name = models.CharField(max_length=100)
+    organization = models.ForeignKey(
+        "organizations.Organization",
+        on_delete=models.CASCADE,
+        related_name="roles",
+    )
+    permissions = models.ManyToManyField(Permission, blank=True)
+    is_system_role = models.BooleanField(default=False)
+
+    class Meta:
+        unique_together = [["name", "organization"]]
+        ordering = ["name"]
+        verbose_name = "Role"
+        verbose_name_plural = "Roles"
+
+    def __str__(self):
+        return f"{self.name} ({self.organization})"
+
+
+class UserRole(models.Model):
+    """
+    Asignación de un rol a un usuario dentro de una organización.
+    Un usuario puede tener múltiples roles.
+    """
+    user = models.ForeignKey(
+        "users.User",
+        on_delete=models.CASCADE,
+        related_name="user_roles",
+    )
+    role = models.ForeignKey(Role, on_delete=models.CASCADE)
+    assigned_at = models.DateTimeField(auto_now_add=True)
+    assigned_by = models.ForeignKey(
+        "users.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="roles_assigned",
+    )
+
+    class Meta:
+        unique_together = [["user", "role"]]
+        verbose_name = "UserRole"
+        verbose_name_plural = "UserRoles"
+
+    def __str__(self):
+        return f"{self.user} → {self.role}"

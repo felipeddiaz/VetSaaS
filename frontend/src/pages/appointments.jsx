@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import { useConfirm } from "../components/ConfirmDialog";
 import {
     getAppointments, createAppointment,
     updateAppointment, updateAppointmentStatus,
@@ -151,6 +152,7 @@ function ApptBadge({ appt, pal, petName, ownerName, onClick }) {
 
 // ── Detail Modal ───────────────────────────────────────────────────────────────
 function DetailModal({ appt, petName, vetName, petId, onClose, onStatusChange, onEdit, navigate, canEdit }) {
+    const confirm = useConfirm();
     return (
         <div className="modal-overlay" onClick={onClose}>
             <div className="modal modal-md" onClick={e=>e.stopPropagation()}>
@@ -191,7 +193,7 @@ function DetailModal({ appt, petName, vetName, petId, onClose, onStatusChange, o
                             <button className="btn btn-md" style={{flex:1,background:"#22c55e",borderColor:"#22c55e",color:"#fff"}}
                                 onClick={()=>onStatusChange(appt.id,"done")}>Completar</button>
                             <button className="btn btn-danger btn-md" style={{flex:1}}
-                                onClick={()=>{ if(confirm("¿Cancelar esta cita?")) onStatusChange(appt.id,"canceled"); }}>
+                                onClick={async ()=>{ if(await confirm({ message: "¿Cancelar esta cita? El paciente quedará sin turno.", confirmText: "Cancelar cita", dangerMode: true })) onStatusChange(appt.id,"canceled"); }}>
                                 Cancelar
                             </button>
                         </div>

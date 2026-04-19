@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from decimal import Decimal
 from .models import Service, Invoice, InvoiceItem
+from .money import discount_amount, money
 
 
 class ServiceSerializer(serializers.ModelSerializer):
@@ -12,7 +13,6 @@ class ServiceSerializer(serializers.ModelSerializer):
 
 class InvoiceItemSerializer(serializers.ModelSerializer):
     service_name = serializers.CharField(source='service.name', read_only=True)
-    product_name = serializers.CharField(source='product.name', read_only=True)
     presentation_name = serializers.SerializerMethodField()
     unit_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     description = serializers.CharField(read_only=True)
@@ -22,8 +22,7 @@ class InvoiceItemSerializer(serializers.ModelSerializer):
         model = InvoiceItem
         fields = [
             'id', 'invoice', 'service', 'service_name',
-            'presentation', 'presentation_name',
-            'product', 'product_name', 'description',
+            'presentation', 'presentation_name', 'description',
             'quantity', 'unit_price',
             'discount_type', 'discount_value', 'discount_amount',
             'subtotal',
@@ -36,12 +35,8 @@ class InvoiceItemSerializer(serializers.ModelSerializer):
         return None
 
     def get_discount_amount(self, obj):
-        gross = obj.quantity * obj.unit_price
-        if obj.discount_type == 'percentage':
-            return str((gross * (obj.discount_value / Decimal('100'))).quantize(Decimal('0.01')))
-        elif obj.discount_type == 'fixed':
-            return str(min(obj.discount_value, gross))
-        return '0.00'
+        gross = money(obj.quantity * obj.unit_price)
+        return str(discount_amount(gross, obj.discount_type, obj.discount_value))
 
     def validate(self, data):
         service = data.get('service')

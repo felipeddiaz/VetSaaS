@@ -4,6 +4,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
 from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404
+
+from apps.core.permissions import RolePermission, make_permission
 from apps.organizations.models import Organization
 from apps.users.serializers import UserSerializer, CreateEmployeeSerializer
 
@@ -15,7 +17,6 @@ class MeView(APIView):
 
     def get(self, request):
         user = request.user
-
         return Response({
             "id": user.id,
             "username": user.username,
@@ -31,15 +32,10 @@ class MeView(APIView):
 
 
 class CreateEmployeeView(APIView):
-    permission_classes = [IsAuthenticated]
+    """Crear empleado (alias legacy — usar StaffCreateView)."""
+    permission_classes = [make_permission("staff.create")]
 
     def post(self, request):
-        if request.user.role not in ['ADMIN_SAAS', 'ADMIN']:
-            return Response(
-                {'error': 'Solo el administrador puede crear empleados'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-
         serializer = CreateEmployeeSerializer(data=request.data)
         if serializer.is_valid():
             user = serializer.save()
@@ -51,7 +47,7 @@ class CreateEmployeeView(APIView):
 
 
 class StaffListView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [make_permission("staff.list")]
 
     def get(self, request):
         users = User.objects.filter(
@@ -63,15 +59,9 @@ class StaffListView(APIView):
 
 
 class StaffCreateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [make_permission("staff.create")]
 
     def post(self, request):
-        if request.user.role not in ['ADMIN_SAAS', 'ADMIN']:
-            return Response(
-                {'error': 'Solo el administrador puede crear empleados'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-
         serializer = CreateEmployeeSerializer(
             data=request.data,
             context={'request': request}
@@ -86,18 +76,12 @@ class StaffCreateView(APIView):
 
 
 class StaffDeactivateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [make_permission("staff.destroy")]
 
     def delete(self, request, pk):
-        if request.user.role not in ['ADMIN_SAAS', 'ADMIN']:
-            return Response(
-                {'error': 'Solo el administrador puede desactivar empleados'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-
         user = get_object_or_404(
-            User, 
-            pk=pk, 
+            User,
+            pk=pk,
             organization=request.user.organization
         )
         user.is_active = False

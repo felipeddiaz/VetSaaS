@@ -9,7 +9,7 @@
 
 html, body {
   margin: 0; padding: 0;
-  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  font-family: var(--font-body);
   font-size: 14px;
   line-height: 1.55;
   color: var(--c-text);
@@ -301,7 +301,7 @@ button, input, select, textarea { font-family: inherit; }
 @keyframes fadeUp       { from { opacity: 0; transform: translateY(14px); }  to { opacity: 1; transform: translateY(0); } }
 
 /* ── FullCalendar overrides ──────────────────────────────── */
-.fc { font-family: 'Plus Jakarta Sans', system-ui, sans-serif !important; font-size: 13px !important; }
+.fc { font-family: var(--font-body) !important; font-size: 13px !important; }
 .fc .fc-toolbar-title { font-size: 15px !important; font-weight: 700 !important; color: var(--c-text) !important; }
 .fc .fc-button {
   background: var(--c-surface) !important; border: 1px solid var(--c-border) !important;

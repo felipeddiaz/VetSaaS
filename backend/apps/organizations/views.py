@@ -12,9 +12,12 @@ class IsAdminUser:
 
 
 class OrganizationViewSet(ModelViewSet):
-    queryset = Organization.objects.all()
     serializer_class = OrganizationSerializer
     permission_classes = [IsAuthenticated, IsAdminUser]
+
+    def get_queryset(self):
+        # Cada admin solo ve su propia organización
+        return Organization.objects.filter(pk=self.request.user.organization_id)
 
     def create(self, request, *args, **kwargs):
         if request.user.role != 'ADMIN':

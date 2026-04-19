@@ -1,10 +1,12 @@
+import re
 from io import BytesIO
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+
+from apps.core.permissions import RolePermission, make_permission
 
 from .models import Prescription, PrescriptionItem
 from .serializers import PrescriptionSerializer, PrescriptionItemWriteSerializer
@@ -12,7 +14,8 @@ from .serializers import PrescriptionSerializer, PrescriptionItemWriteSerializer
 
 class PrescriptionListCreateView(generics.ListCreateAPIView):
     serializer_class = PrescriptionSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [RolePermission]
+    resource_name = "prescription"
 
     def get_queryset(self):
         queryset = Prescription.objects.filter(
@@ -32,7 +35,8 @@ class PrescriptionListCreateView(generics.ListCreateAPIView):
 
 class PrescriptionDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = PrescriptionSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [RolePermission]
+    resource_name = "prescription"
 
     def get_queryset(self):
         return Prescription.objects.filter(organization=self.request.user.organization)
@@ -40,7 +44,8 @@ class PrescriptionDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 class PrescriptionByPetView(generics.ListAPIView):
     serializer_class = PrescriptionSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [RolePermission]
+    resource_name = "prescription"
 
     def get_queryset(self):
         return Prescription.objects.filter(
@@ -51,7 +56,8 @@ class PrescriptionByPetView(generics.ListAPIView):
 
 class PrescriptionItemCreateView(generics.CreateAPIView):
     serializer_class = PrescriptionItemWriteSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [RolePermission]
+    resource_name = "prescription"
 
     def perform_create(self, serializer):
         prescription = get_object_or_404(
@@ -63,7 +69,8 @@ class PrescriptionItemCreateView(generics.CreateAPIView):
 
 
 class PrescriptionItemDeleteView(generics.DestroyAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [RolePermission]
+    resource_name = "prescription"
 
     def get_object(self):
         prescription = get_object_or_404(
@@ -79,9 +86,9 @@ class PrescriptionItemDeleteView(generics.DestroyAPIView):
 
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([make_permission("prescription.retrieve")])
 def prescription_pdf(request, pk):
-    """Generates and returns the prescription as a PDF file."""
+    """Genera y retorna la receta como archivo PDF."""
     try:
         from reportlab.lib.pagesizes import letter
         from reportlab.pdfgen import canvas
@@ -115,7 +122,6 @@ def prescription_pdf(request, pk):
         c.line(margin, y, width - margin, y)
         y -= offset
 
-    # Header
     draw_line(prescription.organization.name, font='Helvetica-Bold', size=16, offset=20)
     draw_line('RECETA MÉDICA VETERINARIA', font='Helvetica-Bold', size=13, offset=14)
     draw_line(
@@ -125,7 +131,6 @@ def prescription_pdf(request, pk):
     )
     separator()
 
-    # Veterinarian
     vet = prescription.veterinarian
     vet_name = f"{vet.first_name} {vet.last_name}".strip() or vet.username
     draw_line('Veterinario', font='Helvetica-Bold', size=11, offset=16)
@@ -136,14 +141,12 @@ def prescription_pdf(request, pk):
         y -= 6
     separator()
 
-    # Patient
     pet = prescription.pet
     draw_line('Paciente', font='Helvetica-Bold', size=11, offset=16)
     draw_line(f"Nombre: {pet.name}   Especie: {pet.species}   Raza: {pet.breed}", offset=14)
     draw_line(f"Propietario: {pet.owner.name}   Teléfono: {pet.owner.phone}", size=10, offset=18)
     separator()
 
-    # Medications
     draw_line('Medicamentos', font='Helvetica-Bold', size=12, offset=18)
     for i, item in enumerate(prescription.items.select_related('product').all(), 1):
         unit = item.product.unit or ''
@@ -160,13 +163,11 @@ def prescription_pdf(request, pk):
             draw_line(f"   Instrucciones: {item.instructions}", size=10, offset=13)
         y -= 6
 
-    # Notes
     if prescription.notes:
         separator()
         draw_line('Notas', font='Helvetica-Bold', size=11, offset=16)
         draw_line(prescription.notes, size=10, offset=14)
 
-    # Signature block
     y -= 30
     c.line(margin, y, margin + 180, y)
     y -= 14
@@ -178,7 +179,8 @@ def prescription_pdf(request, pk):
     buffer.seek(0)
 
     response = HttpResponse(buffer.read(), content_type='application/pdf')
+    safe_name = re.sub(r'[^\w\s\-]', '', pet.name)[:50]
     response['Content-Disposition'] = (
-        f'attachment; filename="receta_{prescription.id}_{pet.name}.pdf"'
+        f'attachment; filename="receta_{prescription.id}_{safe_name}.pdf"'
     )
     return response

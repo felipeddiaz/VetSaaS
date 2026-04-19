@@ -3,6 +3,7 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
 from apps.core.models import OrganizationalModel
+from apps.billing.money import discount_amount, invoice_totals, line_subtotal, money
 
 
 class Service(OrganizationalModel):
@@ -102,12 +103,14 @@ class Invoice(OrganizationalModel):
             raise ValidationError("El registro medico no pertenece a la misma organizacion que la factura.")
 
     def recalculate_totals(self):
-        subtotal = sum(item.subtotal for item in self.items.all())
-        tax_amount = subtotal * self.tax_rate
-        total = subtotal + tax_amount
-        # ⚠️ Uses all_objects intentionally to bypass tenant + soft delete filters.
-        # This is required for internal consistency updates (recalculate totals atomically).
-        # Do NOT replace with objects — will silently update 0 rows outside request context.
+        # ⚠️ all_objects: bypasses tenant filter — necesario porque este método
+        # puede correr desde InvoiceItem.save() cuando el contexto ya fue limpiado
+        # (ej. señales post_save). Do NOT replace with objects.
+        raw_subtotal = sum(
+            item.subtotal
+            for item in InvoiceItem.all_objects.filter(invoice=self, is_active=True)
+        )
+        subtotal, tax_amount, total = invoice_totals(raw_subtotal, self.tax_rate)
         Invoice.all_objects.filter(pk=self.pk).update(
             subtotal=subtotal,
             tax_amount=tax_amount,
@@ -186,14 +189,9 @@ class InvoiceItem(OrganizationalModel):
         if self.invoice_id and not self.organization_id:
             self.organization_id = self.invoice.organization_id
 
-        gross = self.quantity * self.unit_price
-        if self.discount_type == 'percentage':
-            discount_amount = gross * (self.discount_value / Decimal('100'))
-        elif self.discount_type == 'fixed':
-            discount_amount = min(self.discount_value, gross)
-        else:
-            discount_amount = Decimal('0.00')
-        self.subtotal = gross - discount_amount
+        gross = money(self.quantity * self.unit_price)
+        disc = discount_amount(gross, self.discount_type, self.discount_value)
+        self.subtotal = line_subtotal(self.quantity, self.unit_price, disc)
 
         super().save(*args, **kwargs)
         self.invoice.recalculate_totals()

@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
+import { useConfirm } from "../components/ConfirmDialog";
 import {
     getProducts, createProduct, updateProduct, deleteProduct,
     adjustStock, getUnitChoices,
@@ -92,6 +93,7 @@ const BADGE_CLS = { medication: s.badgeBlue, food: s.badgeGreen, accessory: s.ba
 // ── Component ─────────────────────────────────────────────
 const Inventory = () => {
     const { token, user, initializing } = useAuth();
+    const confirm = useConfirm();
 
     const [products, setProducts] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -265,7 +267,8 @@ const Inventory = () => {
     };
 
     const handleDelete = async (id) => {
-        if (!confirm("¿Eliminar este producto?")) return;
+        const ok = await confirm({ message: "¿Eliminar este producto del inventario?", confirmText: "Eliminar", dangerMode: true });
+        if (!ok) return;
         try {
             await deleteProduct(id);
             setSuccess("Producto eliminado");

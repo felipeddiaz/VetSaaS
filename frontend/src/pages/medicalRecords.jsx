@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
+import { useConfirm } from "../components/ConfirmDialog";
 import {
     getMedicalRecords, createMedicalRecord, updateMedicalRecord,
     deleteMedicalRecord, getMedicalRecord,
@@ -76,6 +77,7 @@ const groupByYearMonth = (records) => {
 
 const MedicalRecords = () => {
     const { token, initializing, user } = useAuth();
+    const confirm = useConfirm();
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
 
@@ -268,7 +270,13 @@ const MedicalRecords = () => {
     };
 
     const handleDelete = async (id) => {
-        if (!confirm("¿Eliminar esta consulta?")) return;
+        const ok = await confirm({
+            title: "Eliminar consulta",
+            message: "Se eliminará el registro clínico de esta consulta. Esta acción no se puede deshacer.",
+            confirmText: "Eliminar",
+            dangerMode: true,
+        });
+        if (!ok) return;
         try {
             await deleteMedicalRecord(token, id);
             setSuccess("Consulta eliminada");
@@ -325,7 +333,7 @@ const MedicalRecords = () => {
                     <div className={styles.sidebarHeader}>Mascotas</div>
 
                     <div className={styles.sidebarSearchWrap}>
-                        <span className={styles.sidebarIcon.Search}><Icon.Search /></span>
+                        <span className={styles.sidebarIcon}><Icon.Search /></span>
                         <input
                             className={styles.sidebarSearchInput}
                             placeholder="Nombre, raza, especie…"
@@ -413,7 +421,7 @@ const MedicalRecords = () => {
                                     ))}
                                 </div>
                                 <div className={styles.historySearchWrap}>
-                                    <span className={styles.historyIcon.Search}><Icon.Search /></span>
+                                    <span className={styles.historyIcon}><Icon.Search /></span>
                                     <input
                                         className={styles.historySearchInput}
                                         placeholder="Buscar en historial…"

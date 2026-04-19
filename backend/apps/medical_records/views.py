@@ -1,7 +1,9 @@
 from rest_framework import generics
 from rest_framework.pagination import PageNumberPagination
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+
+from apps.core.permissions import RolePermission
+
 from .models import MedicalRecord
 from .serializers import MedicalRecordSerializer, MedicalRecordDetailSerializer
 
@@ -14,8 +16,9 @@ class MedicalRecordPagination(PageNumberPagination):
 
 class MedicalRecordListCreateView(generics.ListCreateAPIView):
     serializer_class = MedicalRecordSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [RolePermission]
     pagination_class = MedicalRecordPagination
+    resource_name = "medicalrecord"
 
     def get_queryset(self):
         pet_id = self.request.query_params.get('pet')
@@ -37,7 +40,8 @@ class MedicalRecordListCreateView(generics.ListCreateAPIView):
 
 class MedicalRecordDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = MedicalRecordDetailSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [RolePermission]
+    resource_name = "medicalrecord"
 
     def get_queryset(self):
         return MedicalRecord.objects.filter(
@@ -47,8 +51,9 @@ class MedicalRecordDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 class MedicalRecordByPetView(generics.ListAPIView):
     serializer_class = MedicalRecordSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [RolePermission]
     pagination_class = MedicalRecordPagination
+    resource_name = "medicalrecord"
 
     def get_queryset(self):
         pet_id = self.kwargs.get('pet_id')
