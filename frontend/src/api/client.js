@@ -1,7 +1,12 @@
 import axios from "axios";
 
+const rawBase = import.meta.env.VITE_API_URL;
+if (!rawBase) {
+    throw new Error("VITE_API_URL no está definida");
+}
+
 const api = axios.create({
-    baseURL: import.meta.env.VITE_API_URL,
+    baseURL: rawBase.endsWith('/') ? rawBase : rawBase + '/',
 });
 
 api.interceptors.request.use((config) => {
