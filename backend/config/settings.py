@@ -66,7 +66,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'apps.core',
     'apps.organizations',
-    'apps.users',
+    'apps.users.apps.UsersConfig',
     'apps.patients',
     'apps.appointments',
     'apps.medical_records',
