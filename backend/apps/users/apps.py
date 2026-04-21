@@ -22,13 +22,22 @@ def _create_default_superuser(sender, **kwargs):
         return
 
     User = get_user_model()
-    if User.objects.filter(username=username).exists():
-        return
-
     org, _ = Organization.objects.get_or_create(name='VetCare Internal')
-    User.objects.create_superuser(
+
+    user, _ = User.objects.get_or_create(
         username=username,
-        password=password,
-        organization=org,
-        role='ADMIN_SAAS',
+        defaults={
+            'is_superuser': True,
+            'is_staff': True,
+        }
     )
+
+    user.set_password(password)
+    user.is_superuser = True
+    user.is_staff = True
+
+    if getattr(user, 'organization', None) is None:
+        user.organization = org
+        user.role = 'ADMIN_SAAS'
+
+    user.save()
