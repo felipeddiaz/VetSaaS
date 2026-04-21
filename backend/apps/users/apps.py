@@ -12,6 +12,7 @@ class UsersConfig(AppConfig):
 
 def _create_default_superuser(sender, **kwargs):
     from django.contrib.auth import get_user_model
+    from apps.organizations.models import Organization
     import os
 
     username = os.environ.get('DJANGO_SUPERUSER_USERNAME')
@@ -21,5 +22,13 @@ def _create_default_superuser(sender, **kwargs):
         return
 
     User = get_user_model()
-    if not User.objects.filter(username=username).exists():
-        User.objects.create_superuser(username=username, password=password)
+    if User.objects.filter(username=username).exists():
+        return
+
+    org, _ = Organization.objects.get_or_create(name='VetCare Internal')
+    User.objects.create_superuser(
+        username=username,
+        password=password,
+        organization=org,
+        role='ADMIN_SAAS',
+    )
