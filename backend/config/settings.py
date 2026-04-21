@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 from pathlib import Path
 from datetime import timedelta
 from decouple import config
+import dj_database_url
 
 # ---------------------------------------------------------------------------
 # Sentry — error tracking (obtener DSN en https://sentry.io → Settings → DSN)
@@ -131,14 +132,19 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': config('PGDATABASE'),
-        'USER': config('PGUSER'),
-        'PASSWORD': config('PGPASSWORD'),
-        'HOST': config('PGHOST'),
-        'PORT': config('PGPORT', default='5432'),
-    }
+    'default': dj_database_url.config(
+        default=config(
+            'DATABASE_URL',
+            default='postgresql://{user}:{password}@{host}:{port}/{name}'.format(
+                user=config('PGUSER', default='postgres'),
+                password=config('PGPASSWORD', default=''),
+                host=config('PGHOST', default='localhost'),
+                port=config('PGPORT', default='5432'),
+                name=config('PGDATABASE', default='veterinaria_saas'),
+            )
+        ),
+        conn_max_age=600,
+    )
 }
 
 # Password validation
