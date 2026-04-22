@@ -34,16 +34,18 @@ class TenantJWTAuthentication(JWTAuthentication):
 
         user, token = result
 
-        user = user.__class__.objects.select_related('organization').get(pk=user.pk)
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        user = User.objects.select_related('organization').get(pk=user.pk)
+
+        logger.warning(
+            "DEBUG FIX | id=%s | org_id=%s | org=%s",
+            user.id,
+            user.organization_id,
+            user.organization,
+        )
 
         set_current_user(user)
         set_current_org(user.organization)
-
-        if user.organization is None:
-            logger.error(
-                "Usuario sin organización REAL | user_id=%s | org_id=%s",
-                user.pk,
-                user.organization_id,
-            )
 
         return (user, token)
