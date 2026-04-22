@@ -13,6 +13,8 @@ def dashboard_stats(request):
     from apps.inventory.models import Product
 
     org = request.user.organization
+    if org is None:
+        return Response({'detail': 'Usuario sin organización asignada.'}, status=400)
     today_local = org_today_local(org)
     now_utc = org_now_utc(org)
 

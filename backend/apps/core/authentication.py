@@ -34,13 +34,16 @@ class TenantJWTAuthentication(JWTAuthentication):
 
         user, token = result
 
-        set_current_user(user)
-        set_current_org(getattr(user, 'organization', None))
+        user = user.__class__.objects.select_related('organization').get(pk=user.pk)
 
-        if getattr(user, 'organization', None) is None:
-            logger.warning(
-                "JWT autenticado pero sin organización | user_id=%s",
+        set_current_user(user)
+        set_current_org(user.organization)
+
+        if user.organization is None:
+            logger.error(
+                "Usuario sin organización REAL | user_id=%s | org_id=%s",
                 user.pk,
+                user.organization_id,
             )
 
         return (user, token)
