@@ -173,27 +173,33 @@ class Command(BaseCommand):
                 f"  FASE 4 GATE: BLOQUEADO — {'; '.join(reasons)}"
             ))
 
-        # Desglose por endpoint
+        # Desglose por endpoint — fallback_rate y denied_rate
         self.stdout.write("\n  Desglose por endpoint:")
+        self.stdout.write(f"  {'endpoint':<45} {'db':>5} {'fall':>5} {'deny':>5} "
+                          f"{'fall%':>6} {'deny%':>6}")
+        self.stdout.write("  " + "-" * 76)
+
         by_endpoint = defaultdict(lambda: {"db": 0, "fallback": 0, "denied": 0})
         for e in events:
-            path = e.get("path", "unknown")[:50]
+            path = (e.get("endpoint") or e.get("path") or "unknown")[:44]
             ev = e["event"]
-            if ev == "RBAC_DB_ALLOWED":
+            if ev == "RBAC_ALLOWED_DB":
                 by_endpoint[path]["db"] += 1
             elif ev == "RBAC_FALLBACK_ALLOWED":
                 by_endpoint[path]["fallback"] += 1
             elif ev == "RBAC_DENIED":
                 by_endpoint[path]["denied"] += 1
 
-        for path, counts in sorted(by_endpoint.items()):
-            d = counts["db"]
-            f = counts["fallback"]
-            ep_fallback_rate = f / (d + f) * 100 if (d + f) else 0
-            flag = " ⚠" if ep_fallback_rate > 0 else ""
+        for path, c in sorted(by_endpoint.items()):
+            allowed = c["db"] + c["fallback"]
+            total_ep = allowed + c["denied"]
+            fallback_r = c["fallback"] / allowed * 100 if allowed else 0
+            denied_r = c["denied"] / total_ep * 100 if total_ep else 0
+            flags = (" ⚠FALLBACK" if fallback_r > 0 else "") + \
+                    (" ⚠DENIED" if denied_r > 50 else "")
             self.stdout.write(
-                f"    {path:<50} db={d} fallback={f} "
-                f"rate={ep_fallback_rate:.0f}%{flag}"
+                f"  {path:<45} {c['db']:>5} {c['fallback']:>5} {c['denied']:>5} "
+                f"{fallback_r:>5.0f}% {denied_r:>5.0f}%{flags}"
             )
 
         self.stdout.write("=" * 60 + "\n")

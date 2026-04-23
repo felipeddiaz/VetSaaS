@@ -422,21 +422,18 @@ class RBACEventLoggingTests(SecurityTestCase):
         """Parsea el último registro del logger rbac.events."""
         return json.loads(log_records[-1].getMessage())
 
-    def test_rbac_db_allowed_event_on_successful_request(self):
+    def test_rbac_allowed_db_event_on_successful_request(self):
+        """
+        Requests con UserRole en DB emiten RBAC_ALLOWED_DB (INFO).
+        Necesario para calcular fallback_rate = FALLBACK / (DB + FALLBACK).
+        """
         self.auth(self.vet_a)
         with self.assertLogs("rbac.events", level="INFO") as cm:
             r = self.client.get("/api/pets/")
         self.assertEqual(r.status_code, status.HTTP_200_OK)
 
-        event = json.loads(cm.records[-1].getMessage())
-        self.assertEqual(event["event"], "RBAC_DB_ALLOWED")
-        self.assertEqual(event["decision"], "ALLOWED")
-        self.assertEqual(event["user_id"], self.vet_a.id)
-        self.assertEqual(event["organization_id"], self.org_a.id)
-        self.assertIn("timestamp", event)
-        self.assertIn("required_permission", event)
-        self.assertIn("path", event)
-        self.assertIn("method", event)
+        allowed = [rec for rec in cm.records if rec.getMessage() == "RBAC_ALLOWED_DB"]
+        self.assertTrue(allowed, "Se esperaba RBAC_ALLOWED_DB para usuario con roles en DB")
 
     def test_rbac_denied_event_on_forbidden_request(self):
         self.auth(self.vet_a)
@@ -446,40 +443,51 @@ class RBACEventLoggingTests(SecurityTestCase):
             })
         self.assertEqual(r.status_code, status.HTTP_403_FORBIDDEN)
 
-        events = [json.loads(rec.getMessage()) for rec in cm.records]
-        denied = [e for e in events if e.get("event") == "RBAC_DENIED"]
+        denied = [rec for rec in cm.records if rec.getMessage() == "RBAC_DENIED"]
         self.assertTrue(denied, "Se esperaba al menos un evento RBAC_DENIED")
-        self.assertEqual(denied[0]["decision"], "DENIED")
-        self.assertEqual(denied[0]["user_id"], self.vet_a.id)
+        self.assertEqual(denied[0].user_id, self.vet_a.id)
 
     def test_rbac_fallback_event_for_user_without_db_role(self):
         """
-        Un usuario sin UserRole en DB activa el fallback estático
-        y emite RBAC_FALLBACK_ALLOWED.
+        Un usuario sin UserRole en DB emite RBAC_FALLBACK_ALLOWED (WARNING).
+        Presencia de este evento en producción = gate bloqueado.
         """
         user_no_role = _make_user("no_role_user", self.org_a, "VET")
-        # No se asigna UserRole — forzará fallback estático
 
         self.auth(user_no_role)
         with self.assertLogs("rbac.events", level="INFO") as cm:
             r = self.client.get("/api/pets/")
         self.assertEqual(r.status_code, status.HTTP_200_OK)
 
-        events = [json.loads(rec.getMessage()) for rec in cm.records]
-        fallback = [e for e in events if e.get("event") == "RBAC_FALLBACK_ALLOWED"]
+        fallback = [rec for rec in cm.records if rec.getMessage() == "RBAC_FALLBACK_ALLOWED"]
         self.assertTrue(fallback, "Se esperaba RBAC_FALLBACK_ALLOWED para usuario sin roles en DB")
 
-    def test_required_fields_present_in_all_events(self):
-        """Todos los eventos tienen los campos mínimos requeridos por el sprint."""
+    def test_request_id_present_and_consistent_within_request(self):
+        """
+        Todos los eventos de un mismo request comparten el mismo request_id.
+        Permite correlacionar logs en Railway y agregadores externos.
+        """
         self.auth(self.vet_a)
         with self.assertLogs("rbac.events", level="INFO") as cm:
             self.client.get("/api/pets/")
 
+        request_ids = {rec.request_id for rec in cm.records if hasattr(rec, "request_id")}
+        self.assertEqual(len(request_ids), 1,
+                         f"Se esperaba un único request_id por request, se obtuvieron: {request_ids}")
+
+    def test_required_fields_present_in_all_events(self):
+        """Todos los eventos contienen los campos mínimos requeridos."""
+        user_no_role = _make_user("no_role_user2", self.org_a, "VET")
+
+        self.auth(user_no_role)
+        with self.assertLogs("rbac.events", level="INFO") as cm:
+            self.client.get("/api/pets/")
+
         required_fields = {
-            "event", "timestamp", "user_id", "organization_id",
-            "role", "path", "method", "required_permission", "decision",
+            "request_id", "user_id", "organization_id", "role",
+            "endpoint", "method", "required_permission",
         }
-        for record in cm.records:
-            event = json.loads(record.getMessage())
-            missing = required_fields - set(event.keys())
-            self.assertFalse(missing, f"Campos faltantes en evento RBAC: {missing}")
+        for rec in cm.records:
+            missing = required_fields - set(vars(rec).keys())
+            self.assertFalse(missing,
+                             f"Campos faltantes en evento '{rec.getMessage()}': {missing}")

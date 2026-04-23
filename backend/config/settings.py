@@ -198,9 +198,9 @@ LOGGING = {
             'format': '[{levelname}] {asctime} {module}: {message}',
             'style': '{',
         },
-        # Formato raw para eventos RBAC — cada línea es un JSON independiente
-        'raw': {
-            'format': '%(message)s',
+        # JSON estructurado para eventos RBAC — una línea por evento
+        'rbac': {
+            '()': 'apps.core.logging.RBACStructuredFormatter',
         },
     },
     'handlers': {
@@ -214,14 +214,10 @@ LOGGING = {
             'formatter': 'verbose',
             'delay': True,
         },
-        # Handler dedicado para eventos RBAC — JSON por línea, rotado por tamaño
-        'rbac_file': {
-            'class': 'logging.handlers.RotatingFileHandler',
-            'filename': BASE_DIR / 'logs' / 'rbac_events.log',
-            'maxBytes': 10 * 1024 * 1024,  # 10 MB
-            'backupCount': 5,
-            'formatter': 'raw',
-            'delay': True,
+        # stdout — canal estándar en contenedores (Railway, Heroku, etc.)
+        'rbac_console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'rbac',
         },
     },
     'root': {
@@ -239,9 +235,11 @@ LOGGING = {
             'level': 'WARNING',
             'propagate': False,
         },
-        # Logger exclusivo para auditoría RBAC — no propaga al root
+        # Auditoría RBAC — INFO para visibilidad completa de decisiones
+        # Gate Fase 4: ausencia de RBAC_FALLBACK_ALLOWED y TENANT_MISMATCH_DETECTED
+        # fallback_rate = RBAC_FALLBACK_ALLOWED / (RBAC_ALLOWED_DB + RBAC_FALLBACK_ALLOWED)
         'rbac.events': {
-            'handlers': ['rbac_file'],
+            'handlers': ['rbac_console'],
             'level': 'INFO',
             'propagate': False,
         },

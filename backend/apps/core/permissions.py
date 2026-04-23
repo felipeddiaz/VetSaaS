@@ -15,9 +15,7 @@ REGLAS:
   6. Wildcard global es "*.*"
   7. Excepciones documentadas explícitamente (ej: acceso a propio usuario)
 """
-import json
 import logging
-from datetime import datetime, timezone
 
 from rest_framework.permissions import BasePermission
 
@@ -28,25 +26,45 @@ rbac_logger = logging.getLogger("rbac.events")
 
 
 # ---------------------------------------------------------------------------
-# Observabilidad — eventos RBAC estructurados
+# Observabilidad — eventos RBAC estructurados (stdout en producción)
 # ---------------------------------------------------------------------------
+# Eventos emitidos:
+#   RBAC_ALLOWED_DB          (INFO)    — permitido por roles en DB (fuente de verdad)
+#   RBAC_FALLBACK_ALLOWED    (WARNING) — permitido por fallback estático (sin UserRole en DB)
+#   RBAC_DENIED              (WARNING) — acceso denegado (cualquier fuente)
+#   TENANT_MISMATCH_DETECTED (ERROR)   — intento de acceso a recurso de otra organización
+#
+# Los cuatro eventos permiten calcular:
+#   fallback_rate = RBAC_FALLBACK_ALLOWED / (RBAC_ALLOWED_DB + RBAC_FALLBACK_ALLOWED)
+#   denied_rate   = RBAC_DENIED / total_requests (por endpoint)
+#
+# Gate Fase 4: ausencia de RBAC_FALLBACK_ALLOWED y TENANT_MISMATCH_DETECTED en 7 días
+# con ≥500 requests totales y ≥1 request por cada endpoint crítico.
 
-def _log_rbac(event: str, request, user, required: str | None) -> None:
+import uuid
+
+
+def _get_request_id(request) -> str:
     """
-    Emite un evento RBAC estructurado al logger rbac.events.
-    Eventos: RBAC_DB_ALLOWED, RBAC_FALLBACK_ALLOWED, RBAC_DENIED, TENANT_MISMATCH_DENY
+    ID de correlación por request — permite agrupar todos los eventos RBAC
+    de una misma petición HTTP en Railway logs o cualquier agregador.
+    Se genera una sola vez y se cachea en el objeto request.
     """
-    rbac_logger.info(json.dumps({
-        "event": event,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+    if not hasattr(request, "_rbac_request_id"):
+        request._rbac_request_id = uuid.uuid4().hex[:12]
+    return request._rbac_request_id
+
+
+def _rbac_extra(request, user, required: str | None) -> dict:
+    return {
+        "request_id": _get_request_id(request),
         "user_id": getattr(user, "id", None),
         "organization_id": getattr(user, "organization_id", None),
         "role": getattr(user, "role", None),
-        "path": getattr(request, "path", None),
+        "endpoint": getattr(request, "path", None),
         "method": getattr(request, "method", None),
         "required_permission": required,
-        "decision": "ALLOWED" if "ALLOWED" in event else "DENIED",
-    }))
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -149,16 +167,21 @@ class RolePermission(BasePermission):
 
         allowed = PERMISSIONS.get(role, [])
         result = _is_allowed(required, allowed)
-        event = "RBAC_FALLBACK_ALLOWED" if result else "RBAC_DENIED"
-        _log_rbac(event, request, request.user, required)
+        extra = _rbac_extra(request, request.user, required)
+        if result:
+            rbac_logger.warning("RBAC_FALLBACK_ALLOWED", extra=extra)
+        else:
+            rbac_logger.warning("RBAC_DENIED", extra=extra)
         return result
 
     def has_object_permission(self, request, view, obj) -> bool:
         # Regla 1 (SIEMPRE PRIMERO): aislamiento multitenant
         if hasattr(obj, "organization_id"):
             if obj.organization_id != request.user.organization_id:
-                _log_rbac("TENANT_MISMATCH_DENY", request, request.user,
-                          _resolve_required(request, view))
+                rbac_logger.error("TENANT_MISMATCH_DETECTED", extra={
+                    **_rbac_extra(request, request.user, _resolve_required(request, view)),
+                    "resource_org": obj.organization_id,
+                })
                 return False
 
         # Excepción documentada: el usuario siempre accede a su propio registro
@@ -199,27 +222,31 @@ class HybridPermission(BasePermission):
 
         if db_perms is not None:
             result = _is_allowed(required, db_perms)
-            event = "RBAC_DB_ALLOWED" if result else "RBAC_DENIED"
-            _log_rbac(event, request, request.user, required)
+            extra = _rbac_extra(request, request.user, required)
+            if result:
+                rbac_logger.info("RBAC_ALLOWED_DB", extra=extra)
+            else:
+                rbac_logger.warning("RBAC_DENIED", extra=extra)
             return result
 
-        # Fallback estático — sin roles en DB
-        logger.warning(
-            "Usuario %s usando fallback estático de permisos (sin roles en DB)",
-            request.user.id,
-        )
+        # Fallback estático — usuario sin UserRole en DB
         static_perms = PERMISSIONS.get(request.user.role, [])
         result = _is_allowed(required, static_perms)
-        event = "RBAC_FALLBACK_ALLOWED" if result else "RBAC_DENIED"
-        _log_rbac(event, request, request.user, required)
+        extra = _rbac_extra(request, request.user, required)
+        if result:
+            rbac_logger.warning("RBAC_FALLBACK_ALLOWED", extra=extra)
+        else:
+            rbac_logger.warning("RBAC_DENIED", extra=extra)
         return result
 
     def has_object_permission(self, request, view, obj) -> bool:
         # Regla 1 (SIEMPRE PRIMERO): aislamiento multitenant
         if hasattr(obj, "organization_id"):
             if obj.organization_id != request.user.organization_id:
-                _log_rbac("TENANT_MISMATCH_DENY", request, request.user,
-                          _resolve_required(request, view))
+                rbac_logger.error("TENANT_MISMATCH_DETECTED", extra={
+                    **_rbac_extra(request, request.user, _resolve_required(request, view)),
+                    "resource_org": obj.organization_id,
+                })
                 return False
 
         return self.has_permission(request, view)
