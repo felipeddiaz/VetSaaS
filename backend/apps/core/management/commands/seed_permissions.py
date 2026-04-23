@@ -40,8 +40,10 @@ class Command(BaseCommand):
         self.stdout.write(f"  Permissions: {created} creados, {existing} ya existían")
 
     def _seed_roles(self):
-        # Construye mapa code → Permission una sola vez
         perms_map = {p.code: p for p in Permission.objects.filter(code__in=PERMISSION_CODES)}
+
+        # "*.*" no está en PERMISSION_CODES pero es necesario para roles ADMIN
+        wildcard_perm, _ = Permission.objects.get_or_create(code="*.*")
 
         org_role_definitions = {
             role_code: perm_codes
@@ -65,8 +67,11 @@ class Command(BaseCommand):
                     role.is_system_role = True
                     role.save(update_fields=["is_system_role"])
 
-                valid_perms = [perms_map[c] for c in perm_codes if c in perms_map]
-                role.permissions.set(valid_perms)
+                if "*.*" in perm_codes:
+                    role.permissions.set([wildcard_perm])
+                else:
+                    valid_perms = [perms_map[c] for c in perm_codes if c in perms_map]
+                    role.permissions.set(valid_perms)
 
                 if created:
                     roles_created += 1
