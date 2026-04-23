@@ -2,7 +2,7 @@ from rest_framework import generics
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 
-from apps.core.permissions import RolePermission
+from apps.core.permissions import HybridPermission
 from apps.core.views import TenantQueryMixin
 
 from .models import MedicalRecord
@@ -17,7 +17,7 @@ class MedicalRecordPagination(PageNumberPagination):
 
 class MedicalRecordListCreateView(TenantQueryMixin, generics.ListCreateAPIView):
     serializer_class = MedicalRecordSerializer
-    permission_classes = [RolePermission]
+    permission_classes = [HybridPermission]
     pagination_class = MedicalRecordPagination
     resource_name = "medicalrecord"
 
@@ -39,7 +39,7 @@ class MedicalRecordListCreateView(TenantQueryMixin, generics.ListCreateAPIView):
 
 class MedicalRecordDetailView(TenantQueryMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = MedicalRecordDetailSerializer
-    permission_classes = [RolePermission]
+    permission_classes = [HybridPermission]
     resource_name = "medicalrecord"
 
     def get_queryset(self):
@@ -48,7 +48,7 @@ class MedicalRecordDetailView(TenantQueryMixin, generics.RetrieveUpdateDestroyAP
 
 class MedicalRecordByPetView(TenantQueryMixin, generics.ListAPIView):
     serializer_class = MedicalRecordSerializer
-    permission_classes = [RolePermission]
+    permission_classes = [HybridPermission]
     pagination_class = MedicalRecordPagination
     resource_name = "medicalrecord"
 

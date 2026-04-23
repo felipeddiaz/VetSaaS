@@ -190,7 +190,6 @@ STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 _cors_origins = config('CORS_ALLOWED_ORIGINS', default='http://localhost:5173,http://127.0.0.1:5173')
 CORS_ALLOWED_ORIGINS = [o.strip() for o in _cors_origins.split(',')]
 
-# Logging básico — errores en consola + archivo
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -198,6 +197,10 @@ LOGGING = {
         'verbose': {
             'format': '[{levelname}] {asctime} {module}: {message}',
             'style': '{',
+        },
+        # Formato raw para eventos RBAC — cada línea es un JSON independiente
+        'raw': {
+            'format': '%(message)s',
         },
     },
     'handlers': {
@@ -209,6 +212,15 @@ LOGGING = {
             'class': 'logging.FileHandler',
             'filename': BASE_DIR / 'logs' / 'django.log',
             'formatter': 'verbose',
+            'delay': True,
+        },
+        # Handler dedicado para eventos RBAC — JSON por línea, rotado por tamaño
+        'rbac_file': {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': BASE_DIR / 'logs' / 'rbac_events.log',
+            'maxBytes': 10 * 1024 * 1024,  # 10 MB
+            'backupCount': 5,
+            'formatter': 'raw',
             'delay': True,
         },
     },
@@ -225,6 +237,12 @@ LOGGING = {
         'apps': {
             'handlers': ['console', 'file'],
             'level': 'WARNING',
+            'propagate': False,
+        },
+        # Logger exclusivo para auditoría RBAC — no propaga al root
+        'rbac.events': {
+            'handlers': ['rbac_file'],
+            'level': 'INFO',
             'propagate': False,
         },
     },

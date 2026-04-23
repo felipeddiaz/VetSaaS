@@ -5,7 +5,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 
-from apps.core.permissions import RolePermission, make_permission
+from apps.core.permissions import HybridPermission, make_permission
 from apps.core.views import TenantQueryMixin
 
 from .models import Product, Presentation, StockMovement, MedicalRecordProduct
@@ -20,7 +20,7 @@ from .serializers import (
 
 class ProductListCreateView(TenantQueryMixin, generics.ListCreateAPIView):
     serializer_class = ProductSerializer
-    permission_classes = [RolePermission]
+    permission_classes = [HybridPermission]
     resource_name = "inventory"
 
     def get_queryset(self):
@@ -39,7 +39,7 @@ class ProductListCreateView(TenantQueryMixin, generics.ListCreateAPIView):
 
 class ProductDetailView(TenantQueryMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = ProductSerializer
-    permission_classes = [RolePermission]
+    permission_classes = [HybridPermission]
     resource_name = "inventory"
 
     def get_queryset(self):
@@ -112,7 +112,7 @@ def adjust_stock(request, pk):
 
 class StockMovementListView(TenantQueryMixin, generics.ListAPIView):
     serializer_class = StockMovementSerializer
-    permission_classes = [RolePermission]
+    permission_classes = [HybridPermission]
     resource_name = "inventory"
 
     def get_queryset(self):
@@ -142,7 +142,7 @@ def unit_choices(request):
 
 class MedicalRecordProductListCreateView(TenantQueryMixin, generics.ListCreateAPIView):
     serializer_class = MedicalRecordProductSerializer
-    permission_classes = [RolePermission]
+    permission_classes = [HybridPermission]
     resource_name = "inventory"
 
     def _get_medical_record(self):
@@ -170,7 +170,7 @@ class MedicalRecordProductListCreateView(TenantQueryMixin, generics.ListCreateAP
 
 
 class MedicalRecordProductDeleteView(generics.DestroyAPIView):
-    permission_classes = [RolePermission]
+    permission_classes = [HybridPermission]
     resource_name = "inventory"
 
     def get_object(self):
@@ -189,7 +189,7 @@ class MedicalRecordProductDeleteView(generics.DestroyAPIView):
 
 class PresentationListView(TenantQueryMixin, generics.ListAPIView):
     serializer_class = PresentationSerializer
-    permission_classes = [RolePermission]
+    permission_classes = [HybridPermission]
     resource_name = "inventory"
 
     def get_queryset(self):

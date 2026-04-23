@@ -6,7 +6,7 @@ from rest_framework import generics, status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
-from apps.core.permissions import RolePermission, make_permission
+from apps.core.permissions import HybridPermission, make_permission
 from apps.core.views import TenantQueryMixin
 
 from .models import Prescription, PrescriptionItem
@@ -15,7 +15,7 @@ from .serializers import PrescriptionSerializer, PrescriptionItemWriteSerializer
 
 class PrescriptionListCreateView(TenantQueryMixin, generics.ListCreateAPIView):
     serializer_class = PrescriptionSerializer
-    permission_classes = [RolePermission]
+    permission_classes = [HybridPermission]
     resource_name = "prescription"
 
     def get_queryset(self):
@@ -36,7 +36,7 @@ class PrescriptionListCreateView(TenantQueryMixin, generics.ListCreateAPIView):
 
 class PrescriptionDetailView(TenantQueryMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = PrescriptionSerializer
-    permission_classes = [RolePermission]
+    permission_classes = [HybridPermission]
     resource_name = "prescription"
 
     def get_queryset(self):
@@ -45,7 +45,7 @@ class PrescriptionDetailView(TenantQueryMixin, generics.RetrieveUpdateDestroyAPI
 
 class PrescriptionByPetView(TenantQueryMixin, generics.ListAPIView):
     serializer_class = PrescriptionSerializer
-    permission_classes = [RolePermission]
+    permission_classes = [HybridPermission]
     resource_name = "prescription"
 
     def get_queryset(self):
@@ -56,7 +56,7 @@ class PrescriptionByPetView(TenantQueryMixin, generics.ListAPIView):
 
 class PrescriptionItemCreateView(generics.CreateAPIView):
     serializer_class = PrescriptionItemWriteSerializer
-    permission_classes = [RolePermission]
+    permission_classes = [HybridPermission]
     resource_name = "prescription"
 
     def perform_create(self, serializer):
@@ -69,7 +69,7 @@ class PrescriptionItemCreateView(generics.CreateAPIView):
 
 
 class PrescriptionItemDeleteView(generics.DestroyAPIView):
-    permission_classes = [RolePermission]
+    permission_classes = [HybridPermission]
     resource_name = "prescription"
 
     def get_object(self):

@@ -6,7 +6,7 @@ from rest_framework import status
 from django.utils.dateparse import parse_date
 
 from apps.core.datetime_utils import filter_by_local_day
-from apps.core.permissions import RolePermission, make_permission
+from apps.core.permissions import HybridPermission, make_permission
 from apps.core.views import TenantQueryMixin
 
 from .models import Appointment
@@ -15,7 +15,7 @@ from .serializers import AppointmentSerializer
 
 class AppointmentListCreateView(TenantQueryMixin, generics.ListCreateAPIView):
     serializer_class = AppointmentSerializer
-    permission_classes = [RolePermission]
+    permission_classes = [HybridPermission]
     resource_name = "appointment"
 
     def get_queryset(self):
@@ -45,7 +45,7 @@ class AppointmentListCreateView(TenantQueryMixin, generics.ListCreateAPIView):
 
 class AppointmentDetailView(TenantQueryMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = AppointmentSerializer
-    permission_classes = [RolePermission]
+    permission_classes = [HybridPermission]
     resource_name = "appointment"
 
     def get_queryset(self):

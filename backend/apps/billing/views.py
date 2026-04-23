@@ -9,7 +9,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date
 
 from apps.core.datetime_utils import filter_by_local_day
-from apps.core.permissions import RolePermission
+from apps.core.permissions import HybridPermission
 from apps.core.views import TenantQueryMixin
 
 from .models import Service, Invoice, InvoiceItem
@@ -23,7 +23,7 @@ class BillingOrganizationMixin(TenantQueryMixin):
 
 class ServiceListCreateView(BillingOrganizationMixin, generics.ListCreateAPIView):
     serializer_class = ServiceSerializer
-    permission_classes = [RolePermission]
+    permission_classes = [HybridPermission]
     resource_name = "service"
 
     def get_queryset(self):
@@ -39,7 +39,7 @@ class ServiceListCreateView(BillingOrganizationMixin, generics.ListCreateAPIView
 
 class ServiceDetailView(BillingOrganizationMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = ServiceSerializer
-    permission_classes = [RolePermission]
+    permission_classes = [HybridPermission]
     resource_name = "service"
 
     def get_queryset(self):
@@ -48,7 +48,7 @@ class ServiceDetailView(BillingOrganizationMixin, generics.RetrieveUpdateDestroy
 
 class InvoiceListCreateView(BillingOrganizationMixin, generics.ListCreateAPIView):
     serializer_class = InvoiceSerializer
-    permission_classes = [RolePermission]
+    permission_classes = [HybridPermission]
     resource_name = "invoice"
 
     def get_queryset(self):
@@ -101,7 +101,7 @@ class InvoiceListCreateView(BillingOrganizationMixin, generics.ListCreateAPIView
 
 class InvoiceDetailView(BillingOrganizationMixin, generics.RetrieveUpdateAPIView):
     serializer_class = InvoiceSerializer
-    permission_classes = [RolePermission]
+    permission_classes = [HybridPermission]
     resource_name = "invoice"
 
     def get_queryset(self):
@@ -166,7 +166,7 @@ def pay_invoice(request, pk):
 
 class InvoiceItemCreateView(BillingOrganizationMixin, generics.CreateAPIView):
     serializer_class = InvoiceItemSerializer
-    permission_classes = [RolePermission]
+    permission_classes = [HybridPermission]
     resource_name = "invoice"
 
     def get_serializer_context(self):
@@ -207,7 +207,7 @@ class InvoiceItemCreateView(BillingOrganizationMixin, generics.CreateAPIView):
 
 class InvoiceItemDetailView(BillingOrganizationMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = InvoiceItemSerializer
-    permission_classes = [RolePermission]
+    permission_classes = [HybridPermission]
     resource_name = "invoice"
 
     def _get_invoice(self):

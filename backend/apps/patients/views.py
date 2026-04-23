@@ -1,6 +1,6 @@
 from rest_framework.viewsets import ModelViewSet
 
-from apps.core.permissions import RolePermission
+from apps.core.permissions import HybridPermission
 from apps.core.views import TenantQueryMixin
 
 from .models import Pet, Owner
@@ -12,7 +12,7 @@ class PetViewSet(TenantQueryMixin, ModelViewSet):
     Pacientes (mascotas). basename='patient' → permisos patient.*
     """
     serializer_class = PetSerializer
-    permission_classes = [RolePermission]
+    permission_classes = [HybridPermission]
 
     def get_queryset(self):
         return Pet.objects.for_organization(self.request.user.organization)
@@ -26,7 +26,7 @@ class OwnerViewSet(TenantQueryMixin, ModelViewSet):
     Propietarios. basename='owner' → permisos owner.*
     """
     serializer_class = OwnerSerializer
-    permission_classes = [RolePermission]
+    permission_classes = [HybridPermission]
 
     def get_queryset(self):
         return Owner.objects.for_organization(self.request.user.organization)
