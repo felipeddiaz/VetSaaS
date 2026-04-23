@@ -76,12 +76,28 @@ export const AuthProvider = ({ children }) => {
         if (storedToken) {
             setToken(storedToken);
             scheduleTokenRefresh(storedToken);
-        }
-        if (storedUser) {
-            setUser(JSON.parse(storedUser));
-        }
 
-        setInitializing(false);
+            // Refresh user data from server to avoid stale org/role data in localStorage
+            fetch(`${import.meta.env.VITE_API_URL}me/`, {
+                headers: { Authorization: `Bearer ${storedToken}` },
+            })
+                .then(res => res.ok ? res.json() : null)
+                .then(data => {
+                    if (data) {
+                        localStorage.setItem("user", JSON.stringify(data));
+                        setUser(data);
+                    } else if (storedUser) {
+                        setUser(JSON.parse(storedUser));
+                    }
+                })
+                .catch(() => {
+                    if (storedUser) setUser(JSON.parse(storedUser));
+                })
+                .finally(() => setInitializing(false));
+        } else {
+            if (storedUser) setUser(JSON.parse(storedUser));
+            setInitializing(false);
+        }
 
         return () => {
             if (refreshTimerRef.current) {
