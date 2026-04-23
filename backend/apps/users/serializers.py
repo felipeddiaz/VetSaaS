@@ -1,6 +1,10 @@
+import logging
+
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from apps.organizations.models import Organization
+
+logger = logging.getLogger(__name__)
 
 User = get_user_model()
 
@@ -38,11 +42,11 @@ class CreateEmployeeSerializer(serializers.ModelSerializer):
         return value
 
     def create(self, validated_data):
-        validated_data.pop('organization_id', None)  # Ignorar si viene del request
-        
+        validated_data.pop('organization_id', None)
+
         request = self.context.get('request')
         organization = request.user.organization if request else None
-        
+
         user = User.objects.create_user(
             username=validated_data['username'],
             email=validated_data.get('email', ''),
@@ -51,6 +55,26 @@ class CreateEmployeeSerializer(serializers.ModelSerializer):
             last_name=validated_data.get('last_name', ''),
             specialty=validated_data.get('specialty', ''),
             role=validated_data.get('role', 'ASSISTANT'),
-            organization=organization
+            organization=organization,
         )
+
+        self._assign_rbac_role(user, organization)
         return user
+
+    def _assign_rbac_role(self, user, organization):
+        if not organization:
+            return
+        from apps.core.models import Role, UserRole
+        try:
+            db_role = Role.objects.get(
+                name=user.role,
+                organization=organization,
+                is_system_role=True,
+            )
+            UserRole.objects.get_or_create(user=user, role=db_role)
+        except Role.DoesNotExist:
+            logger.warning(
+                "Rol '%s' no encontrado en org %s al crear usuario %s — "
+                "ejecuta seed_permissions",
+                user.role, organization.id, user.id,
+            )
