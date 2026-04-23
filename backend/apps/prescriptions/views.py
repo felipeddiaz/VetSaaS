@@ -7,19 +7,20 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
 from apps.core.permissions import RolePermission, make_permission
+from apps.core.views import TenantQueryMixin
 
 from .models import Prescription, PrescriptionItem
 from .serializers import PrescriptionSerializer, PrescriptionItemWriteSerializer
 
 
-class PrescriptionListCreateView(generics.ListCreateAPIView):
+class PrescriptionListCreateView(TenantQueryMixin, generics.ListCreateAPIView):
     serializer_class = PrescriptionSerializer
     permission_classes = [RolePermission]
     resource_name = "prescription"
 
     def get_queryset(self):
-        queryset = Prescription.objects.filter(
-            organization=self.request.user.organization
+        queryset = Prescription.objects.for_organization(
+            self.request.user.organization
         ).select_related('pet', 'veterinarian', 'medical_record')
         pet_id = self.request.query_params.get('pet')
         if pet_id:
@@ -33,25 +34,24 @@ class PrescriptionListCreateView(generics.ListCreateAPIView):
         )
 
 
-class PrescriptionDetailView(generics.RetrieveUpdateDestroyAPIView):
+class PrescriptionDetailView(TenantQueryMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = PrescriptionSerializer
     permission_classes = [RolePermission]
     resource_name = "prescription"
 
     def get_queryset(self):
-        return Prescription.objects.filter(organization=self.request.user.organization)
+        return Prescription.objects.for_organization(self.request.user.organization)
 
 
-class PrescriptionByPetView(generics.ListAPIView):
+class PrescriptionByPetView(TenantQueryMixin, generics.ListAPIView):
     serializer_class = PrescriptionSerializer
     permission_classes = [RolePermission]
     resource_name = "prescription"
 
     def get_queryset(self):
-        return Prescription.objects.filter(
-            organization=self.request.user.organization,
-            pet_id=self.kwargs['pet_id'],
-        )
+        return Prescription.objects.for_organization(
+            self.request.user.organization
+        ).filter(pet_id=self.kwargs['pet_id'])
 
 
 class PrescriptionItemCreateView(generics.CreateAPIView):

@@ -5,8 +5,7 @@ def create_appointment(user, data):
     data.pop("organization", None)
 
     # evitar doble reserva (usando for_user si está disponible, o filter seguro)
-    exists = Appointment.objects.filter(
-        organization=user.organization,
+    exists = Appointment.objects.for_organization(user.organization).filter(
         veterinarian=data.get("veterinarian"),
         datetime=data.get("datetime"),
         status="scheduled"

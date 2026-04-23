@@ -6,6 +6,7 @@ from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 
 from apps.core.permissions import RolePermission, make_permission
+from apps.core.views import TenantQueryMixin
 
 from .models import Product, Presentation, StockMovement, MedicalRecordProduct
 from .serializers import (
@@ -17,7 +18,7 @@ from .serializers import (
 )
 
 
-class ProductListCreateView(generics.ListCreateAPIView):
+class ProductListCreateView(TenantQueryMixin, generics.ListCreateAPIView):
     serializer_class = ProductSerializer
     permission_classes = [RolePermission]
     resource_name = "inventory"
@@ -25,7 +26,7 @@ class ProductListCreateView(generics.ListCreateAPIView):
     def get_queryset(self):
         queryset = (
             Product.objects
-            .filter(organization=self.request.user.organization)
+            .for_organization(self.request.user.organization)
             .select_related('presentation')
         )
         if self.request.query_params.get('active') == 'true':
@@ -36,7 +37,7 @@ class ProductListCreateView(generics.ListCreateAPIView):
         serializer.save(organization=self.request.user.organization)
 
 
-class ProductDetailView(generics.RetrieveUpdateDestroyAPIView):
+class ProductDetailView(TenantQueryMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = ProductSerializer
     permission_classes = [RolePermission]
     resource_name = "inventory"
@@ -44,7 +45,7 @@ class ProductDetailView(generics.RetrieveUpdateDestroyAPIView):
     def get_queryset(self):
         return (
             Product.objects
-            .filter(organization=self.request.user.organization)
+            .for_organization(self.request.user.organization)
             .select_related('presentation')
         )
 
@@ -109,7 +110,7 @@ def adjust_stock(request, pk):
     return Response(ProductSerializer(product).data)
 
 
-class StockMovementListView(generics.ListAPIView):
+class StockMovementListView(TenantQueryMixin, generics.ListAPIView):
     serializer_class = StockMovementSerializer
     permission_classes = [RolePermission]
     resource_name = "inventory"
@@ -117,7 +118,7 @@ class StockMovementListView(generics.ListAPIView):
     def get_queryset(self):
         queryset = (
             StockMovement.objects
-            .filter(organization=self.request.user.organization)
+            .for_organization(self.request.user.organization)
             .select_related('presentation__product', 'created_by')
         )
         product_id = self.request.query_params.get('product')
@@ -139,7 +140,7 @@ def unit_choices(request):
     ])
 
 
-class MedicalRecordProductListCreateView(generics.ListCreateAPIView):
+class MedicalRecordProductListCreateView(TenantQueryMixin, generics.ListCreateAPIView):
     serializer_class = MedicalRecordProductSerializer
     permission_classes = [RolePermission]
     resource_name = "inventory"
@@ -186,13 +187,12 @@ class MedicalRecordProductDeleteView(generics.DestroyAPIView):
         )
 
 
-class PresentationListView(generics.ListAPIView):
+class PresentationListView(TenantQueryMixin, generics.ListAPIView):
     serializer_class = PresentationSerializer
     permission_classes = [RolePermission]
     resource_name = "inventory"
 
     def get_queryset(self):
-        return Presentation.objects.filter(
-            organization=self.request.user.organization,
-            product__is_active=True,
-        ).select_related('product')
+        return Presentation.objects.for_organization(
+            self.request.user.organization
+        ).filter(product__is_active=True).select_related('product')

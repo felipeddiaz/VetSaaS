@@ -3,6 +3,7 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 
 from apps.core.permissions import RolePermission
+from apps.core.views import TenantQueryMixin
 
 from .models import MedicalRecord
 from .serializers import MedicalRecordSerializer, MedicalRecordDetailSerializer
@@ -14,7 +15,7 @@ class MedicalRecordPagination(PageNumberPagination):
     max_page_size = 50
 
 
-class MedicalRecordListCreateView(generics.ListCreateAPIView):
+class MedicalRecordListCreateView(TenantQueryMixin, generics.ListCreateAPIView):
     serializer_class = MedicalRecordSerializer
     permission_classes = [RolePermission]
     pagination_class = MedicalRecordPagination
@@ -22,9 +23,7 @@ class MedicalRecordListCreateView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         pet_id = self.request.query_params.get('pet')
-        queryset = MedicalRecord.objects.filter(
-            organization=self.request.user.organization
-        )
+        queryset = MedicalRecord.objects.for_organization(self.request.user.organization)
 
         if pet_id:
             queryset = queryset.filter(pet_id=pet_id)
@@ -38,18 +37,16 @@ class MedicalRecordListCreateView(generics.ListCreateAPIView):
         )
 
 
-class MedicalRecordDetailView(generics.RetrieveUpdateDestroyAPIView):
+class MedicalRecordDetailView(TenantQueryMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = MedicalRecordDetailSerializer
     permission_classes = [RolePermission]
     resource_name = "medicalrecord"
 
     def get_queryset(self):
-        return MedicalRecord.objects.filter(
-            organization=self.request.user.organization
-        )
+        return MedicalRecord.objects.for_organization(self.request.user.organization)
 
 
-class MedicalRecordByPetView(generics.ListAPIView):
+class MedicalRecordByPetView(TenantQueryMixin, generics.ListAPIView):
     serializer_class = MedicalRecordSerializer
     permission_classes = [RolePermission]
     pagination_class = MedicalRecordPagination
@@ -57,7 +54,6 @@ class MedicalRecordByPetView(generics.ListAPIView):
 
     def get_queryset(self):
         pet_id = self.kwargs.get('pet_id')
-        return MedicalRecord.objects.filter(
-            organization=self.request.user.organization,
-            pet_id=pet_id
-        ).order_by('-created_at')
+        return MedicalRecord.objects.for_organization(
+            self.request.user.organization
+        ).filter(pet_id=pet_id).order_by('-created_at')

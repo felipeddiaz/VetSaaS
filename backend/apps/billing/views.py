@@ -10,18 +10,15 @@ from django.utils.dateparse import parse_date
 
 from apps.core.datetime_utils import filter_by_local_day
 from apps.core.permissions import RolePermission
+from apps.core.views import TenantQueryMixin
 
 from .models import Service, Invoice, InvoiceItem
 from .serializers import ServiceSerializer, InvoiceSerializer, InvoiceItemSerializer
 from .permissions import CanConfirmInvoice, CanPayInvoice, CanCancelInvoice
 
 
-class BillingOrganizationMixin:
+class BillingOrganizationMixin(TenantQueryMixin):
     """Garantiza que ninguna vista de facturación retorne datos de otra organización."""
-
-    def get_queryset(self):
-        qs = super().get_queryset()
-        return qs.filter(organization=self.request.user.organization)
 
 
 class ServiceListCreateView(BillingOrganizationMixin, generics.ListCreateAPIView):
@@ -30,7 +27,7 @@ class ServiceListCreateView(BillingOrganizationMixin, generics.ListCreateAPIView
     resource_name = "service"
 
     def get_queryset(self):
-        queryset = Service.objects.filter(organization=self.request.user.organization)
+        queryset = Service.objects.for_organization(self.request.user.organization)
         active_only = self.request.query_params.get('active')
         if active_only == 'true':
             queryset = queryset.filter(is_active=True)
@@ -46,7 +43,7 @@ class ServiceDetailView(BillingOrganizationMixin, generics.RetrieveUpdateDestroy
     resource_name = "service"
 
     def get_queryset(self):
-        return Service.objects.filter(organization=self.request.user.organization)
+        return Service.objects.for_organization(self.request.user.organization)
 
 
 class InvoiceListCreateView(BillingOrganizationMixin, generics.ListCreateAPIView):
@@ -55,8 +52,8 @@ class InvoiceListCreateView(BillingOrganizationMixin, generics.ListCreateAPIView
     resource_name = "invoice"
 
     def get_queryset(self):
-        queryset = Invoice.objects.filter(
-            organization=self.request.user.organization
+        queryset = Invoice.objects.for_organization(
+            self.request.user.organization
         ).select_related('owner', 'pet', 'appointment')
 
         owner_id = self.request.query_params.get('owner')
@@ -108,7 +105,7 @@ class InvoiceDetailView(BillingOrganizationMixin, generics.RetrieveUpdateAPIView
     resource_name = "invoice"
 
     def get_queryset(self):
-        return Invoice.objects.filter(organization=self.request.user.organization)
+        return Invoice.objects.for_organization(self.request.user.organization)
 
     def update(self, request, *args, **kwargs):
         invoice = self.get_object()
@@ -175,7 +172,7 @@ class InvoiceItemCreateView(BillingOrganizationMixin, generics.CreateAPIView):
     def get_serializer_context(self):
         context = super().get_serializer_context()
         invoice = get_object_or_404(
-            Invoice.objects.filter(organization=self.request.user.organization),
+            Invoice.objects.for_organization(self.request.user.organization),
             pk=self.kwargs['invoice_pk']
         )
         context['invoice'] = invoice

@@ -1,4 +1,5 @@
 from rest_framework.decorators import api_view, permission_classes
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 
 from apps.core.datetime_utils import filter_by_local_day, org_now_utc, org_today_local
@@ -14,12 +15,11 @@ def dashboard_stats(request):
 
     org = request.user.organization
     if org is None:
-        return Response({'detail': 'Usuario sin organización asignada.'}, status=400)
+        raise PermissionDenied("User has no organization assigned")
     today_local = org_today_local(org)
     now_utc = org_now_utc(org)
 
-    appointments_qs = Appointment.objects.filter(
-        organization=org,
+    appointments_qs = Appointment.objects.for_organization(org).filter(
         status__in=['scheduled', 'done'],
     )
     appointments_today = filter_by_local_day(
@@ -29,17 +29,13 @@ def dashboard_stats(request):
         today_local,
     ).count()
 
-    recent_records = MedicalRecord.objects.filter(
-        organization=org,
-    ).order_by('-created_at').values(
+    recent_records = MedicalRecord.objects.for_organization(org).order_by('-created_at').values(
         'id', 'pet__name', 'diagnosis', 'created_at',
         'veterinarian__first_name', 'veterinarian__last_name',
     )[:5]
 
     from django.db.models import F
-    low_stock_qs = Product.objects.filter(
-        organization=org,
-        is_active=True,
+    low_stock_qs = Product.objects.for_organization(org).filter(
         presentation__stock__lte=F('presentation__min_stock'),
     ).select_related('presentation')
     low_stock = [

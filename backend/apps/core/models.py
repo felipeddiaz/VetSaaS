@@ -2,18 +2,19 @@
 core/models.py — Infraestructura multitenant de VetCare SaaS
 =============================================================
 
-CÓMO FUNCIONA EL TENANT MANAGER
----------------------------------
-Cada request pasa por TenantMiddleware, que inyecta la organización del usuario
-en un thread-local (_current_org). TenantManager lee ese contexto en cada query
-y agrega automáticamente filter(organization=org, is_active=True).
-
-Resultado: ningún código de negocio necesita filtrar por organización manualmente.
-
 MANAGERS DISPONIBLES
 ---------------------
-  Model.objects      → filtra por tenant activo + is_active=True  (usar siempre)
-  Model.all_objects  → sin filtros  (solo migrations, admin, scripts)
+  Model.objects                    → filtra is_active=True (usar siempre)
+  Model.objects.for_organization(org) → filtra por tenant + is_active=True
+  Model.all_objects                → sin filtros (solo migrations, admin, scripts)
+
+REGLA DE ORO
+------------
+Toda query de negocio DEBE usar for_organization(org):
+  Model.objects.for_organization(request.user.organization)
+
+Nunca usar Model.objects.all() sin filtro de organización.
+El tenant (organización) siempre debe derivarse del request, nunca de estado global.
 
 SOFT DELETE
 -----------
@@ -22,11 +23,13 @@ automáticamente. Para borrado físico: qs.hard_delete() (explícito e intencion
 Regla: solo se aplica soft delete a catálogos y usuarios.
 NO aplica a: historial clínico, prescripciones, facturas (registros inmutables).
 
-LO QUE NO SE DEBE HACER
-------------------------
-  ❌ Model.objects.update(...)        — bypassa validaciones y tenant
-  ❌ Model.objects.bulk_create(...)   — bypassa full_clean()
-  ❌ Model.objects.raw(...)           — bypassa todo
+ANTI-PATTERNS (NO HACER)
+-------------------------
+  ❌ Model.objects.all()            — sin filtro de org: fuga de datos entre tenants
+  ❌ Model.objects.filter(...)      — sin organization= explícito
+  ❌ Model.objects.update(...)      — bypassa validaciones y tenant
+  ❌ Model.objects.bulk_create(...) — bypassa full_clean()
+  ❌ Model.objects.raw(...)         — bypassa todo
 
   Si necesitas .update() por atomicidad (ej: stock):
     → usa Model.all_objects.filter(pk=pk).update(...)
@@ -34,34 +37,6 @@ LO QUE NO SE DEBE HACER
 
   Si necesitas .bulk_create():
     → llama full_clean() manualmente en cada objeto antes
-
-THREADING VS ASYNC
-------------------
-MVP usa threading.local(). Migrar a contextvars cuando haya ASGI o Celery.
-En Celery/tareas background: el contexto NO se propaga automáticamente.
-Pasar organización explícitamente o usar all_objects con filtro manual.
-
-ANTI-PATTERNS (NO HACER)
--------------------------
-  ❌ Model.objects.update(...)
-       Bypassa full_clean(), signals y el tenant filter.
-       Si necesitas atomicidad: usa all_objects.filter(pk=pk).update() + comenta el motivo.
-
-  ❌ Model.objects.bulk_create([...])
-       Bypassa full_clean() en cada instancia.
-       Si es necesario: llama obj.full_clean() manualmente antes de cada objeto.
-
-  ❌ Model.objects.raw("SELECT ...")
-       Bypassa absolutamente todo — tenant, validaciones, señales.
-       Usar solo para reportes de lectura y con all_objects explícito.
-
-  ❌ Model.all_objects fuera de servicios controlados
-       all_objects existe para migrations, admin y servicios internos específicos.
-       No usarlo en views, serializers ni lógica de negocio general.
-
-  ❌ Acceder a DB sin que TenantMiddleware haya corrido
-       En scripts o tareas async: setear contexto manualmente con set_current_org()
-       o usar all_objects con filter(organization=org) explícito.
 """
 import logging
 import threading
@@ -72,23 +47,14 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Thread-local context
-# NOTE: MVP usa threading.local(). Migrar a contextvars cuando haya ASGI/Celery.
+# Thread-local context (solo para audit trail: created_by / updated_by)
+# La organización NO se guarda en thread-local — se pasa explícitamente.
 # ---------------------------------------------------------------------------
-_current_org  = threading.local()
 _current_user = threading.local()
-
-
-def get_current_org():
-    return getattr(_current_org, 'value', None)
 
 
 def get_current_user():
     return getattr(_current_user, 'value', None)
-
-
-def set_current_org(org):
-    _current_org.value = org
 
 
 def set_current_user(user):
@@ -96,7 +62,6 @@ def set_current_user(user):
 
 
 def clear_tenant_context():
-    _current_org.value  = None
     _current_user.value = None
 
 
@@ -132,37 +97,25 @@ class TenantQuerySet(models.QuerySet):
 # ---------------------------------------------------------------------------
 class TenantManager(models.Manager):
     """
-    Manager automático que filtra por tenant activo y registros activos.
+    Manager para modelos multitenant.
 
-    Filtros aplicados en cada query:
-      - organization == contexto actual (thread-local)
-      - is_active == True
+    get_queryset() NO filtra por organización — esa responsabilidad es de quien llama.
+    Usar for_organization(org) en todas las queries de tenant.
 
-    Bypass para scripts/migraciones/tests:
-      Model.objects._bypass_tenant = True
-    O usar Model.all_objects (sin ningún filtro).
+    Bypass soft-delete: usar Model.all_objects (sin ningún filtro).
     """
 
     def get_queryset(self):
-        org = get_current_org()
+        # IMPORTANTE: no filtra por organización — responsabilidad de quien llama.
+        # Usar for_organization(org) en todas las queries de tenant.
+        return TenantQuerySet(self.model, using=self._db).filter(is_active=True)
 
-        if org is None:
-            if getattr(self, '_bypass_tenant', False):
-                # Scripts / migraciones / tests que necesitan acceso sin contexto
-                return TenantQuerySet(self.model, using=self._db).filter(is_active=True)
-            # Sin contexto de tenant: devuelve queryset vacío (seguro).
-            # Esto cubre evaluaciones en tiempo de importación (DRF class-level queryset).
-            # En requests reales el middleware siempre setea el contexto antes de este punto.
-            logger.debug(
-                "TenantManager: sin contexto para %s — devolviendo queryset vacío",
-                self.model.__name__,
+    def for_organization(self, organization):
+        if organization is None:
+            raise ValueError(
+                f"Organization is required for {self.model.__name__} queries"
             )
-            return TenantQuerySet(self.model, using=self._db).none()
-
-        return TenantQuerySet(self.model, using=self._db).filter(
-            organization=org,
-            is_active=True,
-        )
+        return self.get_queryset().filter(organization=organization)
 
 
 # ---------------------------------------------------------------------------

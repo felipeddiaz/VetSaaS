@@ -1,25 +1,26 @@
 from rest_framework import generics
 from rest_framework.decorators import api_view, permission_classes
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework import status
 from django.utils.dateparse import parse_date
 
 from apps.core.datetime_utils import filter_by_local_day
 from apps.core.permissions import RolePermission, make_permission
+from apps.core.views import TenantQueryMixin
 
 from .models import Appointment
 from .serializers import AppointmentSerializer
 
 
-class AppointmentListCreateView(generics.ListCreateAPIView):
+class AppointmentListCreateView(TenantQueryMixin, generics.ListCreateAPIView):
     serializer_class = AppointmentSerializer
     permission_classes = [RolePermission]
     resource_name = "appointment"
 
     def get_queryset(self):
         org = self.request.user.organization
-        queryset = Appointment.objects.filter(
-            organization=org,
+        queryset = Appointment.objects.for_organization(org).filter(
             status__in=['scheduled', 'done']
         )
 
@@ -42,15 +43,13 @@ class AppointmentListCreateView(generics.ListCreateAPIView):
         serializer.save(organization=self.request.user.organization)
 
 
-class AppointmentDetailView(generics.RetrieveUpdateDestroyAPIView):
+class AppointmentDetailView(TenantQueryMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = AppointmentSerializer
     permission_classes = [RolePermission]
     resource_name = "appointment"
 
     def get_queryset(self):
-        return Appointment.objects.filter(
-            organization=self.request.user.organization
-        )
+        return Appointment.objects.for_organization(self.request.user.organization)
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -62,11 +61,10 @@ class AppointmentDetailView(generics.RetrieveUpdateDestroyAPIView):
 @api_view(['PATCH'])
 @permission_classes([make_permission("appointment.update")])
 def update_status(request, pk):
+    if not request.user.organization:
+        raise PermissionDenied("User has no organization assigned")
     try:
-        appointment = Appointment.objects.get(
-            pk=pk,
-            organization=request.user.organization
-        )
+        appointment = Appointment.objects.for_organization(request.user.organization).get(pk=pk)
     except Appointment.DoesNotExist:
         return Response(
             {'error': 'Cita no encontrada'},

@@ -2,28 +2,15 @@ import logging
 
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
-from apps.core.models import set_current_org, set_current_user
+from apps.core.models import set_current_user
 
 logger = logging.getLogger(__name__)
 
 
 class TenantJWTAuthentication(JWTAuthentication):
     """
-    Extiende JWTAuthentication para inyectar el contexto de tenant
-    inmediatamente después de validar el token.
-
-    Por qué es necesario:
-      TenantMiddleware corre antes de que DRF procese el JWT.
-      En ese momento request.user es AnonymousUser (sesión Django, no JWT).
-      El contexto queda en None y TenantManager devuelve .none() vacío.
-
-    Solución:
-      authenticate() corre durante View.initial(), después del middleware,
-      con el usuario ya validado. Es el momento correcto para setear contexto.
-
-    Cleanup:
-      TenantMiddleware.finally siempre limpia al terminar el request,
-      sin importar qué auth class seteó el contexto.
+    Extiende JWTAuthentication para cargar el user con select_related('organization')
+    y setear el contexto de audit trail (created_by / updated_by).
     """
 
     def authenticate(self, request):
@@ -38,14 +25,12 @@ class TenantJWTAuthentication(JWTAuthentication):
         User = get_user_model()
         user = User.objects.select_related('organization').get(pk=user.pk)
 
-        logger.warning(
-            "DEBUG FIX | id=%s | org_id=%s | org=%s",
-            user.id,
-            user.organization_id,
-            user.organization,
-        )
-
         set_current_user(user)
-        set_current_org(user.organization)
+
+        if user.organization is None:
+            logger.warning(
+                "JWT autenticado pero sin organización | user_id=%s",
+                user.pk,
+            )
 
         return (user, token)
