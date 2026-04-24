@@ -101,7 +101,7 @@ PERMISSIONS = {
         "owner.update", "owner.destroy",
         "inventory.list", "inventory.retrieve",
         "invoice.list", "invoice.retrieve", "invoice.create",
-        "invoice.confirm", "invoice.cancel",
+        "invoice.confirm", "invoice.pay", "invoice.cancel",
         "service.list", "service.retrieve",
         "staff.list",
         "dashboard.view",
