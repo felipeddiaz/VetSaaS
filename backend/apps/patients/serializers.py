@@ -44,15 +44,11 @@ class PetSerializer(serializers.ModelSerializer):
         return pet
 
     def update(self, instance, validated_data):
-        request = self.context['request']
-        organization = request.user.organization
-
         owner_data = validated_data.pop('owner')
-        owner, _ = Owner.objects.get_or_create(
-            name=owner_data['name'],
-            phone=owner_data['phone'],
-            organization=organization
-        )
+        owner = instance.owner
+        owner.name = owner_data.get('name', owner.name)
+        owner.phone = owner_data.get('phone', owner.phone)
+        owner.save()
 
         instance.name = validated_data.get('name', instance.name)
         instance.species = validated_data.get('species', instance.species)
@@ -60,7 +56,6 @@ class PetSerializer(serializers.ModelSerializer):
         instance.birth_date = validated_data.get('birth_date', instance.birth_date)
         instance.sex = validated_data.get('sex', instance.sex)
         instance.color = validated_data.get('color', instance.color)
-        instance.owner = owner
         instance.save()
 
         return instance

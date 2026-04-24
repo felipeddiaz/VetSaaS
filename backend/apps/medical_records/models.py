@@ -35,9 +35,10 @@ class MedicalRecord(OrganizationalModel):
     @property
     def invoice_id(self):
         # Factura directa vinculada al registro (walk-in o venta con consulta)
-        direct = self.invoices.order_by('id').values_list('id', flat=True).first()
-        if direct:
-            return direct
+        try:
+            return self.invoice.id
+        except Exception:
+            pass
         # Factura via cita
         if self.appointment_id:
             try:

@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from django.db.models import Q
+from django.utils.timezone import now
 
 from apps.core.datetime_utils import get_context_timezone, local_date_time_to_utc
 
@@ -55,6 +56,9 @@ class AppointmentSerializer(serializers.ModelSerializer):
 
         start_utc = local_date_time_to_utc(org, local_date, start_time)
         end_utc = local_date_time_to_utc(org, local_date, end_time)
+
+        if not instance and start_utc < now():
+            raise serializers.ValidationError({"date": "No se pueden crear citas en el pasado."})
 
         vet_pk = veterinarian_id.pk if hasattr(veterinarian_id, 'pk') else veterinarian_id
         conflicts = Appointment.objects.filter(

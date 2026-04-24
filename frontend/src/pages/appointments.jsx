@@ -285,6 +285,7 @@ function EditModal({ appt, pets, staff, user, onClose, onSave }) {
                     <div className="form-group">
                         <label className="form-label">FECHA *</label>
                         <input type="date" className="input" value={form.date}
+                            min={new Date().toISOString().split('T')[0]}
                             onChange={e=>setForm({...form,date:e.target.value})}/>
                     </div>
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"14px"}}>
@@ -537,27 +538,27 @@ const Appointments = () => {
 
     // Filtered appointments for this week's grid
     const weekAppts = appointments.filter(a => {
-        const d = new Date(a.date + "T00:00:00");
+        const d = (() => { const [y,m,d] = a.date.split('-').map(Number); return new Date(y,m-1,d); })();
         const inWeek = weekDays.some(wd => isSameDay(d, wd));
         const vetOk  = !filterVetId || String(a.veterinarian) === filterVetId;
         return inWeek && vetOk;
     });
 
     const apptForCell = (date, hour) => weekAppts.filter(a => {
-        const d = new Date(a.date + "T00:00:00");
+        const d = (() => { const [y,m,d] = a.date.split('-').map(Number); return new Date(y,m-1,d); })();
         return isSameDay(d, date) && apptHour(a) === hour;
     });
 
     // Stats (always use full unfiltered list)
     const todayCount = appointments.filter(a => {
-        const d = new Date(a.date + "T00:00:00");
+        const d = (() => { const [y,m,d] = a.date.split('-').map(Number); return new Date(y,m-1,d); })();
         return isSameDay(d, today);
     }).length;
 
     const ws0 = getWeekStart(today, 0);
     const we0 = new Date(ws0); we0.setDate(we0.getDate() + 6);
     const weekCount = appointments.filter(a => {
-        const d = new Date(a.date + "T00:00:00");
+        const d = (() => { const [y,m,d] = a.date.split('-').map(Number); return new Date(y,m-1,d); })();
         return d >= ws0 && d <= we0;
     }).length;
 

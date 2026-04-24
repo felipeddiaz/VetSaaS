@@ -144,6 +144,7 @@ class MedicalRecordProduct(OrganizationalModel):
         if self.medical_record_id and not self.organization_id:
             self.organization_id = self.medical_record.organization_id
 
+        from django.db import transaction
         from .services import apply_stock_movement
         if self.pk:
             old = MedicalRecordProduct.objects.get(pk=self.pk)
@@ -158,14 +159,20 @@ class MedicalRecordProduct(OrganizationalModel):
                     medical_record=self.medical_record,
                 )
         else:
-            apply_stock_movement(
-                presentation=self.presentation,
-                quantity=self.quantity,
-                movement_type='out',
-                organization=self.medical_record.organization,
-                reason='Consumido en consulta médica',
-                medical_record=self.medical_record,
-            )
+            # CREATE — lock explícito antes del check de stock para evitar race condition.
+            # apply_stock_movement usa refresh_from_db() + F() pero sin lock previo
+            # dos threads podrían pasar el check simultáneamente. El lock lo previene.
+            with transaction.atomic():
+                fresh = Presentation.objects.select_for_update().get(pk=self.presentation_id)
+                self.presentation = fresh  # objeto bloqueado, no stale
+                apply_stock_movement(
+                    presentation=fresh,
+                    quantity=self.quantity,
+                    movement_type='out',
+                    organization=self.medical_record.organization,
+                    reason='Consumido en consulta médica',
+                    medical_record=self.medical_record,
+                )
         super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):

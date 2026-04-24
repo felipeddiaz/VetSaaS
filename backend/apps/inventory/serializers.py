@@ -171,3 +171,26 @@ class MedicalRecordProductSerializer(serializers.ModelSerializer):
             'id', 'presentation', 'product_name', 'presentation_name',
             'base_unit', 'base_unit_display', 'quantity',
         ]
+
+    def validate(self, attrs):
+        presentation = attrs.get('presentation')
+        if not presentation:
+            return attrs
+        product = presentation.product
+        if not product.requires_prescription:
+            return attrs
+        medical_record = self.context.get('medical_record')
+        if not medical_record:
+            return attrs
+        from apps.prescriptions.models import PrescriptionItem
+        has_active_rx = PrescriptionItem.objects.filter(
+            prescription__medical_record=medical_record,
+            prescription__is_active=True,
+            product=product,
+        ).exists()
+        if not has_active_rx:
+            raise serializers.ValidationError(
+                f"{product.name} requiere receta médica activa. "
+                "Crea la receta antes de agregar este producto a la consulta."
+            )
+        return attrs

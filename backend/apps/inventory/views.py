@@ -161,12 +161,39 @@ class MedicalRecordProductListCreateView(TenantQueryMixin, generics.ListCreateAP
             .select_related('presentation__product')
         )
 
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx['medical_record'] = self._get_medical_record()
+        return ctx
+
     def perform_create(self, serializer):
-        medical_record = self._get_medical_record()
-        presentation = serializer.validated_data['presentation']
-        if presentation.organization_id != self.request.user.organization_id:
-            raise ValidationError({'presentation': 'Presentación fuera de tu organización'})
-        serializer.save(medical_record=medical_record)
+        from django.db import transaction
+        with transaction.atomic():
+            medical_record = self._get_medical_record()
+            presentation = serializer.validated_data['presentation']
+            if presentation.organization_id != self.request.user.organization_id:
+                raise ValidationError({'presentation': 'Presentación fuera de tu organización'})
+            mrp = serializer.save(medical_record=medical_record)
+            self._sync_invoice_item(mrp)
+
+    def _sync_invoice_item(self, mrp):
+        from apps.billing.services import get_or_create_invoice_for_medical_record
+        from apps.billing.models import InvoiceItem
+        invoice = get_or_create_invoice_for_medical_record(mrp.medical_record)
+        if invoice.status != 'draft':
+            return
+        item, created = InvoiceItem.objects.get_or_create(
+            invoice=invoice,
+            presentation=mrp.presentation,
+            defaults={
+                'description': str(mrp.presentation),
+                'quantity': mrp.quantity,
+                'unit_price': mrp.presentation.sale_price,
+            }
+        )
+        if not created:
+            item.quantity += mrp.quantity
+            item.save()
 
 
 class MedicalRecordProductDeleteView(generics.DestroyAPIView):

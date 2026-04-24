@@ -126,3 +126,22 @@ def _log_status_change(invoice, previous, new, user, notes=''):
         changed_by=user,
         notes=notes,
     )
+
+
+def get_or_create_invoice_for_medical_record(medical_record):
+    """
+    Fuente única de verdad para crear/obtener la Invoice de una consulta médica.
+    Usado por la signal de MedicalRecord y por la view de MedicalRecordProduct.
+    El OneToOneField en Invoice.medical_record garantiza idempotencia a nivel DB.
+    """
+    invoice, _ = Invoice.objects.get_or_create(
+        medical_record=medical_record,
+        defaults={
+            'owner': medical_record.pet.owner,
+            'pet': medical_record.pet,
+            'organization': medical_record.organization,
+            'status': 'draft',
+            'invoice_type': 'consultation',
+        }
+    )
+    return invoice

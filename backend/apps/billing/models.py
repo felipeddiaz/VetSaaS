@@ -42,12 +42,12 @@ class Invoice(OrganizationalModel):
         choices=INVOICE_TYPE_CHOICES,
         default='consultation',
     )
-    medical_record = models.ForeignKey(
+    medical_record = models.OneToOneField(
         'medical_records.MedicalRecord',
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='invoices',
+        related_name='invoice',
     )
     appointment = models.OneToOneField(
         'appointments.Appointment',
@@ -202,6 +202,7 @@ class InvoiceItem(OrganizationalModel):
         invoice.recalculate_totals()
 
     class Meta:
+        unique_together = [('invoice', 'presentation')]
         constraints = [
             models.CheckConstraint(
                 condition=Q(quantity__gt=0),

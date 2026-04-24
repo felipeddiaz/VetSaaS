@@ -56,3 +56,10 @@ class PrescriptionItemWriteSerializer(serializers.ModelSerializer):
     class Meta:
         model = PrescriptionItem
         fields = ['id', 'product', 'dose', 'duration', 'quantity', 'instructions']
+
+    def validate_product(self, product):
+        if not product.requires_prescription:
+            raise serializers.ValidationError(
+                "Este producto no requiere receta. Puede dispensarse directamente desde inventario."
+            )
+        return product
