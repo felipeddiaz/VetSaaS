@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useConfirm } from "../components/ConfirmDialog";
+import { apiError } from "../utils/apiError";
 import {
     getInvoices, getInvoice, createInvoice, updateInvoice,
     confirmInvoice, payInvoice,
@@ -133,7 +134,7 @@ const Billing = () => {
             if (Array.isArray(errors)) {
                 setError(errors.join("; "));
             } else {
-                setError(err.response?.data?.error || "Error al confirmar");
+                setError(apiError(err, "Error al confirmar"));
             }
         }
     };
@@ -146,7 +147,7 @@ const Billing = () => {
             setSuccess("Pago registrado");
             loadInvoices();
         } catch (err) {
-            setError(err.response?.data?.error || "Error al registrar pago");
+            setError(apiError(err, "Error al registrar pago"));
         }
     };
 
@@ -232,7 +233,7 @@ const Billing = () => {
             setServices(srvs);
             closeServiceModal();
         } catch (err) {
-            setError(err.response?.data?.error || "Error al guardar");
+            setError(apiError(err, "Error al guardar"));
         }
     };
 
@@ -748,24 +749,57 @@ const Billing = () => {
 
                         {/* Actions */}
                         {canManage && (
-                            <div className="modal-footer">
-                                {selectedInvoice.status === "draft" && (
-                                    <button className="btn btn-primary btn-md" style={{ flex: 1 }} onClick={handleConfirm}>
-                                        Continuar al pago
-                                    </button>
+                            <div className="modal-footer" style={{ flexDirection: "column", gap: "10px" }}>
+                                {/* Indicador de pasos — solo para facturas en tránsito */}
+                                {(selectedInvoice.status === "draft" || selectedInvoice.status === "confirmed") && (
+                                    <div style={{ display: "flex", alignItems: "center", width: "100%", gap: "8px", paddingBottom: "4px" }}>
+                                        {[
+                                            { label: "Confirmar", step: 1, done: selectedInvoice.status === "confirmed" },
+                                            { label: "Registrar Pago", step: 2, done: false },
+                                        ].map((s, i, arr) => (
+                                            <div key={s.step} style={{ display: "flex", alignItems: "center", flex: i < arr.length - 1 ? "none" : 1, gap: "6px" }}>
+                                                <span style={{
+                                                    width: 22, height: 22, borderRadius: "50%", flexShrink: 0,
+                                                    display: "flex", alignItems: "center", justifyContent: "center",
+                                                    fontSize: 11, fontWeight: 700,
+                                                    background: s.done ? "#059669" : (selectedInvoice.status === "confirmed" && s.step === 2 ? "#1d4ed8" : "var(--c-border)"),
+                                                    color: "#fff",
+                                                }}>
+                                                    {s.done ? "✓" : s.step}
+                                                </span>
+                                                <span style={{
+                                                    fontSize: 12, fontWeight: 600,
+                                                    color: s.done ? "#059669" : (selectedInvoice.status === "confirmed" && s.step === 2 ? "#1d4ed8" : "var(--c-text-3)"),
+                                                    whiteSpace: "nowrap",
+                                                }}>
+                                                    {s.label}
+                                                </span>
+                                                {i < arr.length - 1 && (
+                                                    <div style={{ flex: 1, height: 2, minWidth: 20, background: s.done ? "#059669" : "var(--c-border)", marginLeft: 4 }} />
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
                                 )}
-                                {selectedInvoice.status === "confirmed" && (
-                                    <button
-                                        className="btn btn-primary btn-md"
-                                        style={{ flex: 1, background: "#059669", borderColor: "#059669" }}
-                                        onClick={() => setShowPayModal(true)}
-                                    >
-                                        Registrar Pago
+                                <div style={{ display: "flex", gap: "8px", width: "100%" }}>
+                                    {selectedInvoice.status === "draft" && (
+                                        <button className="btn btn-primary btn-md" style={{ flex: 1 }} onClick={handleConfirm}>
+                                            Confirmar cobro
+                                        </button>
+                                    )}
+                                    {selectedInvoice.status === "confirmed" && (
+                                        <button
+                                            className="btn btn-primary btn-md"
+                                            style={{ flex: 1, background: "#059669", borderColor: "#059669" }}
+                                            onClick={() => setShowPayModal(true)}
+                                        >
+                                            Registrar Pago
+                                        </button>
+                                    )}
+                                    <button className="btn btn-secondary btn-md" style={{ flex: 1 }} onClick={closeDetailModal}>
+                                        Cerrar
                                     </button>
-                                )}
-                                <button className="btn btn-secondary btn-md" style={{ flex: 1 }} onClick={closeDetailModal}>
-                                    Cerrar
-                                </button>
+                                </div>
                             </div>
                         )}
                     </div>

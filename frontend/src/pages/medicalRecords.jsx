@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
+import { apiError } from "../utils/apiError";
 import { useConfirm } from "../components/ConfirmDialog";
 import {
     getMedicalRecords, createMedicalRecord, updateMedicalRecord,
@@ -236,7 +237,7 @@ const MedicalRecords = () => {
                 setPetCounts(prev => ({ ...prev, [form.pet]: (prev[form.pet] || 0) + 1 }));
             }
             loadRecords();
-        } catch (err) { setError(err.response?.data?.error || "Error al guardar"); }
+        } catch (err) { setError(apiError(err, "Error al guardar")); }
     };
 
     const handleAddProduct = async () => {
@@ -250,7 +251,7 @@ const MedicalRecords = () => {
             await addMedicalRecordProduct(savedRecord.id, { presentation: selected.presentation.id, quantity: productLine.quantity });
             setSavedRecord(await getMedicalRecord(token, savedRecord.id));
             setProductLine({ product: "", quantity: "1" });
-        } catch (err) { setProductError(err.response?.data?.error || "Error al agregar producto"); }
+        } catch (err) { setProductError(apiError(err, "Error al agregar producto")); }
     };
 
     const handleRemoveProduct = async (id) => {

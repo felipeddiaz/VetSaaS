@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
 import { useConfirm } from "../components/ConfirmDialog";
+import { apiError } from "../utils/apiError";
 import {
     getProducts, createProduct, updateProduct, deleteProduct,
     adjustStock, getUnitChoices,
@@ -12,6 +13,13 @@ import s from "./inventory.module.css";
 const CATEGORY_LABELS = {
     medication: "Medicamento", food: "Alimento",
     accessory: "Accesorio", other: "Otro",
+};
+
+const CATEGORY_UNITS = {
+    medication: ["tablet", "capsule", "ml", "vial", "ampoule", "bottle", "tube", "unit"],
+    food:       ["kg", "g", "bag", "unit"],
+    accessory:  ["piece", "unit"],
+    other:      null, // todas las unidades
 };
 
 const EMPTY_PRODUCT = {
@@ -259,7 +267,7 @@ const Inventory = () => {
                 setFormErrors(data);
                 setError("Revisa los campos con errores.");
             } else {
-                setError(data?.error || data?.detail || "Error al guardar");
+                setError(apiError(err, "Error al guardar"));
             }
         } finally {
             setSaving(false);
@@ -291,7 +299,7 @@ const Inventory = () => {
             await loadAll();
             closeAdjustModal();
         } catch (err) {
-            setError(err.response?.data?.error || "Error al ajustar");
+            setError(apiError(err, "Error al ajustar"));
         } finally {
             setSaving(false);
         }
@@ -698,7 +706,12 @@ const Inventory = () => {
                                         <select
                                             className="select-input"
                                             value={form.category}
-                                            onChange={e => setForm({ ...form, category: e.target.value })}
+                                            onChange={e => {
+                                                const cat = e.target.value;
+                                                const allowed = CATEGORY_UNITS[cat];
+                                                const unitValid = !allowed || allowed.includes(form.base_unit);
+                                                setForm({ ...form, category: cat, base_unit: unitValid ? form.base_unit : (allowed?.[0] ?? "unit") });
+                                            }}
                                         >
                                             <option value="medication">Medicamento</option>
                                             <option value="food">Alimento</option>
@@ -716,9 +729,12 @@ const Inventory = () => {
                                             disabled={!unitsLoaded}
                                         >
                                             {!unitsLoaded && <option value="">Cargando unidades...</option>}
-                                            {unitChoices.map(u => (
-                                                <option key={u.value} value={u.value}>{u.label}</option>
-                                            ))}
+                                            {unitChoices
+                                                .filter(u => !CATEGORY_UNITS[form.category] || CATEGORY_UNITS[form.category].includes(u.value))
+                                                .map(u => (
+                                                    <option key={u.value} value={u.value}>{u.label}</option>
+                                                ))
+                                            }
                                         </select>
                                     </div>
                                     <div className="form-group">

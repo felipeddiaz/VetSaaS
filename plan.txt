@@ -1,86 +1,21 @@
-Error identificado:
+cada usuario que creo desde el frontend (en el sistema) me sigue apareciendo estos logs RNING] 2026-04-23 14:53:36,165 permissions: Usuario 8 usando fallback estático de permisos (sin roles en DB)
+[WARNING] 2026-04-23 14:53:44,319 permissions: Usuario 8 usando fallback estático de permisos (sin roles en DB)
+[WARNING] 2026-04-23 14:54:21,791 permissions: Usuario 8 usando fallback estático de permisos (sin roles en DB)
+[WARNING] 2026-04-23 14:55:18,121 permissions: Usuario 8 usando fallback estático de permisos (sin roles en DB)
+[WARNING] 2026-04-23 14:55:22,238 permissions: Usuario 8 usando fallback estático de permisos (sin roles en DB)
+[WARNING] 2026-04-23 15:51:37,239 permissions: Usuario 8 usando fallback estático de permisos (sin roles en DB)
+[WARNING] 2026-04-23 15:51:39,619 permissions: Usuario 8 usando fallback estático de permisos (sin roles en DB)
+[WARNING] 2026-04-23 15:52:30,126 permissions: Usuario 8 usando fallback estático de permisos (sin roles en DB)
+[WARNING] 2026-04-23 15:52:29,369 permissions: Usuario 8 usando fallback estático de permisos (sin roles en DB)
+[WARNING] 2026-04-23 15:54:16,180 permissions: Usuario 8 usando fallback estático de permisos (sin roles en DB)
+[WARNING] 2026-04-23 15:54:17,956 permissions: Usuario 8 usando fallback estático de permisos (sin roles en DB)
+[WARNING] 2026-04-23 15:54:30,383 permissions: Usuario 8 usando fallback estático de permisos (sin roles en DB)
+[WARNING] 2026-04-23 15:54:30,722 permissions: Usuario 8 usando fallback estático de permisos (sin roles en DB)
+[WARNING] 2026-04-23 15:55:01,795 permissions: Usuario 8 usando fallback estático de permisos (sin roles en DB)
+[WARNING] 2026-04-23 15:55:02,408 permissions: Usuario 8 usando fallback estático de permisos (sin roles en DB)
+[WARNING] 2026-04-23 15:55:13,523 permissions: Usuario 10 usando fallback estático de permisos (sin roles en DB)
+[WARNING] 2026-04-23 15:55:15,580 permissions: Usuario 10 usando fallback estático de permisos (sin roles en DB)
+[WARNING] 2026-04-23 15:55:21,520 permissions: Usuario 10 usando fallback estático de permisos (sin roles en DB)
+[WARNING] 2026-04-23 15:56:15,863 permissions: Usuario 10 usando fallback estático de permisos (sin roles en DB)
 
-El sistema reportaba que el usuario autenticado no tenía organización (organization = None), lo cual provocaba errores en endpoints como el dashboard.
-
-Después de realizar pruebas y agregar logs en el backend, se confirmó que:
-
-El usuario existe correctamente en la base de datos.
-El campo organization_id está asignado (por ejemplo: 2).
-La relación user.organization se carga correctamente desde Django ORM.
-La autenticación con JWT funciona correctamente.
-
-Esto descarta problemas de:
-
-Base de datos
-Migraciones
-JWT o autenticación
-Infraestructura (Railway / deploy)
-
-Causa raíz del problema:
-
-El error no está en la obtención del usuario ni en la base de datos, sino en la forma en que la aplicación maneja el contexto de la organización después de la autenticación.
-
-El sistema utiliza un mecanismo de estado global (por ejemplo, set_current_org / get_current_org) para almacenar la organización del usuario. Este enfoque depende de variables globales o thread-local.
-
-En entornos de producción, esto no es confiable porque:
-
-Cada request puede ser atendida por distintos workers (por ejemplo, en Gunicorn).
-El estado global no se comparte de forma segura entre requests concurrentes.
-Puede perderse el contexto entre diferentes partes del flujo de ejecución.
-No es compatible con ejecución asíncrona o paralela.
-
-Como resultado, aunque el usuario sí tiene organización en la base de datos, en algún punto del flujo esa información se pierde y termina evaluándose como None.
-
-Conclusión:
-
-Sí existe un error, pero es un error de arquitectura y manejo de estado, no de datos ni de autenticación.
-
-Recomendación (y por qué):
-
-No depender de variables globales para obtener la organización. En su lugar, siempre acceder directamente desde el request:
-
-org = request.user.organization
-
-Esto es recomendable porque:
-
-request.user proviene directamente del contexto de la request actual, no de un estado compartido.
-Garantiza que siempre estás usando el usuario real autenticado en esa petición.
-Evita inconsistencias entre requests concurrentes.
-Funciona correctamente con múltiples workers, procesos y entornos productivos.
-Es el patrón estándar en Django y en sistemas SaaS multitenant.
-
-Regla clave:
-
-En un SaaS multitenant, el tenant (organización) siempre debe derivarse del request, nunca de estado global.
-
-
-//DIAGNOSTICO
-El diagnóstico es correcto y la solución también. Es un error clásico que aparece exactamente en este momento: cuando el sistema pasa de desarrollo local con un solo proceso a producción con múltiples workers.
-
-Por qué ocurre exactamente
-En desarrollo local Django corre con un solo proceso y un solo thread. Si alguien usó threading.local() o una variable de módulo para guardar la organización del usuario actual, funciona perfectamente en local porque nunca hay dos requests compitiendo por ese espacio de memoria.
-En producción con Gunicorn hay varios workers corriendo en paralelo. Cada worker es un proceso independiente, pero dentro de cada worker pueden atenderse requests de distintos usuarios en secuencia. Si el estado global no se limpia correctamente entre requests, el worker que atendió a la clínica A puede tener esa organización en memoria cuando llega la request de la clínica B. El resultado es que la clínica B ve datos de la clínica A, o más comúnmente, ve None si el estado se limpió a destiempo.
-
-La solución es la correcta
-request.user.organization es el patrón estándar y no tiene ese problema porque el objeto request es creado nuevo para cada petición HTTP. No se comparte entre workers ni entre usuarios. Es el único lugar donde puedes confiar en que la información es del usuario correcto en ese momento exacto.
-
-Lo que hay que hacer ahora
-Buscar en todo el codebase cualquier uso de get_current_org(), set_current_org(), _current_org, o cualquier patrón de threading.local() relacionado con la organización. Cada uno de esos usos debe reemplazarse por request.user.organization pasado explícitamente como parámetro a los servicios que lo necesiten.
-El patrón correcto en los servicios es este:
-python# MAL — depende de estado global
-def get_invoices():
-    org = get_current_org()
-    return Invoice.objects.filter(organization=org)
-
-# BIEN — la organización viene del request
-def get_invoices(organization):
-    return Invoice.objects.filter(organization=organization)
-Y en la vista:
-pythondef list(self, request):
-    invoices = get_invoices(organization=request.user.organization)
-
-Una advertencia adicional
-Si el sistema usa Celery o cualquier tarea en background, ese contexto de request.user no existe porque no hay request. En esos casos la organización debe pasarse explícitamente como argumento a la tarea, nunca inferirse de estado global. Ese es el siguiente punto donde este mismo patrón puede reaparecer si no se atiende.
-
-En resumen
-El diagnóstico es preciso, la causa está bien identificada y la solución es la correcta. No es un problema grave en términos de datos porque no corrompió nada, pero sí era un problema de confiabilidad que en producción con múltiples clínicas podría haber causado fugas de datos entre organizaciones. Bien que se detectó antes de tener usuarios reales.
+no tendra algo que ver django? la imagen es un ejemplo de un usuario que se creo desde el sistema, pero si creo el usuario desde el mismo panel de django sigue apareciendo mismo log de "sin rol en db"

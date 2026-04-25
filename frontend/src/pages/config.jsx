@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getServices, createService, updateService, deleteService } from "../api/billing";
+import { apiError } from "../utils/apiError";
 import { useAuth } from "../auth/authContext";
 import { Icon } from "../components/icons";
 
@@ -47,7 +48,7 @@ const Config = () => {
             loadServices();
             closeModal();
         } catch (err) {
-            setError(err.response?.data?.error || "Error al guardar");
+            setError(apiError(err, "Error al guardar"));
         }
     };
 

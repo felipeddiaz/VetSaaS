@@ -10,6 +10,8 @@ import { getStaff } from "../api/staff";
 import { useAuth } from "../auth/authContext";
 import { Icon } from "../components/icons";
 
+import { apiError } from "../utils/apiError";
+
 // ── Constants ──────────────────────────────────────────────────────────────────
 const DAYS_ES  = ["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
 const MONTHS_S = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
@@ -252,7 +254,7 @@ function EditModal({ appt, pets, staff, user, onClose, onSave }) {
         if (!form.reason.trim()) { setError("El motivo es obligatorio"); return; }
         setError(""); setSaving(true);
         try { await onSave(form); }
-        catch (err) { setError(err.response?.data?.error || "Error al guardar"); }
+        catch (err) { setError(apiError(err, "Error al guardar")); }
         finally { setSaving(false); }
     }
 
@@ -361,7 +363,7 @@ function SidebarForm({ slot, onSave, onClear, pets, staff, user, formRef }) {
             setPetId(""); setReason(""); setNotes("");
             if (user?.role !== "VET") setVetId("");
         } catch (err) {
-            setError(err.response?.data?.error || "Error al crear la cita");
+            setError(apiError(err, "Error al crear la cita"));
         } finally {
             setSaving(false);
         }

@@ -1,1 +1,2 @@
 [WARNING] 2026-04-23 13:39:48,520 permissions: Usuario 21 usando fallback estático de permisos (sin roles en DB)
+[WARNING] 2026-04-24 11:23:52,318 models: Validación fallida | model=InvoiceItem pk=50 organization_id=3 user_id=None | {'__all__': ['Invoice item with this Invoice and Presentation already exists.']}

@@ -86,6 +86,10 @@ class InvoiceItemSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     f"'{presentation.product.name}' no tiene stock disponible."
                 )
+            if presentation.product.requires_prescription and invoice.invoice_type == 'direct_sale':
+                raise serializers.ValidationError(
+                    f"'{presentation.product.name}' requiere receta médica y no puede venderse directamente."
+                )
 
         # Validación de descuento (NUEVO)
         if discount_value is not None and discount_value < 0:

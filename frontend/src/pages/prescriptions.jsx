@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { apiError } from "../utils/apiError";
 import { useConfirm } from "../components/ConfirmDialog";
 import {
     getPrescriptions, getPrescription, createPrescription,
@@ -128,7 +129,7 @@ const Prescriptions = () => {
             loadPrescriptions();
             closeModal();
         } catch (err) {
-            setError(err.response?.data?.error || "Error al guardar");
+            setError(apiError(err, "Error al guardar"));
         }
     };
 
