@@ -6,6 +6,10 @@ from apps.core.models import OrganizationalModel
 
 
 class MedicalRecord(OrganizationalModel):
+    class Status(models.TextChoices):
+        OPEN = 'open', 'Abierta'
+        CLOSED = 'closed', 'Cerrada'
+
     pet = models.ForeignKey(Pet, on_delete=models.CASCADE, related_name='medical_records')
     veterinarian = models.ForeignKey(User, on_delete=models.SET_NULL, related_name='medical_records', null=True, blank=True)
     appointment = models.ForeignKey("appointments.Appointment", on_delete=models.SET_NULL, null=True, blank=True, related_name='medical_record')
@@ -14,6 +18,9 @@ class MedicalRecord(OrganizationalModel):
     treatment = models.TextField()
     notes = models.TextField(blank=True)
     weight = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.OPEN, db_index=True)
+    closed_at = models.DateTimeField(null=True, blank=True)
+    closed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='closed_medical_records')
     # created_at, updated_at heredados de OrganizationalModel
 
     def clean(self):
@@ -51,4 +58,36 @@ class MedicalRecord(OrganizationalModel):
         ordering = ["-created_at"]
         indexes = [
             models.Index(fields=["organization", "pet", "-created_at"]),
+        ]
+
+
+class MedicalRecordService(OrganizationalModel):
+    """
+    Servicio clínico aplicado durante una consulta (consulta, vacuna, cirugía, etc.).
+    Sincroniza automáticamente con InvoiceItem vía la view — no en el modelo.
+    """
+    medical_record = models.ForeignKey(
+        MedicalRecord,
+        on_delete=models.CASCADE,
+        related_name='services_used',
+    )
+    service = models.ForeignKey(
+        'billing.Service',
+        on_delete=models.PROTECT,
+        related_name='medical_record_usages',
+    )
+    quantity = models.DecimalField(max_digits=10, decimal_places=2, default=1)
+
+    def save(self, *args, **kwargs):
+        if self.medical_record_id and not self.organization_id:
+            self.organization_id = self.medical_record.organization_id
+        super().save(*args, **kwargs)
+
+    class Meta:
+        unique_together = [['medical_record', 'service']]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(quantity__gt=0),
+                name="medicalrecordservice_quantity_positive",
+            ),
         ]

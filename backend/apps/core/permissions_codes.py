@@ -27,6 +27,7 @@ PERMISSION_CODES = [
     "medicalrecord.retrieve",
     "medicalrecord.create",
     "medicalrecord.update",
+    "medicalrecord.close",
 
     # Facturas
     "invoice.list",
@@ -92,7 +93,7 @@ PERMISSIONS = {
         "appointment.list", "appointment.retrieve", "appointment.create",
         "appointment.update", "appointment.destroy",
         "medicalrecord.list", "medicalrecord.retrieve", "medicalrecord.create",
-        "medicalrecord.update",
+        "medicalrecord.update", "medicalrecord.close",
         "prescription.list", "prescription.retrieve", "prescription.create",
         "prescription.destroy",
         "patient.list", "patient.retrieve", "patient.create",

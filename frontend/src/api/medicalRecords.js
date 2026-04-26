@@ -31,3 +31,8 @@ export const deleteMedicalRecord = async (token, id) => {
     const res = await api.delete(`medical-records/${id}/`);
     return res.data;
 };
+
+export const closeMedicalRecord = async (token, id) => {
+    const res = await api.post(`medical-records/${id}/close/`);
+    return res.data;
+};

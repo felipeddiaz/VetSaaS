@@ -1,12 +1,22 @@
+import logging
+
+from django.db import transaction
 from django.db.models import F
 from rest_framework import generics, status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 
 from apps.core.permissions import HybridPermission, make_permission
 from apps.core.views import TenantQueryMixin
+from apps.medical_records.models import MedicalRecord
+from apps.medical_records.policies import (
+    assert_can_modify_charges,
+    can_modify_medical_record_charges,
+    log_closed_denied,
+    log_ownership_denied,
+)
 
 from .models import Product, Presentation, StockMovement, MedicalRecordProduct
 from .serializers import (
@@ -16,6 +26,9 @@ from .serializers import (
     StockAdjustmentSerializer,
     MedicalRecordProductSerializer,
 )
+
+
+events_logger = logging.getLogger("medical_records.events")
 
 
 class ProductListCreateView(TenantQueryMixin, generics.ListCreateAPIView):
@@ -143,18 +156,29 @@ def unit_choices(request):
 class MedicalRecordProductListCreateView(TenantQueryMixin, generics.ListCreateAPIView):
     serializer_class = MedicalRecordProductSerializer
     permission_classes = [HybridPermission]
-    resource_name = "inventory"
+    resource_name = "medicalrecord"
+
+    def initial(self, request, *args, **kwargs):
+        if request.method == 'GET':
+            self.required_permission = 'medicalrecord.retrieve'
+        else:
+            self.required_permission = 'medicalrecord.update'
+        return super().initial(request, *args, **kwargs)
 
     def _get_medical_record(self):
-        from apps.medical_records.models import MedicalRecord
         return get_object_or_404(
             MedicalRecord,
             pk=self.kwargs['medical_record_pk'],
             organization=self.request.user.organization,
         )
 
+    def _assert_can_modify(self, medical_record):
+        assert_can_modify_charges(self.request.user, medical_record, self.request)
+
     def get_queryset(self):
         medical_record = self._get_medical_record()
+        if medical_record.organization_id != self.request.user.organization_id:
+            raise PermissionDenied('No puedes acceder a consultas fuera de tu organización')
         return (
             MedicalRecordProduct.objects
             .filter(medical_record=medical_record)
@@ -167,9 +191,13 @@ class MedicalRecordProductListCreateView(TenantQueryMixin, generics.ListCreateAP
         return ctx
 
     def perform_create(self, serializer):
-        from django.db import transaction
         with transaction.atomic():
-            medical_record = self._get_medical_record()
+            medical_record = get_object_or_404(
+                MedicalRecord.objects.select_for_update(),
+                pk=self.kwargs['medical_record_pk'],
+                organization=self.request.user.organization,
+            )
+            self._assert_can_modify(medical_record)
             presentation = serializer.validated_data['presentation']
             if presentation.organization_id != self.request.user.organization_id:
                 raise ValidationError({'presentation': 'Presentación fuera de tu organización'})
@@ -198,10 +226,10 @@ class MedicalRecordProductListCreateView(TenantQueryMixin, generics.ListCreateAP
 
 class MedicalRecordProductDeleteView(generics.DestroyAPIView):
     permission_classes = [HybridPermission]
-    resource_name = "inventory"
+    resource_name = "medicalrecord"
+    required_permission = 'medicalrecord.update'
 
     def get_object(self):
-        from apps.medical_records.models import MedicalRecord
         medical_record = get_object_or_404(
             MedicalRecord,
             pk=self.kwargs['medical_record_pk'],
@@ -212,6 +240,53 @@ class MedicalRecordProductDeleteView(generics.DestroyAPIView):
             pk=self.kwargs['pk'],
             medical_record=medical_record,
         )
+
+    def perform_destroy(self, instance):
+        with transaction.atomic():
+            medical_record = get_object_or_404(
+                MedicalRecord.objects.select_for_update(),
+                pk=instance.medical_record_id,
+                organization=self.request.user.organization,
+            )
+            assert_can_modify_charges(self.request.user, medical_record, self.request)
+            self._sync_invoice_item_delete(instance)
+            instance.delete()
+
+    def _sync_invoice_item_delete(self, mrp):
+        from apps.billing.models import InvoiceItem
+
+        invoice_id = mrp.medical_record.invoice_id
+        if not invoice_id:
+            return
+
+        item = InvoiceItem.objects.filter(
+            invoice_id=invoice_id,
+            presentation=mrp.presentation,
+            is_active=True,
+        ).first()
+        if item is None:
+            return
+
+        if item.invoice.status != 'draft':
+            events_logger.warning(
+                "MEDICAL_RECORD_INVOICE_SYNC_SKIPPED",
+                extra={
+                    "user_id": self.request.user.id,
+                    "organization_id": self.request.user.organization_id,
+                    "medical_record_id": mrp.medical_record_id,
+                    "invoice_id": item.invoice_id,
+                    "endpoint": self.request.path,
+                    "method": self.request.method,
+                },
+            )
+            return
+
+        new_quantity = item.quantity - mrp.quantity
+        if new_quantity <= 0:
+            item.delete()
+        else:
+            item.quantity = new_quantity
+            item.save()
 
 
 class PresentationListView(TenantQueryMixin, generics.ListAPIView):

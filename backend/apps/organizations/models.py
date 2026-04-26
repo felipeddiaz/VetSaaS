@@ -6,7 +6,7 @@ from zoneinfo import available_timezones
 
 class Organization(models.Model):
     name = models.CharField(max_length=255)
-    timezone = models.CharField(max_length=64, default='UTC')
+    timezone = models.CharField(max_length=64, default='America/Mexico_City')
     timezone_updated_at = models.DateTimeField(null=True, blank=True)
     tax_rate = models.DecimalField(
         max_digits=5,

@@ -27,7 +27,7 @@ class MeView(APIView):
             "specialty": user.specialty,
             "organization": user.organization.id if user.organization else None,
             "organization_name": user.organization.name if user.organization else None,
-            "organization_timezone": user.organization.timezone if user.organization else "UTC",
+            "organization_timezone": user.organization.timezone if user.organization else "America/Mexico_City",
         })
 
 

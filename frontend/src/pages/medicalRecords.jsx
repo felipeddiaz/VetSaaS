@@ -4,7 +4,7 @@ import { apiError } from "../utils/apiError";
 import { useConfirm } from "../components/ConfirmDialog";
 import {
     getMedicalRecords, createMedicalRecord, updateMedicalRecord,
-    deleteMedicalRecord, getMedicalRecord,
+    deleteMedicalRecord, getMedicalRecord, closeMedicalRecord,
 } from "../api/medicalRecords";
 import { getPets } from "../api/pets";
 import { getProducts, addMedicalRecordProduct, removeMedicalRecordProduct } from "../api/inventory";
@@ -242,6 +242,8 @@ const MedicalRecords = () => {
 
     const handleAddProduct = async () => {
         setProductError("");
+        if (!savedRecord?.can_modify_charges) { setProductError("No puedes modificar esta consulta"); return; }
+        if (savedRecord?.status === "closed") { setProductError("La consulta está cerrada"); return; }
         if (!productLine.product)                              { setProductError("Selecciona un producto"); return; }
         if (!productLine.quantity || Number(productLine.quantity) <= 0) { setProductError("La cantidad debe ser mayor a 0"); return; }
         // R8: validar presentation.id antes de enviar (error explícito, no silencioso)
@@ -255,10 +257,37 @@ const MedicalRecords = () => {
     };
 
     const handleRemoveProduct = async (id) => {
+        if (!savedRecord?.can_modify_charges) { setProductError("No puedes modificar esta consulta"); return; }
+        if (savedRecord?.status === "closed") { setProductError("La consulta está cerrada"); return; }
         try {
             await removeMedicalRecordProduct(savedRecord.id, id);
             setSavedRecord(await getMedicalRecord(token, savedRecord.id));
-        } catch { setProductError("Error al quitar producto"); }
+        } catch (err) { setProductError(apiError(err, "Error al quitar producto")); }
+    };
+
+    const handleCloseRecord = async (record) => {
+        if (!record?.can_close) {
+            setError("No puedes finalizar esta consulta");
+            return;
+        }
+        const ok = await confirm({
+            title: "Finalizar consulta",
+            message: "La consulta quedará cerrada y no podrás modificar productos o servicios.",
+            confirmText: "Finalizar",
+            dangerMode: false,
+        });
+        if (!ok) return;
+
+        try {
+            await closeMedicalRecord(token, record.id);
+            setSuccess("Consulta finalizada");
+            await loadRecords();
+            if (savedRecord?.id === record.id) {
+                setSavedRecord(await getMedicalRecord(token, savedRecord.id));
+            }
+        } catch (err) {
+            setError(apiError(err, "No se pudo finalizar la consulta"));
+        }
     };
 
     const handleEdit = (record) => {
@@ -478,6 +507,9 @@ const MedicalRecords = () => {
                                                                                 </span>
                                                                             </div>
                                                                             <div className={styles.cardBadges}>
+                                                                                {record.status === "closed" && (
+                                                                                    <span className="badge badge-default">Cerrada</span>
+                                                                                )}
                                                                                 {record.weight && (
                                                                                     <span className="badge badge-default">{record.weight} kg</span>
                                                                                 )}
@@ -506,10 +538,20 @@ const MedicalRecords = () => {
                                                                             </button>
                                                                             {canCreate && (
                                                                                 <div className={styles.crudActions}>
-                                                                                    <button className="btn btn-secondary btn-sm"
-                                                                                        onClick={() => handleEdit(record)}>Editar</button>
-                                                                                    <button className="btn btn-danger btn-sm"
-                                                                                        onClick={() => handleDelete(record.id)}>Eliminar</button>
+                                                                                    {record.status !== "closed" && (
+                                                                                        <button className="btn btn-secondary btn-sm"
+                                                                                            onClick={() => handleEdit(record)}>Editar</button>
+                                                                                    )}
+                                                                                    {record.can_close && record.status !== "closed" && (
+                                                                                        <button className="btn btn-primary btn-sm"
+                                                                                            onClick={() => handleCloseRecord(record)}>
+                                                                                            Finalizar consulta
+                                                                                        </button>
+                                                                                    )}
+                                                                                    {record.status !== "closed" && (
+                                                                                        <button className="btn btn-danger btn-sm"
+                                                                                            onClick={() => handleDelete(record.id)}>Eliminar</button>
+                                                                                    )}
                                                                                 </div>
                                                                             )}
                                                                         </div>
@@ -641,7 +683,13 @@ const MedicalRecords = () => {
                                                     <span style={{ fontSize: "13.5px" }}>
                                                         {p.product_name} <span style={{ color: "var(--c-text-2)" }}>&middot; {p.quantity} {p.base_unit_display || p.base_unit || ""}</span>
                                                     </span>
-                                                    <button className="btn btn-danger btn-xs" onClick={() => handleRemoveProduct(p.id)}>Quitar</button>
+                                                    <button
+                                                        className="btn btn-danger btn-xs"
+                                                        onClick={() => handleRemoveProduct(p.id)}
+                                                        disabled={!savedRecord?.can_modify_charges || savedRecord?.status === "closed"}
+                                                    >
+                                                        Quitar
+                                                    </button>
                                                 </div>
                                             ))}
                                         </div>
@@ -651,6 +699,7 @@ const MedicalRecords = () => {
                                     {productError && <div className="alert alert-danger">{productError}</div>}
                                     <div style={{ display: "flex", gap: "8px", marginBottom: "4px" }}>
                                         <select className="select-input" style={{ flex: 2 }} value={productLine.product}
+                                            disabled={!savedRecord?.can_modify_charges || savedRecord?.status === "closed"}
                                             onChange={e => setProductLine({ ...productLine, product: e.target.value })}>
                                             <option value="">Seleccionar producto</option>
                                             {products.map(p => {
@@ -659,11 +708,23 @@ const MedicalRecords = () => {
                                             })}
                                         </select>
                                         <input type="number" step="0.01" min="0.01" className="input" style={{ flex: 1 }}
+                                            disabled={!savedRecord?.can_modify_charges || savedRecord?.status === "closed"}
                                             value={productLine.quantity}
                                             onChange={e => setProductLine({ ...productLine, quantity: e.target.value })}
                                             placeholder="Cant." />
-                                        <button className="btn btn-primary btn-md" onClick={handleAddProduct}>+ Agregar</button>
+                                        <button
+                                            className="btn btn-primary btn-md"
+                                            onClick={handleAddProduct}
+                                            disabled={!savedRecord?.can_modify_charges || savedRecord?.status === "closed"}
+                                        >
+                                            + Agregar
+                                        </button>
                                     </div>
+                                    {savedRecord?.status === "closed" && (
+                                        <p style={{ color: "var(--c-text-3)", fontSize: "12px", marginTop: "8px" }}>
+                                            Esta consulta está cerrada.
+                                        </p>
+                                    )}
                                 </div>
                             )}
                         </div>
