@@ -10,6 +10,9 @@ class ServiceSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'description', 'base_price', 'is_active', 'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at']
 
+    def validate_name(self, value):
+        return value.strip().title()
+
 
 class InvoiceItemSerializer(serializers.ModelSerializer):
     service_name = serializers.CharField(source='service.name', read_only=True)
@@ -116,6 +119,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
     pet_name = serializers.CharField(source='pet.name', read_only=True)
     owner_name = serializers.CharField(source='owner.name', read_only=True)
     created_by_name = serializers.SerializerMethodField()
+    prescription_suggestions = serializers.SerializerMethodField()
 
     class Meta:
         model = Invoice
@@ -126,7 +130,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
             'subtotal', 'tax_amount', 'total',
             'notes', 'created_by', 'created_by_name',
             'paid_at', 'created_at', 'updated_at',
-            'items',
+            'items', 'prescription_suggestions',
         ]
         read_only_fields = [
             'id', 'subtotal', 'tax_amount', 'total',
@@ -138,3 +142,40 @@ class InvoiceSerializer(serializers.ModelSerializer):
         if obj.created_by:
             return f"{obj.created_by.first_name} {obj.created_by.last_name}".strip()
         return ''
+
+    def validate(self, data):
+        owner = data.get('owner')
+        pet = data.get('pet')
+        if owner and getattr(owner, 'is_generic', False):
+            # Generic owner: force direct_sale, pet is optional
+            data['invoice_type'] = 'direct_sale'
+        elif pet is None and not (owner and getattr(owner, 'is_generic', False)):
+            raise serializers.ValidationError({'pet': 'La mascota es requerida para ventas con cliente registrado.'})
+        return data
+
+    def get_prescription_suggestions(self, obj):
+        """
+        Productos recetados disponibles para agregar a la factura.
+        Solo se expone cuando la factura está en borrador y tiene una consulta con receta.
+        """
+        if obj.status != 'draft' or not obj.medical_record_id:
+            return []
+        try:
+            rx = obj.medical_record.prescription
+        except Exception:
+            return []
+        suggestions = []
+        for item in rx.items.select_related('product').prefetch_related('product__presentations').all():
+            pres = item.product.presentations.first()
+            if not pres:
+                continue
+            suggestions.append({
+                'prescription_item_id': item.id,
+                'product_name': item.product.name,
+                'presentation_id': pres.id,
+                'presentation_name': str(pres),
+                'dose': item.dose,
+                'suggested_quantity': str(item.quantity),
+                'unit_price': str(pres.sale_price),
+            })
+        return suggestions

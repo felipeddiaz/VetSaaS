@@ -1,19 +1,21 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { apiError } from "../utils/apiError";
 import { useConfirm } from "../components/ConfirmDialog";
-import {
-    getPrescriptions, getPrescription, createPrescription,
-    updatePrescription, deletePrescription, downloadPrescriptionPDF,
-} from "../api/prescriptions";
+import { toast } from "sonner";
+import { Icon } from "../components/icons";
+import PrescriptionForm from "../components/prescriptions/PrescriptionForm";
+import { useAuth } from "../auth/authContext";
+import { getProducts } from "../api/inventory";
 import { getMedicalRecords } from "../api/medicalRecords";
 import { getPets } from "../api/pets";
-import { getProducts } from "../api/inventory";
-import { useAuth } from "../auth/authContext";
-import { Icon } from "../components/icons";
-
-const EMPTY_ITEM = { product: "", dose: "", duration: "", quantity: "", instructions: "" };
-const EMPTY_FORM = { medical_record: "", pet: "", notes: "", items: [{ ...EMPTY_ITEM }] };
+import {
+    createPrescription,
+    deletePrescription,
+    downloadPrescriptionPDF,
+    getPrescription,
+    getPrescriptions,
+    updatePrescription,
+} from "../api/prescriptions";
 
 const Prescriptions = () => {
     const { token, user, initializing } = useAuth();
@@ -32,60 +34,13 @@ const Prescriptions = () => {
     const [viewing, setViewing] = useState(null);
     const [selectedPet, setSelectedPet] = useState("");
     const [lockedFromParams, setLockedFromParams] = useState(false);
+    const [formSeed, setFormSeed] = useState({ medical_record: "", pet: "", notes: "", items: [] });
 
-    const [form, setForm] = useState(EMPTY_FORM);
-    const [error, setError] = useState("");
-    const [success, setSuccess] = useState("");
     const [downloadingId, setDownloadingId] = useState(null);
 
-    useEffect(() => {
-        if (token) loadAll();
-    }, [token]);
+    const canCreate = user?.role !== "ASSISTANT";
 
-    useEffect(() => {
-        loadPrescriptions();
-    }, [selectedPet]);
-
-    // Load medical records when selected pet changes in form
-    useEffect(() => {
-        if (form.pet && token) {
-            getMedicalRecords(token, { pet: form.pet })
-                .then(data => setMedicalRecordsForPet(data.results || data))
-                .catch(() => setMedicalRecordsForPet([]));
-        } else {
-            setMedicalRecordsForPet([]);
-        }
-    }, [form.pet, token]);
-
-    // Handle query params ?medical_record=X&pet=Y
-    useEffect(() => {
-        const mrParam = searchParams.get("medical_record");
-        const petParam = searchParams.get("pet");
-        if (mrParam && petParam && token) {
-            setLockedFromParams(true);
-            setForm({ ...EMPTY_FORM, pet: petParam, medical_record: mrParam });
-            setShowModal(true);
-        }
-    }, [searchParams, token]);
-
-    const loadAll = async () => {
-        setLoading(true);
-        try {
-            const [petsData, prodsData] = await Promise.all([
-                getPets(token),
-                getProducts({ active: "true" }),
-            ]);
-            setPets(petsData);
-            setProducts(prodsData);
-            await loadPrescriptions();
-        } catch (err) {
-            console.log(err);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const loadPrescriptions = async () => {
+    const loadPrescriptions = useCallback(async () => {
         try {
             const params = {};
             if (selectedPet) params.pet = selectedPet;
@@ -94,43 +49,82 @@ const Prescriptions = () => {
         } catch (err) {
             console.log(err);
         }
+    }, [selectedPet]);
+
+    const loadMedicalRecordsForPet = useCallback(async (petId) => {
+        if (!petId || !token) {
+            setMedicalRecordsForPet([]);
+            return;
+        }
+        try {
+            const data = await getMedicalRecords(token, { pet: petId });
+            setMedicalRecordsForPet(data.results || data);
+        } catch {
+            setMedicalRecordsForPet([]);
+        }
+    }, [token]);
+
+    useEffect(() => {
+        if (!token) return;
+        const loadAll = async () => {
+            setLoading(true);
+            try {
+                const [petsData, prodsData] = await Promise.all([
+                    getPets(),
+                    getProducts({ active: "true" }),
+                ]);
+                setPets(Array.isArray(petsData) ? petsData : (petsData.results || []));
+                setProducts(Array.isArray(prodsData) ? prodsData : (prodsData.results || []));
+                await loadPrescriptions();
+            } catch (err) {
+                console.log(err);
+            } finally {
+                setLoading(false);
+            }
+        };
+        loadAll();
+    }, [token, loadPrescriptions]);
+
+    useEffect(() => {
+        if (token) loadPrescriptions();
+    }, [token, loadPrescriptions]);
+
+    useEffect(() => {
+        const mrParam = searchParams.get("medical_record");
+        const petParam = searchParams.get("pet");
+        if (mrParam && petParam && token) {
+            setLockedFromParams(true);
+            setEditing(null);
+            setFormSeed({ medical_record: mrParam, pet: petParam, notes: "", items: [] });
+            setShowModal(true);
+        }
+    }, [searchParams, token]);
+
+    const closeModal = () => {
+        setShowModal(false);
+        setEditing(null);
+        setLockedFromParams(false);
+        setMedicalRecordsForPet([]);
+        setFormSeed({ medical_record: "", pet: "", notes: "", items: [] });
     };
 
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        setError("");
+    const handleCreate = () => {
+        setEditing(null);
+        setLockedFromParams(false);
+        setFormSeed({ medical_record: "", pet: "", notes: "", items: [] });
+        setShowModal(true);
+    };
 
-        if (!form.pet) { setError("Selecciona una mascota"); return; }
-        if (!form.medical_record) { setError("Selecciona la consulta médica asociada"); return; }
-        const validItems = form.items.filter(i => i.product && i.dose && i.quantity);
-        if (validItems.length === 0) { setError("Agrega al menos un medicamento con producto, dosis y cantidad"); return; }
-
-        try {
-            const payload = {
-                pet: form.pet,
-                medical_record: form.medical_record,
-                notes: form.notes,
-                items: validItems.map(i => ({
-                    product: i.product,
-                    dose: i.dose,
-                    duration: i.duration,
-                    quantity: i.quantity,
-                    instructions: i.instructions,
-                })),
-            };
-
-            if (editing) {
-                await updatePrescription(editing.id, payload);
-                setSuccess("Receta actualizada");
-            } else {
-                await createPrescription(payload);
-                setSuccess("Receta creada");
-            }
-            loadPrescriptions();
-            closeModal();
-        } catch (err) {
-            setError(apiError(err, "Error al guardar"));
+    const handleFormSubmit = async (payload) => {
+        if (editing) {
+            await updatePrescription(editing.id, payload);
+            toast.success("Receta actualizada");
+        } else {
+            await createPrescription(payload);
+            toast.success("Receta creada");
         }
+        await loadPrescriptions();
+        closeModal();
     };
 
     const handleView = async (prescription) => {
@@ -138,39 +132,37 @@ const Prescriptions = () => {
             const data = await getPrescription(prescription.id);
             setViewing(data);
             setShowDetailModal(true);
-        } catch (err) {
-            setError("Error al cargar la receta");
+        } catch {
+            toast.error("Error al cargar la receta");
         }
     };
 
-    const handleEdit = (prescription) => {
+    const handleEdit = async (prescription) => {
         setEditing(prescription);
-        setForm({
+        setLockedFromParams(false);
+        setFormSeed({
             medical_record: prescription.medical_record || "",
             pet: prescription.pet,
             notes: prescription.notes || "",
-            items: prescription.items.length > 0
-                ? prescription.items.map(i => ({
-                    product: i.product,
-                    dose: i.dose,
-                    duration: i.duration || "",
-                    quantity: i.quantity,
-                    instructions: i.instructions || "",
-                }))
-                : [{ ...EMPTY_ITEM }],
+            items: prescription.items || [],
         });
+        await loadMedicalRecordsForPet(prescription.pet);
         setShowModal(true);
     };
 
     const handleDelete = async (id) => {
-        const ok = await confirm({ message: "¿Eliminar esta receta? El registro médico asociado no se verá afectado.", confirmText: "Eliminar", dangerMode: true });
+        const ok = await confirm({
+            message: "¿Eliminar esta receta? El registro médico asociado no se verá afectado.",
+            confirmText: "Eliminar",
+            dangerMode: true,
+        });
         if (!ok) return;
         try {
             await deletePrescription(id);
-            setSuccess("Receta eliminada");
+            toast.success("Receta eliminada");
             loadPrescriptions();
-        } catch (err) {
-            setError("Error al eliminar");
+        } catch {
+            toast.error("Error al eliminar la receta");
         }
     };
 
@@ -186,37 +178,14 @@ const Prescriptions = () => {
             a.click();
             document.body.removeChild(a);
             window.URL.revokeObjectURL(url);
-        } catch (err) {
-            setError("Error al generar el PDF");
+        } catch {
+            toast.error("Error al generar el PDF");
         } finally {
             setDownloadingId(null);
         }
     };
 
-    const addItem = () => setForm({ ...form, items: [...form.items, { ...EMPTY_ITEM }] });
-
-    const removeItem = (index) => {
-        if (form.items.length === 1) return;
-        setForm({ ...form, items: form.items.filter((_, i) => i !== index) });
-    };
-
-    const updateItem = (index, field, value) => {
-        const items = form.items.map((item, i) => i === index ? { ...item, [field]: value } : item);
-        setForm({ ...form, items });
-    };
-
-    const closeModal = () => {
-        setShowModal(false);
-        setEditing(null);
-        setForm(EMPTY_FORM);
-        setError("");
-        setLockedFromParams(false);
-        setMedicalRecordsForPet([]);
-    };
-
-    const formatDate = (dateString) => {
-        return new Date(dateString).toLocaleDateString("es-ES", { year: "numeric", month: "long", day: "numeric" });
-    };
+    const formatDate = (dateString) => new Date(dateString).toLocaleDateString("es-ES", { year: "numeric", month: "long", day: "numeric" });
 
     if (initializing || loading) {
         return (
@@ -226,32 +195,24 @@ const Prescriptions = () => {
         );
     }
 
-    const canCreate = user?.role !== "ASSISTANT";
-
     return (
         <div style={{ padding: "20px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
-                <h2 style={{ margin: 0 }}>Recetas Médicas</h2>
+                <div>
+                    <h2 style={{ margin: 0 }}>Recetas Médicas</h2>
+                    <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.92rem" }}>
+                        Vista secundaria para consultar, reimprimir o editar recetas ya emitidas.
+                    </p>
+                </div>
                 {canCreate && (
                     <button
-                        onClick={() => { setEditing(null); setForm(EMPTY_FORM); setShowModal(true); }}
+                        onClick={handleCreate}
                         style={{ padding: "10px 20px", backgroundColor: "#4ecca3", color: "white", border: "none", borderRadius: "5px", cursor: "pointer" }}
                     >
                         + Nueva Receta
                     </button>
                 )}
             </div>
-
-            {error && (
-                <div style={{ backgroundColor: "#fee2e2", color: "#dc2626", padding: "10px", borderRadius: "5px", marginBottom: "15px" }}>
-                    {error} <button onClick={() => setError("")} style={{ float: "right", background: "none", border: "none", cursor: "pointer" }}><Icon.X s={14} /></button>
-                </div>
-            )}
-            {success && (
-                <div style={{ backgroundColor: "#d1fae5", color: "#059669", padding: "10px", borderRadius: "5px", marginBottom: "15px" }}>
-                    {success} <button onClick={() => setSuccess("")} style={{ float: "right", background: "none", border: "none", cursor: "pointer" }}><Icon.X s={14} /></button>
-                </div>
-            )}
 
             <div style={{ marginBottom: "20px" }}>
                 <select
@@ -292,7 +253,7 @@ const Prescriptions = () => {
                                         </span>
                                     </div>
                                     <p style={{ margin: 0, color: "#6b7280", fontSize: "0.9rem" }}>
-<Icon.CalendarDays s={13} /> {formatDate(prescription.created_at)} · Dr. {prescription.veterinarian_name}
+                                        <Icon.CalendarDays s={13} /> {formatDate(prescription.created_at)} · Dr. {prescription.veterinarian_name}
                                     </p>
                                 </div>
                                 <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
@@ -335,136 +296,22 @@ const Prescriptions = () => {
                 </div>
             )}
 
-            {/* Create/Edit Modal */}
             {showModal && (
-                <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.5)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 1000 }}>
-                    <div style={{ backgroundColor: "white", padding: "25px", borderRadius: "10px", width: "600px", maxHeight: "90vh", overflowY: "auto" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "20px" }}>
-                            <h3 style={{ margin: 0 }}>{editing ? "Editar Receta" : "Nueva Receta"}</h3>
-                            <button onClick={closeModal} style={{ background: "none", border: "none", fontSize: "20px", cursor: "pointer" }}><Icon.X s={16} /></button>
-                        </div>
-
-                        <form onSubmit={handleSubmit}>
-                            {error && <div style={{ backgroundColor: "#fee2e2", color: "#dc2626", padding: "10px", borderRadius: "5px", marginBottom: "15px" }}>{error}</div>}
-
-                            <div style={{ marginBottom: "15px" }}>
-                                <label style={{ fontWeight: "bold", display: "block", marginBottom: "5px" }}>Mascota *</label>
-                                <select value={form.pet} onChange={e => setForm({ ...form, pet: e.target.value, medical_record: "" })}
-                                    disabled={lockedFromParams}
-                                    style={{ width: "100%", padding: "8px", borderRadius: "5px", border: "1px solid #ddd", backgroundColor: lockedFromParams ? "#f3f4f6" : "white" }}>
-                                    <option value="">Seleccionar</option>
-                                    {pets.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                                </select>
-                            </div>
-
-                            <div style={{ marginBottom: "15px" }}>
-                                <label style={{ fontWeight: "bold", display: "block", marginBottom: "5px" }}>Consulta médica *</label>
-                                {!form.pet ? (
-                                    <p style={{ margin: 0, color: "#9ca3af", fontSize: "0.9rem" }}>Selecciona una mascota primero</p>
-                                ) : medicalRecordsForPet.filter(r => !r.prescription_id || String(r.id) === String(form.medical_record)).length === 0 ? (
-                                    <p style={{ margin: 0, color: "#9ca3af", fontSize: "0.9rem" }}>Esta mascota no tiene consultas disponibles.</p>
-                                ) : (
-                                    <select value={form.medical_record} onChange={e => setForm({ ...form, medical_record: e.target.value })}
-                                        disabled={lockedFromParams}
-                                        style={{ width: "100%", padding: "8px", borderRadius: "5px", border: "1px solid #ddd", backgroundColor: lockedFromParams ? "#f3f4f6" : "white" }}>
-                                        <option value="">Seleccionar consulta</option>
-                                        {medicalRecordsForPet
-                                            .filter(r => !r.prescription_id || String(r.id) === String(form.medical_record))
-                                            .map(r => {
-                                                const date = new Date(r.created_at).toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric" });
-                                                const diag = (r.diagnosis || "").substring(0, 50);
-                                                return <option key={r.id} value={r.id}>{date} — {diag}</option>;
-                                            })
-                                        }
-                                    </select>
-                                )}
-                            </div>
-
-                            {/* Medications */}
-                            <div style={{ marginBottom: "15px" }}>
-                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
-                                    <label style={{ fontWeight: "bold" }}>Medicamentos *</label>
-                                    <button type="button" onClick={addItem}
-                                        style={{ padding: "4px 12px", backgroundColor: "#4ecca3", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontSize: "0.85rem" }}>
-                                        + Agregar
-                                    </button>
-                                </div>
-
-                                {form.items.map((item, index) => (
-                                    <div key={index} style={{ backgroundColor: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: "8px", padding: "14px", marginBottom: "10px" }}>
-                                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
-                                            <span style={{ fontWeight: "bold", fontSize: "0.85rem", color: "#6b7280" }}>Medicamento {index + 1}</span>
-                                            {form.items.length > 1 && (
-                                                <button type="button" onClick={() => removeItem(index)}
-                                                    style={{ padding: "2px 8px", backgroundColor: "#ef4444", color: "white", border: "none", borderRadius: "3px", cursor: "pointer", fontSize: "0.8rem" }}>
-                                                    <Icon.X s={11} />
-                                                </button>
-                                            )}
-                                        </div>
-                                        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "8px", marginBottom: "8px" }}>
-                                            <div>
-                                                <label style={{ fontSize: "0.8rem", color: "#6b7280", display: "block", marginBottom: "3px" }}>Producto *</label>
-                                                <select value={item.product} onChange={e => updateItem(index, "product", e.target.value)}
-                                                    style={{ width: "100%", padding: "7px", borderRadius: "4px", border: "1px solid #ddd" }}>
-                                                    <option value="">Seleccionar producto</option>
-                                                    {products.map(p => {
-                                                        const pres = p.presentation || {};
-                                                        return <option key={p.id} value={p.id}>{p.name} ({pres.base_unit_display || pres.base_unit || ""})</option>;
-                                                    })}
-                                                </select>
-                                            </div>
-                                            <div>
-                                                <label style={{ fontSize: "0.8rem", color: "#6b7280", display: "block", marginBottom: "3px" }}>Cantidad *</label>
-                                                <input type="number" step="0.01" min="0.01" value={item.quantity} onChange={e => updateItem(index, "quantity", e.target.value)}
-                                                    placeholder="0"
-                                                    style={{ width: "100%", padding: "7px", borderRadius: "4px", border: "1px solid #ddd", boxSizing: "border-box" }} />
-                                            </div>
-                                        </div>
-                                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginBottom: "8px" }}>
-                                            <div>
-                                                <label style={{ fontSize: "0.8rem", color: "#6b7280", display: "block", marginBottom: "3px" }}>Dosis *</label>
-                                                <input type="text" value={item.dose} onChange={e => updateItem(index, "dose", e.target.value)}
-                                                    placeholder="Ej: 1 comprimido cada 12h"
-                                                    style={{ width: "100%", padding: "7px", borderRadius: "4px", border: "1px solid #ddd", boxSizing: "border-box" }} />
-                                            </div>
-                                            <div>
-                                                <label style={{ fontSize: "0.8rem", color: "#6b7280", display: "block", marginBottom: "3px" }}>Duración</label>
-                                                <input type="text" value={item.duration} onChange={e => updateItem(index, "duration", e.target.value)}
-                                                    placeholder="Ej: 7 días"
-                                                    style={{ width: "100%", padding: "7px", borderRadius: "4px", border: "1px solid #ddd", boxSizing: "border-box" }} />
-                                            </div>
-                                        </div>
-                                        <div>
-                                            <label style={{ fontSize: "0.8rem", color: "#6b7280", display: "block", marginBottom: "3px" }}>Instrucciones adicionales</label>
-                                            <input type="text" value={item.instructions} onChange={e => updateItem(index, "instructions", e.target.value)}
-                                                placeholder="Ej: Administrar con comida"
-                                                style={{ width: "100%", padding: "7px", borderRadius: "4px", border: "1px solid #ddd", boxSizing: "border-box" }} />
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-
-                            <div style={{ marginBottom: "20px" }}>
-                                <label style={{ fontWeight: "bold", display: "block", marginBottom: "5px" }}>Notas</label>
-                                <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })}
-                                    placeholder="Observaciones adicionales..."
-                                    style={{ width: "100%", padding: "8px", borderRadius: "5px", border: "1px solid #ddd", minHeight: "60px", boxSizing: "border-box" }} />
-                            </div>
-
-                            <div style={{ display: "flex", gap: "10px" }}>
-                                <button type="submit" style={{ flex: 1, padding: "10px", backgroundColor: "#4ecca3", color: "white", border: "none", borderRadius: "5px", cursor: "pointer" }}>
-                                    {editing ? "Guardar" : "Crear Receta"}
-                                </button>
-                                <button type="button" onClick={closeModal} style={{ flex: 1, padding: "10px", backgroundColor: "#6b7280", color: "white", border: "none", borderRadius: "5px", cursor: "pointer" }}>
-                                    Cancelar
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
+                <PrescriptionForm
+                    title={editing ? "Editar Receta" : "Nueva Receta"}
+                    initialValue={formSeed}
+                    pets={pets}
+                    products={products}
+                    medicalRecordsForPet={medicalRecordsForPet}
+                    lockedPet={lockedFromParams}
+                    lockedMedicalRecord={lockedFromParams}
+                    submitLabel={editing ? "Guardar" : "Crear Receta"}
+                    onPetChange={loadMedicalRecordsForPet}
+                    onSubmit={handleFormSubmit}
+                    onCancel={closeModal}
+                />
             )}
 
-            {/* Detail Modal */}
             {showDetailModal && viewing && (
                 <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.5)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 1000 }}>
                     <div style={{ backgroundColor: "white", padding: "25px", borderRadius: "10px", width: "550px", maxHeight: "90vh", overflowY: "auto" }}>

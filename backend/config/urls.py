@@ -23,14 +23,9 @@ from apps.users.views import (
     StaffCreateView,
     StaffDeactivateView
 )
-from apps.appointments.views import (
-    AppointmentListCreateView,
-    AppointmentDetailView,
-    update_status,
-)
 from rest_framework.routers import DefaultRouter
 from apps.patients.views import PetViewSet, OwnerViewSet
-from apps.organizations.views import OrganizationViewSet
+from apps.organizations.views import OrganizationViewSet, OrganizationSettingsView
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
@@ -48,9 +43,9 @@ router.register(r'organizations', OrganizationViewSet, basename='organization')
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('api/appointments/', AppointmentListCreateView.as_view()),
-    path('api/appointments/<int:pk>/', AppointmentDetailView.as_view()),
-    path('api/appointments/<int:pk>/status/', update_status),
+    # Rutas explícitas que colisionarían con el router deben ir ANTES del include del router
+    path('api/organizations/settings/', OrganizationSettingsView.as_view()),
+    path('api/appointments/', include('apps.appointments.urls')),
     path('api/token/', ThrottledTokenObtainPairView.as_view()),
     path('api/token/refresh/', TokenRefreshView.as_view()),
     path('api/', include(router.urls)),

@@ -7,6 +7,7 @@ import {
 } from "../api/inventory";
 import { useAuth } from "../auth/authContext";
 import { Icon } from "../components/icons";
+import { toast } from "sonner";
 import s from "./inventory.module.css";
 
 // ── Constants ─────────────────────────────────────────────
@@ -126,8 +127,6 @@ const Inventory = () => {
     const [adjustingProduct, setAdjustingProduct] = useState(null);
     const [adjustForm, setAdjustForm] = useState(EMPTY_ADJUST);
 
-    const [error, setError] = useState("");
-    const [success, setSuccess] = useState("");
     const [saving, setSaving] = useState(false);
 
     useEffect(() => { if (token) loadAll(); }, [token]);
@@ -169,10 +168,15 @@ const Inventory = () => {
         };
     }, [products]);
 
-    const alertProducts = useMemo(() =>
-        products.filter(p => p.is_active !== false && p.presentation?.is_low_stock),
-        [products]
-    );
+    const alertProducts = useMemo(() => {
+        const low = products.filter(p => p.is_active !== false && p.presentation?.is_low_stock);
+        // Sort: stock=0 (agotado) first, then low stock
+        return [...low].sort((a, b) => {
+            const aOut = parseFloat(a.presentation?.stock ?? 1) <= 0 ? 0 : 1;
+            const bOut = parseFloat(b.presentation?.stock ?? 1) <= 0 ? 0 : 1;
+            return aOut - bOut;
+        });
+    }, [products]);
 
     // ── Sort handler ──────────────────────────────────────
     const handleSort = (col) => {
@@ -245,29 +249,30 @@ const Inventory = () => {
     // ── Handlers ──────────────────────────────────────────
     const handleSubmit = async (e) => {
         e.preventDefault();
-        setError("");
         setFormErrors({});
-        if (!form.name.trim()) { setError("El nombre es obligatorio"); return; }
+        if (!form.name.trim()) { toast.error("El nombre es obligatorio"); return; }
         setSaving(true);
         try {
             const payload = buildProductPayload(form);
-            if (editing) {
-                await updateProduct(editing.id, payload);
-                setSuccess("Producto actualizado");
-            } else {
-                await createProduct(payload);
-                setSuccess("Producto creado");
-            }
+            const p = editing ? updateProduct(editing.id, payload) : createProduct(payload);
+            await toast.promise(p, {
+                loading: editing ? 'Actualizando producto...' : 'Creando producto...',
+                success: editing ? 'Producto actualizado' : 'Producto creado',
+                error: (err) => {
+                    const data = err.response?.data;
+                    if (data && typeof data === "object" && !Array.isArray(data) && !data.detail) {
+                        return "Revisa los campos con errores";
+                    }
+                    return apiError(err, "Error al guardar");
+                }
+            });
             await loadAll();
             closeProductModal();
         } catch (err) {
-            // R10: capturar errores del backend (ej: internal_code duplicado) y mostrar en form
             const data = err.response?.data;
             if (data && typeof data === "object" && !Array.isArray(data)) {
                 setFormErrors(data);
-                setError("Revisa los campos con errores.");
-            } else {
-                setError(apiError(err, "Error al guardar"));
+                toast.error("Revisa los campos con errores.");
             }
         } finally {
             setSaving(false);
@@ -278,28 +283,31 @@ const Inventory = () => {
         const ok = await confirm({ message: "¿Eliminar este producto del inventario?", confirmText: "Eliminar", dangerMode: true });
         if (!ok) return;
         try {
-            await deleteProduct(id);
-            setSuccess("Producto eliminado");
+            await toast.promise(deleteProduct(id), {
+                loading: 'Eliminando...',
+                success: 'Producto eliminado',
+                error: (err) => err.response?.data?.detail || "No se puede eliminar: tiene movimientos asociados"
+            });
             await loadAll();
         } catch (err) {
-            setError(err.response?.data?.detail || "No se puede eliminar: tiene movimientos asociados");
         }
     };
 
     const handleAdjust = async (e) => {
         e.preventDefault();
-        setError("");
         if (!adjustForm.quantity || parseFloat(adjustForm.quantity) <= 0) {
-            setError("La cantidad debe ser mayor a 0"); return;
+            toast.error("La cantidad debe ser mayor a 0"); return;
         }
         setSaving(true);
         try {
-            await adjustStock(adjustingProduct.id, { ...adjustForm, quantity: parseFloat(adjustForm.quantity) });
-            setSuccess("Stock ajustado correctamente");
+            await toast.promise(adjustStock(adjustingProduct.id, { ...adjustForm, quantity: parseFloat(adjustForm.quantity) }), {
+                loading: 'Ajustando stock...',
+                success: 'Stock ajustado correctamente',
+                error: (err) => apiError(err, "Error al ajustar")
+            });
             await loadAll();
             closeAdjustModal();
         } catch (err) {
-            setError(apiError(err, "Error al ajustar"));
         } finally {
             setSaving(false);
         }
@@ -334,11 +342,11 @@ const Inventory = () => {
 
     const closeProductModal = () => {
         setShowProductModal(false); setEditing(null);
-        setForm(EMPTY_PRODUCT); setError(""); setFormErrors({});
+        setForm(EMPTY_PRODUCT); setFormErrors({});
     };
     const closeAdjustModal = () => {
         setShowAdjustModal(false); setAdjustingProduct(null);
-        setAdjustForm(EMPTY_ADJUST); setError("");
+        setAdjustForm(EMPTY_ADJUST);
     };
 
     if (initializing || loading) return (
@@ -350,17 +358,6 @@ const Inventory = () => {
     // ── Render ────────────────────────────────────────────
     return (
         <div>
-            {error && (
-                <div className="alert alert-danger">
-                    {error}<button className="alert-close" onClick={() => setError("")}><Icon.X s={14} /></button>
-                </div>
-            )}
-            {success && (
-                <div className="alert alert-success">
-                    {success}<button className="alert-close" onClick={() => setSuccess("")}><Icon.X s={14} /></button>
-                </div>
-            )}
-
             {/* ── Page header ── */}
             <div className={s.phead}>
                 <div>
@@ -675,7 +672,6 @@ const Inventory = () => {
                             <button className="modal-close" onClick={closeProductModal}><Icon.X s={16} /></button>
                         </div>
                         <div className="modal-body">
-                            {error && <div className="alert alert-danger">{error}</div>}
                             <form onSubmit={handleSubmit}>
                                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 14px" }}>
                                     <div className="form-group" style={{ gridColumn: "1 / -1" }}>
@@ -818,7 +814,6 @@ const Inventory = () => {
                             <button className="modal-close" onClick={closeAdjustModal}><Icon.X s={16} /></button>
                         </div>
                         <div className="modal-body">
-                            {error && <div className="alert alert-danger">{error}</div>}
 
                             {/* R1 + R3 en el modal de ajuste */}
                             {(() => {

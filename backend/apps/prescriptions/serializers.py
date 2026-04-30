@@ -4,7 +4,11 @@ from .models import Prescription, PrescriptionItem
 
 class PrescriptionItemSerializer(serializers.ModelSerializer):
     product_name = serializers.CharField(source='product.name', read_only=True)
-    product_unit = serializers.CharField(source='product.presentation.base_unit', read_only=True)
+    product_unit = serializers.SerializerMethodField()
+
+    def get_product_unit(self, obj):
+        pres = obj.product.presentations.first()
+        return pres.base_unit if pres else None
 
     class Meta:
         model = PrescriptionItem
@@ -12,6 +16,16 @@ class PrescriptionItemSerializer(serializers.ModelSerializer):
             'id', 'product', 'product_name', 'product_unit',
             'dose', 'duration', 'quantity', 'instructions',
         ]
+
+    def validate_dose(self, value):
+        if not value or not value.strip():
+            raise serializers.ValidationError("La dosis es obligatoria.")
+        return value
+
+    def validate_quantity(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("La cantidad debe ser mayor a 0.")
+        return value
 
 
 class PrescriptionSerializer(serializers.ModelSerializer):
@@ -31,6 +45,22 @@ class PrescriptionSerializer(serializers.ModelSerializer):
     def get_veterinarian_name(self, obj):
         return f"{obj.veterinarian.first_name} {obj.veterinarian.last_name}".strip()
 
+    def validate_items(self, items):
+        if not items:
+            raise serializers.ValidationError(
+                "La receta debe tener al menos un medicamento."
+            )
+        return items
+
+    def validate(self, attrs):
+        medical_record = attrs.get('medical_record')
+        if medical_record and not self.instance:
+            if hasattr(medical_record, 'prescription'):
+                raise serializers.ValidationError(
+                    "Esta consulta ya tiene una receta. Editá la existente."
+                )
+        return attrs
+
     def create(self, validated_data):
         items_data = validated_data.pop('items', [])
         prescription = Prescription.objects.create(**validated_data)
@@ -45,7 +75,7 @@ class PrescriptionSerializer(serializers.ModelSerializer):
         instance.save()
 
         if items_data is not None:
-            instance.items.all().delete()
+            PrescriptionItem.all_objects.filter(prescription=instance).delete()
             for item_data in items_data:
                 PrescriptionItem.objects.create(prescription=instance, **item_data)
 

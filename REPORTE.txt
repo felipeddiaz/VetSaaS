@@ -1,0 +1,133 @@
+🐛 REPORTE DE QA DESTRUCTIVO — VetCare SaaS
+Fecha: 29 de abril de 2026 | Tester: Claude (Senior QA Automatizado)
+
+RESUMEN EJECUTIVO
+Se ejecutaron pruebas destructivas en las 7 secciones principales del sistema. Se encontraron 11 bugs, de los cuales 3 son críticos de seguridad, 4 son de alta severidad y 4 son de media/baja severidad.
+
+🔴 BUGS CRÍTICOS (Seguridad / Datos)
+BUG #1 — Walk-in: "Entidad genérica no configurada"
+
+Sección: Citas → Walk-in
+Reproducción: Seleccionar veterinario + escribir motivo con caracteres raros (💩 NULL undefined NaN <img onerror=alert(1)>) + hacer 5 clicks rápidos en "Iniciar consulta"
+Resultado: El backend devuelve "Entidad genérica no configurada. Contacta al administrador." — el texto con caracteres especiales llegó al servidor y rompió la lógica de entidad genérica (paciente anónimo)
+Impacto: El sistema no puede crear Walk-ins con paciente anónimo si la configuración de entidad genérica no está bien definida. Error de backend expuesto al usuario sin sanitizar.
+Tipo: Flujo fuera de orden + datos basura + configuración de sistema
+
+
+BUG #7 — XSS Almacenado en Historial Clínico
+
+Sección: Historial Clínico → Nueva Consulta
+Reproducción: En el campo "Diagnóstico", ingresar:
+
+  '; DROP TABLE consultas;-- 💀💀 <script>alert(document.cookie)</script>
+Con peso válido (10.5) y tratamiento válido → Guardar consulta
+
+Resultado: El payload se guardó en la base de datos y se muestra en el historial. React escapa el HTML al renderizar, pero si cualquier componente usa dangerouslySetInnerHTML, en un export a PDF, o en un email, el script se ejecutaría.
+Impacto: XSS almacenado. El campo de diagnóstico no tiene sanitización de entradas en backend.
+Tipo: Datos basura → Seguridad
+
+
+BUG #11 — Sin Rate Limiting en Login (Brute Force posible)
+
+Sección: Login
+Reproducción: Hacer múltiples intentos de login con contraseña incorrecta en rápida sucesión (5+ intentos)
+Resultado: No hay bloqueo, no hay captcha, no hay mensaje de error visible tras los intentos fallidos. Los campos quedan vacíos sin indicación de error.
+Impacto: Brute force de contraseñas sin restricción. Los usernames están expuestos en /staff.
+Tipo: Autenticación → Seguridad crítica
+
+
+🟠 BUGS DE ALTA SEVERIDAD
+BUG #3 — Precio negativo se calcula en previsualización de cobro
+
+Sección: Cobros → Nuevo Cobro → Agregar Servicio
+Reproducción: Ingresar cantidad -999 en el campo CANTIDAD
+Resultado: El campo muestra "Total línea: $-59,940,000.00" antes de bloquearlo. El tooltip dice "El valor debe ser mayor de o igual a 0.01" pero el cálculo del total ya se realizó con el valor negativo.
+Impacto: La validación HTML5 (min=0.01) bloquea el submit, pero el cálculo con valores negativos se muestra. Si alguien logra bypassear la validación, podría generar facturas con totales negativos.
+Tipo: Datos extremos → Lógica de negocio
+
+
+BUG #4 — Cálculo incorrecto con cantidad = 0
+
+Sección: Cobros → Agregar Servicio
+Reproducción: Ingresar cantidad 0
+Resultado: "Total línea" muestra $60,000.00 (el precio unitario completo) en lugar de $0.00. La fórmula 60000 × 0 debería dar $0, pero muestra el precio base.
+Impacto: Error de cálculo en la vista previa del cobro. Aunque HTML bloquea el submit, el cálculo live es incorrecto.
+Tipo: Lógica de negocio → Bug de cálculo
+
+
+BUG #5 — Mensaje de error del backend en inglés
+
+Sección: Historial Clínico → Nueva Consulta → Campo Peso
+Reproducción: Ingresar peso con más de 5 dígitos (ej: 99999 con decimales o -99999.99)
+Resultado: El error del validador de Prisma/DB dice: "Ensure that there are no more than 5 digits in total" — en inglés, mientras toda la app está en español.
+Impacto: Experiencia de usuario rota. El error de base de datos se filtra directamente al frontend sin traducción ni manejo adecuado.
+Tipo: i18n + Error handling
+
+
+BUG #6 — Fallo silencioso con peso = 99999
+
+Sección: Historial Clínico → Nueva Consulta
+Reproducción: Ingresar peso 99999 (exactamente 5 dígitos enteros), diagnóstico válido, tratamiento válido → Guardar
+Resultado: El botón "Guardar consulta" se clickea pero no pasa nada — sin error visible, sin confirmación, sin animación de carga. El modal permanece abierto sin feedback.
+Impacto: El usuario no sabe si la acción funcionó o no. Fallo silencioso que genera confusión.
+Tipo: UX → Error handling silencioso
+
+
+🟡 BUGS DE MEDIA SEVERIDAD
+BUG #8 — Inconsistencia en el contador de consultas del historial
+
+Sección: Historial Clínico
+Reproducción: Crear una nueva consulta → volver al historial sin refrescar la página
+Resultado: El sidebar muestra 8 consultas para Milo, pero el header de la ficha mostraba "7 consultas". Después de navegar y volver el contador se sincroniza.
+Impacto: Estado de UI desincronizado. El usuario ve datos contradictorios.
+Tipo: State management → Race condition de actualización
+
+
+BUG #9 — Modal de Inventario se cierra antes de mostrar los errores
+
+Sección: Inventario → Nuevo Producto
+Reproducción: Ingresar nombre con caracteres especiales + stock y precio negativos → Crear producto
+Resultado: El modal se cierra y el toast de error dice "Revisa los campos con errores", pero el usuario ya no puede ver qué campos fallaron porque el modal desapareció.
+Impacto: UX rota. El usuario no puede corregir el error porque ya no ve el formulario.
+Tipo: UX → Error handling
+
+
+BUG #2 — IDs secuenciales expuestos generan 404 ruidosos en consola
+
+Sección: Mascotas → URLs directas (/pets/1, /pets/2, /pets/4)
+Reproducción: Navegar directamente a /pets/[ID] con IDs que no pertenecen al tenant actual
+Resultado: La UI muestra "Mascota no encontrada" correctamente, pero la consola muestra AxiosError: Request failed with status code 404 enviado a Sentry. Los IDs son numéricos y secuenciales — 1, 2 no existen para este tenant, 3 sí.
+Impacto: Los IDs son globales y predecibles. El backend retorna 404, lo cual es correcto, pero revela que el aislamiento multitenant se hace en el API (no en el frontend). Si el API tuviera un bug de autorización, sería un IDOR directo. Los IDs predecibles son un vector de riesgo.
+Tipo: Multitenancy → Arquitectura de riesgo
+
+
+BUG #10 — Sesión expira sin aviso y redirige silenciosamente
+
+Sección: Toda la app
+Reproducción: Dejar la sesión activa ~20 minutos luego navegar a cualquier ruta protegida
+Resultado: La app redirige a /login sin mostrar un mensaje de "tu sesión ha expirado". El usuario pierde el trabajo en curso sin previo aviso.
+Impacto: UX. El usuario puede perder datos si tenía un formulario abierto.
+Tipo: Session management → UX
+
+
+✅ LO QUE FUNCIONA BIEN
+ValidaciónEstadoNombre con XSS/SQL en mascotas✅ Bloqueado en frontendNombre vacío o solo espacios✅ Detectado y rechazadoTeléfono con caracteres no numéricos✅ Bloqueado en inputSubmit sin veterinario en Walk-in✅ Valida correctamenteSubmit sin motivo en Walk-in✅ Valida correctamenteConfirmar cobro sin items✅ Bloqueado con mensajeConfirmar cobro con $0✅ Bloqueado con mensajeSpam clicks en "Crear Factura"✅ Sin duplicados (modal se cierra al 1er éxito)IDOR en cobros por URL directa✅ No hay ruta /billing/{id}Rutas de admin no existentes✅ 404 apropiadoProtección de rutas autenticadas✅ Redirige a login correctamente
+
+📋 TABLA RESUMEN PRIORIZADO
+#BugSeveridadMóduloTipo7XSS almacenado en Historial🔴 CríticoHistorialSeguridad11Sin rate limiting en login🔴 CríticoAuthSeguridad1Error "Entidad genérica" con datos basura🔴 CríticoCitasBackend3Precio negativo en cobros🟠 AltoCobrosLógica4Cálculo erróneo con cantidad=0🟠 AltoCobrosLógica5Error backend en inglés (peso)🟠 AltoHistoriali18n/UX6Fallo silencioso en guardar consulta🟠 AltoHistorialUX8Contador de consultas desincronizado🟡 MedioHistorialState9Modal inventario cierra antes del error🟡 MedioInventarioUX2IDs secuenciales predecibles (IDOR latente)🟡 MedioGlobalArquitectura10Sesión expira sin aviso🟡 MedioAuthUX
+
+🎯 RECOMENDACIONES INMEDIATAS
+Esta semana (crítico):
+
+Sanitizar inputs en backend — especialmente campos de texto libre (diagnóstico, tratamiento, motivo). Usar librerías como DOMPurify o xss antes de persistir.
+Implementar rate limiting en /api/login — máximo 5 intentos por IP/usuario en 15 minutos con backoff exponencial.
+Investigar el error de "Entidad genérica" — el Walk-in con datos basura llega al backend y falla por configuración. Validar que la entidad anónima existe antes de intentar crear la cita.
+
+Esta semana (alta prioridad):
+4. Validar valores numéricos en backend — el precio y el stock deberían tener min: 0 en el esquema de Prisma, no solo en el HTML.
+5. Traducir errores de Prisma/DB — interceptar los errores del ORM y mapearlos a mensajes en español antes de enviarlos al frontend.
+6. No cerrar modales con errores — cuando falla una creación, mantener el modal abierto con los campos resaltados.
+Próximas 2 semanas:
+7. Considerar UUIDs en lugar de IDs secuenciales — reduce significativamente el riesgo de IDOR incluso ante bugs de autorización futuros.
+8. Agregar mensaje de sesión expirada — mostrar un toast antes de redirigir al login.
+9. Sincronizar el estado del contador de consultas — actualizar el contexto global cuando se crea una consulta nueva.

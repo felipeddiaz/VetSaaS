@@ -66,7 +66,7 @@ INSTALLED_APPS = [
     'corsheaders',
     'rest_framework',
     'apps.core',
-    'apps.organizations',
+    'apps.organizations.apps.OrganizationsConfig',
     'apps.users.apps.UsersConfig',
     'apps.patients',
     'apps.appointments',
@@ -249,5 +249,22 @@ LOGGING = {
             'level': 'INFO',
             'propagate': False,
         },
+        # Ciclo de vida consultas (cerrar, idempotencia) — mismo destino que consola
+        'medical_records.events': {
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
     },
 }
+
+# -----------------------------------------------------------------------------
+# Runserver (solo desarrollo): el logger padre `django` está en ERROR arriba, así que
+# los mensajes INFO de `django.server` ("GET /api/...") se perdían al propagar.
+# -----------------------------------------------------------------------------
+if DEBUG:
+    LOGGING["loggers"]["django.server"] = {
+        "handlers": ["console"],
+        "level": "INFO",
+        "propagate": False,
+    }

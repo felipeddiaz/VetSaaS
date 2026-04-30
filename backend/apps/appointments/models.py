@@ -8,8 +8,11 @@ from apps.core.models import OrganizationalModel
 class Appointment(OrganizationalModel):
     STATUS_CHOICES = (
         ('scheduled', 'Programada'),
-        ('canceled', 'Cancelada'),
+        ('confirmed', 'Confirmada'),
+        ('in_progress', 'En consulta'),
         ('done', 'Completada'),
+        ('canceled', 'Cancelada'),
+        ('no_show', 'No se presentó'),
     )
 
     pet = models.ForeignKey("patients.Pet", on_delete=models.PROTECT)
@@ -24,6 +27,7 @@ class Appointment(OrganizationalModel):
 
     reason = models.CharField(max_length=255)
     notes = models.TextField(blank=True)
+    cancellation_reason = models.TextField(blank=True)
 
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="scheduled")
 
@@ -56,3 +60,19 @@ class Appointment(OrganizationalModel):
                 name="appointment_end_after_start",
             ),
         ]
+
+
+class AppointmentStatusChange(OrganizationalModel):
+    appointment = models.ForeignKey(
+        Appointment, on_delete=models.CASCADE, related_name='status_changes'
+    )
+    from_status = models.CharField(max_length=20)
+    to_status = models.CharField(max_length=20)
+    changed_by = models.ForeignKey(
+        'users.User', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='appointment_status_changes',
+    )
+    reason = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['-created_at']

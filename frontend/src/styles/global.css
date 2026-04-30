@@ -120,22 +120,22 @@ button, input, select, textarea { font-family: inherit; }
 .badge-default { background: var(--c-subtle);     color: var(--c-text-2);       border-color: var(--c-border); }
 .badge-primary { background: var(--c-primary-light); color: var(--c-primary-dark); border-color: #99f6e4; }
 
-/* ── Alerts ──────────────────────────────────────────────── */
-.alert {
+/* ── Form Alerts ─────────────────────────────────────────── */
+.form-alert {
   display: flex; align-items: flex-start; justify-content: space-between;
   gap: 10px; padding: 10px 14px;
-  border-radius: var(--r-lg); border: 1px solid transparent;
+  border-radius: var(--r-md); border: 1px solid transparent; /* slightly more compact than var(--r-lg) */
   font-size: 13px; margin-bottom: 16px;
 }
-.alert-success { background: var(--c-success-bg); color: var(--c-success-text); border-color: var(--c-success-border); }
-.alert-danger  { background: var(--c-danger-bg);  color: var(--c-danger-text);  border-color: var(--c-danger-border); }
-.alert-warning { background: var(--c-warning-bg); color: var(--c-warning-text); border-color: var(--c-warning-border); }
-.alert-close   {
+.form-alert-success { background: var(--c-success-bg); color: var(--c-success-text); border-color: var(--c-success-border); }
+.form-alert-error   { background: var(--c-danger-bg);  color: var(--c-danger-text);  border-color: var(--c-danger-border); }
+.form-alert-warning { background: var(--c-warning-bg); color: var(--c-warning-text); border-color: var(--c-warning-border); }
+.form-alert-close   {
   background: none; border: none; cursor: pointer;
   opacity: 0.6; padding: 0; font-size: 14px; flex-shrink: 0;
   line-height: 1; color: inherit; transition: opacity var(--t);
 }
-.alert-close:hover { opacity: 1; }
+.form-alert-close:hover { opacity: 1; }
 
 /* ── Cards ───────────────────────────────────────────────── */
 .card {

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getPets, createPet, updatePet, deletePet } from "../api/pets";
 import { useConfirm } from "../components/ConfirmDialog";
+import { toast } from "sonner";
 import { getMedicalRecords } from "../api/medicalRecords";
 import { getAppointments } from "../api/appointments";
 import { useAuth } from "../auth/authContext";
@@ -71,7 +72,21 @@ const speciesAccent = (pet) => isCanino(pet)
     : { bg: "var(--c-primary-light)", icon: "var(--c-primary-dark)", border: "#99f6e4", text: "var(--c-primary-dark)" };
 
 // ─── Pet Form Modal ───────────────────────────────────────────────────────────
-const PetModal = ({ form, setForm, editing, onSubmit, onClose, error }) => (
+const SPECIES_OPTIONS = [
+    { value: "canino",  label: "Canino" },
+    { value: "felino",  label: "Felino" },
+    { value: "equino",  label: "Equino" },
+    { value: "ave",     label: "Ave" },
+    { value: "reptil",  label: "Reptil" },
+    { value: "exótico", label: "Exótico" },
+    { value: "otro",    label: "Otro" },
+];
+const COLOR_OPTIONS = [
+    "Negro", "Blanco", "Café", "Gris", "Naranja", "Amarillo",
+    "Atigrado", "Bicolor", "Tricolor", "Multicolor", "Otro",
+];
+
+const PetModal = ({ form, setForm, editing, onSubmit, onClose }) => (
     <div className="modal-overlay">
         <div className="modal modal-md">
             <div className="modal-header">
@@ -79,7 +94,6 @@ const PetModal = ({ form, setForm, editing, onSubmit, onClose, error }) => (
                 <button className="modal-close" onClick={onClose}><Icon.X s={16} /></button>
             </div>
             <div className="modal-body">
-                {error && <div className="alert alert-danger" style={{ marginBottom: "16px" }}>{error}</div>}
                 <form onSubmit={onSubmit}>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
                         <div className="form-group" style={{ gridColumn: "1 / -1" }}>
@@ -88,14 +102,17 @@ const PetModal = ({ form, setForm, editing, onSubmit, onClose, error }) => (
                         </div>
                         <div className="form-group">
                             <label className="form-label">ESPECIE *</label>
-                            <input className="input" value={form.species} onChange={e => setForm({ ...form, species: e.target.value })} placeholder="Ej: Perro, Gato" />
+                            <select className="select-input" value={form.species} onChange={e => setForm({ ...form, species: e.target.value })}>
+                                <option value="">Seleccionar especie</option>
+                                {SPECIES_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                            </select>
                         </div>
                         <div className="form-group">
                             <label className="form-label">RAZA</label>
                             <input className="input" value={form.breed} onChange={e => setForm({ ...form, breed: e.target.value })} placeholder="Ej: Labrador" />
                         </div>
                         <div className="form-group">
-                            <label className="form-label">FECHA DE NACIMIENTO</label>
+                            <label className="form-label">FECHA DE NACIMIENTO *</label>
                             <input type="date" className="input" value={form.birth_date} onChange={e => setForm({ ...form, birth_date: e.target.value })} />
                         </div>
                         <div className="form-group">
@@ -108,7 +125,10 @@ const PetModal = ({ form, setForm, editing, onSubmit, onClose, error }) => (
                         </div>
                         <div className="form-group" style={{ gridColumn: "1 / -1" }}>
                             <label className="form-label">COLOR</label>
-                            <input className="input" value={form.color} onChange={e => setForm({ ...form, color: e.target.value })} placeholder="Ej: Café con blanco" />
+                            <select className="select-input" value={form.color} onChange={e => setForm({ ...form, color: e.target.value })}>
+                                <option value="">Sin especificar</option>
+                                {COLOR_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
+                            </select>
                         </div>
                     </div>
                     <hr className="divider" />
@@ -121,8 +141,15 @@ const PetModal = ({ form, setForm, editing, onSubmit, onClose, error }) => (
                             <input className="input" value={form.owner.name} onChange={e => setForm({ ...form, owner: { ...form.owner, name: e.target.value } })} placeholder="Nombre del dueño" />
                         </div>
                         <div className="form-group">
-                            <label className="form-label">TELÉFONO</label>
-                            <input className="input" value={form.owner.phone} onChange={e => setForm({ ...form, owner: { ...form.owner, phone: e.target.value } })} placeholder="Teléfono" />
+                            <label className="form-label">TELÉFONO *</label>
+                            <input
+                                className="input"
+                                value={form.owner.phone}
+                                onChange={e => setForm({ ...form, owner: { ...form.owner, phone: e.target.value.replace(/\D/g, '').slice(0, 10) } })}
+                                placeholder="10 dígitos"
+                                maxLength={10}
+                                inputMode="numeric"
+                            />
                         </div>
                     </div>
                 </form>
@@ -528,7 +555,6 @@ const Pets = () => {
     const [showModal, setShowModal] = useState(false);
     const [editing, setEditing] = useState(null);
     const [form, setForm] = useState(EMPTY_FORM);
-    const [formError, setFormError] = useState("");
 
     // Quick panel
     const [selectedPet, setSelectedPet] = useState(null);
@@ -544,7 +570,7 @@ const Pets = () => {
         try {
             const { start, end } = getWeekRange();
             const [petsData, apptsData] = await Promise.all([
-                getPets(token),
+                getPets(),
                 getAppointments(token).catch(() => []),
             ]);
             setPets(petsData);
@@ -630,23 +656,28 @@ const Pets = () => {
     // ─── CRUD ─────────────────────────────────────────────────
     const handleSubmit = async (e) => {
         e.preventDefault();
-        setFormError("");
-        if (!form.name.trim()) { setFormError("El nombre es obligatorio"); return; }
-        if (!form.species.trim()) { setFormError("La especie es obligatoria"); return; }
-        if (!form.owner.name.trim()) { setFormError("El nombre del propietario es obligatorio"); return; }
+        const nameRe = /^[A-Za-z0-9ÁÉÍÓÚáéíóúñÑ' \-]+$/;
+        if (!form.name.trim()) { toast.error("El nombre es obligatorio"); return; }
+        if (!nameRe.test(form.name.trim())) { toast.error("El nombre solo puede contener letras, números, espacios, acentos y guiones"); return; }
+        if (!form.species) { toast.error("La especie es obligatoria"); return; }
+        if (!form.birth_date) { toast.error("La fecha de nacimiento es obligatoria"); return; }
+        if (!form.owner.name.trim()) { toast.error("El nombre del propietario es obligatorio"); return; }
+        if (!nameRe.test(form.owner.name.trim())) { toast.error("El nombre del dueño solo puede contener letras, espacios y acentos"); return; }
+        if (!form.owner.phone || form.owner.phone.length !== 10) { toast.error("El teléfono debe tener exactamente 10 dígitos"); return; }
         const payload = { ...form, birth_date: form.birth_date || null };
         try {
-            if (editing) {
-                await updatePet(token, editing.id, payload);
-            } else {
-                await createPet(token, payload);
-            }
+            const p = editing ? updatePet(token, editing.id, payload) : createPet(token, payload);
+            await toast.promise(p, {
+                loading: 'Guardando...',
+                success: 'Mascota guardada correctamente',
+                error: (err) => err.response?.data?.detail || "Error al guardar mascota"
+            });
             setForm(EMPTY_FORM);
             setEditing(null);
             setShowModal(false);
             loadAll();
         } catch (err) {
-            setFormError(err.response?.data?.detail || "Error al guardar mascota");
+            // Error global manejado por toast, no sobreescribir formError unless you want to
         }
     };
 
@@ -673,11 +704,15 @@ const Pets = () => {
         });
         if (!ok) return;
         try {
-            await deletePet(token, id);
+            await toast.promise(deletePet(token, id), {
+                loading: 'Eliminando...',
+                success: 'Mascota eliminada',
+                error: 'Error al eliminar la mascota'
+            });
             if (selectedPet?.id === id) closePanel();
             loadAll();
         } catch (err) {
-            alert("Error al eliminar");
+            // Manejado por toast
         }
     };
 
@@ -685,7 +720,7 @@ const Pets = () => {
         setShowModal(false);
         setEditing(null);
         setForm(EMPTY_FORM);
-        setFormError("");
+        ;
     };
 
     if (initializing || loading) {
@@ -706,7 +741,7 @@ const Pets = () => {
                 </div>
                 <button
                     className="btn btn-primary btn-md"
-                    onClick={() => { setEditing(null); setForm(EMPTY_FORM); setFormError(""); setShowModal(true); }}
+                    onClick={() => { setEditing(null); setForm(EMPTY_FORM); ; setShowModal(true); }}
                 >
                     + Nueva Mascota
                 </button>
@@ -1008,7 +1043,6 @@ const Pets = () => {
                     editing={editing}
                     onSubmit={handleSubmit}
                     onClose={handleClose}
-                    error={formError}
                 />
             )}
         </div>

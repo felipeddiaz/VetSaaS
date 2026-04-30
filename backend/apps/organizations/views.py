@@ -1,9 +1,9 @@
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
-from rest_framework import status
+from rest_framework import generics, status
 from rest_framework.response import Response
-from apps.organizations.models import Organization
-from apps.organizations.serializers import OrganizationSerializer
+from apps.organizations.models import Organization, OrganizationSettings
+from apps.organizations.serializers import OrganizationSerializer, OrganizationSettingsSerializer
 
 
 class IsAdminUser:
@@ -26,3 +26,14 @@ class OrganizationViewSet(ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN
             )
         return super().create(request, *args, **kwargs)
+
+
+class OrganizationSettingsView(generics.RetrieveUpdateAPIView):
+    serializer_class = OrganizationSettingsSerializer
+    permission_classes = [IsAuthenticated, IsAdminUser]
+    http_method_names = ['get', 'patch']
+
+    def get_object(self):
+        org = self.request.user.organization
+        settings, _ = OrganizationSettings.objects.get_or_create(organization=org)
+        return settings

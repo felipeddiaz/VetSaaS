@@ -308,17 +308,21 @@ const PetDetail = () => {
                             {viewingRecord.prescription_id ? (
                                 <button
                                     className="btn btn-purple btn-md"
-                                    onClick={() => { setShowRecordDetail(false); navigate(`/prescriptions?medical_record=${viewingRecord.id}&pet=${pet.id}`); }}
+                                    onClick={() => { setShowRecordDetail(false); navigate(`/prescriptions?pet=${pet.id}`); }}
                                 >
                                     Ver Receta
                                 </button>
-                            ) : canCreate ? (
+                            ) : canCreate && viewingRecord.status !== "closed" ? (
                                 <button
                                     className="btn btn-purple btn-md"
-                                    onClick={() => { setShowRecordDetail(false); navigate(`/prescriptions?medical_record=${viewingRecord.id}&pet=${pet.id}`); }}
+                                    onClick={() => { setShowRecordDetail(false); navigate(`/medical-records?pet=${pet.id}`); }}
                                 >
-                                    Crear Receta
+                                    Abrir en Historial Clínico
                                 </button>
+                            ) : !viewingRecord.prescription_id && viewingRecord.status === "closed" ? (
+                                <span style={{ color: "var(--c-text-3)", fontSize: "13px" }}>
+                                    La consulta está cerrada y no admite receta nueva.
+                                </span>
                             ) : null}
                             <button
                                 className="btn btn-secondary btn-md"

@@ -2,9 +2,22 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from apps.core.models import OrganizationalModel
 
+SPECIES_CHOICES = ['canino', 'felino', 'equino', 'ave', 'reptil', 'exótico', 'otro']
+
+
 class Owner(OrganizationalModel):
     name = models.CharField(max_length=255)
     phone = models.CharField(max_length=20)
+    is_generic = models.BooleanField(default=False)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['organization'],
+                condition=models.Q(is_generic=True),
+                name='unique_generic_owner_per_organization',
+            )
+        ]
 
 
 class Pet(OrganizationalModel):
@@ -20,6 +33,8 @@ class Pet(OrganizationalModel):
     birth_date = models.DateField(null=True, blank=True)
     sex = models.CharField(max_length=10, choices=SEX_CHOICES, default='unknown')
     color = models.CharField(max_length=100, blank=True, default='')
+
+    is_generic = models.BooleanField(default=False)
 
     owner = models.ForeignKey(
         Owner,

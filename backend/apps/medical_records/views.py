@@ -12,7 +12,7 @@ from rest_framework.response import Response
 from apps.core.permissions import HybridPermission, make_permission
 from apps.core.views import TenantQueryMixin
 
-from .models import MedicalRecord, MedicalRecordService
+from .models import MedicalRecord, MedicalRecordService, VaccineRecord
 from .policies import (
     assert_can_modify_charges,
     can_close_medical_record,
@@ -22,6 +22,7 @@ from .serializers import (
     MedicalRecordSerializer,
     MedicalRecordDetailSerializer,
     MedicalRecordServiceSerializer,
+    VaccineRecordSerializer,
 )
 
 
@@ -42,7 +43,13 @@ class MedicalRecordListCreateView(TenantQueryMixin, generics.ListCreateAPIView):
 
     def get_queryset(self):
         pet_id = self.request.query_params.get('pet')
-        queryset = MedicalRecord.objects.for_organization(self.request.user.organization)
+        queryset = MedicalRecord.objects.for_organization(self.request.user.organization).select_related(
+            'pet', 'veterinarian', 'appointment', 'prescription'
+        ).prefetch_related(
+            'products_used__presentation__product',
+            'services_used__service',
+            'prescription__items__product__presentations',
+        )
 
         if pet_id:
             queryset = queryset.filter(pet_id=pet_id)
@@ -62,7 +69,13 @@ class MedicalRecordDetailView(TenantQueryMixin, generics.RetrieveUpdateDestroyAP
     resource_name = "medicalrecord"
 
     def get_queryset(self):
-        return MedicalRecord.objects.for_organization(self.request.user.organization)
+        return MedicalRecord.objects.for_organization(self.request.user.organization).select_related(
+            'pet', 'veterinarian', 'appointment', 'prescription'
+        ).prefetch_related(
+            'products_used__presentation__product',
+            'services_used__service',
+            'prescription__items__product__presentations',
+        )
 
     def _check_not_closed(self, instance):
         if instance.status == MedicalRecord.Status.CLOSED:
@@ -76,7 +89,11 @@ class MedicalRecordDetailView(TenantQueryMixin, generics.RetrieveUpdateDestroyAP
         return super().update(request, *args, **kwargs)
 
     def destroy(self, request, *args, **kwargs):
-        self._check_not_closed(self.get_object())
+        instance = self.get_object()
+        self._check_not_closed(instance)
+        from apps.billing.models import Invoice
+        if Invoice.objects.filter(medical_record=instance).exists():
+            raise PermissionDenied("No se puede eliminar una consulta con factura asociada.")
         return super().destroy(request, *args, **kwargs)
 
 
@@ -90,7 +107,13 @@ class MedicalRecordByPetView(TenantQueryMixin, generics.ListAPIView):
         pet_id = self.kwargs.get('pet_id')
         return MedicalRecord.objects.for_organization(
             self.request.user.organization
-        ).filter(pet_id=pet_id).order_by('-created_at')
+        ).filter(pet_id=pet_id).select_related(
+            'pet', 'veterinarian', 'appointment', 'prescription'
+        ).prefetch_related(
+            'products_used__presentation__product',
+            'services_used__service',
+            'prescription__items__product__presentations',
+        ).order_by('-created_at')
 
 
 class MedicalRecordServiceListCreateView(TenantQueryMixin, generics.ListCreateAPIView):
@@ -244,3 +267,35 @@ def close_medical_record(request, pk):
             },
         )
         return Response(MedicalRecordDetailSerializer(medical_record, context={"request": request}).data)
+
+
+class VaccineRecordListCreateView(TenantQueryMixin, generics.ListCreateAPIView):
+    serializer_class = VaccineRecordSerializer
+    permission_classes = [HybridPermission]
+    resource_name = "vaccinerecord"
+
+    def get_queryset(self):
+        qs = VaccineRecord.objects.for_organization(
+            self.request.user.organization
+        ).select_related('pet', 'applied_by', 'medical_record')
+        pet_id = self.request.query_params.get('pet')
+        if pet_id:
+            qs = qs.filter(pet_id=pet_id)
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(
+            organization=self.request.user.organization,
+            applied_by=self.request.user,
+        )
+
+
+class VaccineRecordDetailView(TenantQueryMixin, generics.RetrieveUpdateDestroyAPIView):
+    serializer_class = VaccineRecordSerializer
+    permission_classes = [HybridPermission]
+    resource_name = "vaccinerecord"
+
+    def get_queryset(self):
+        return VaccineRecord.objects.for_organization(
+            self.request.user.organization
+        ).select_related('pet', 'applied_by', 'medical_record')

@@ -36,18 +36,20 @@ def dashboard_stats(request):
 
     from django.db.models import F
     low_stock_qs = Product.objects.for_organization(org).filter(
-        presentation__stock__lte=F('presentation__min_stock'),
-    ).select_related('presentation')
-    low_stock = [
-        {
-            'id': p.id,
-            'name': p.name,
-            'stock': str(p.presentation.stock),
-            'min_stock': str(p.presentation.min_stock),
-            'unit': p.presentation.get_base_unit_display(),
-        }
-        for p in low_stock_qs
-    ]
+        presentations__stock__lte=F('presentations__min_stock'),
+    ).prefetch_related('presentations').distinct()
+    low_stock = []
+    for p in low_stock_qs:
+        for pres in p.presentations.all():
+            if pres.stock <= pres.min_stock:
+                low_stock.append({
+                    'id': p.id,
+                    'name': p.name,
+                    'presentation_name': pres.name,
+                    'stock': str(pres.stock),
+                    'min_stock': str(pres.min_stock),
+                    'unit': pres.get_base_unit_display(),
+                })
 
     recent_list = []
     for r in recent_records:

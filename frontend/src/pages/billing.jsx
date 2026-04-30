@@ -11,6 +11,8 @@ import { getProducts, getPresentations } from "../api/inventory";
 import { getPets, getOwners } from "../api/pets";
 import { useAuth } from "../auth/authContext";
 import { Icon } from "../components/icons";
+import { toast } from "sonner";
+import SearchSelect from "../components/SearchSelect";
 
 const STATUS_BADGE = { draft: "badge-default", confirmed: "badge-info", paid: "badge-success" };
 const STATUS_LABELS = { draft: "Borrador", confirmed: "Confirmada", paid: "Pagada" };
@@ -40,7 +42,6 @@ const Billing = () => {
     const [services, setServices] = useState([]);
     const [products, setProducts] = useState([]);
     const [presentations, setPresentations] = useState([]);
-    const [pets, setPets] = useState([]);
 
     const [filterStatus, setFilterStatus] = useState("");
     const [selectedInvoice, setSelectedInvoice] = useState(null);
@@ -56,15 +57,10 @@ const Billing = () => {
     const [itemMode, setItemMode] = useState(null); // null | "service" | "product"
 
     const [showNewInvoiceModal, setShowNewInvoiceModal] = useState(false);
-    const [newInvoiceForm, setNewInvoiceForm] = useState({
-        owner: "",
-        pet: "",
-        invoice_type: "direct_sale",
-    });
-    const [owners, setOwners] = useState([]);
-
-    const [error, setError] = useState("");
-    const [success, setSuccess] = useState("");
+    const [newInvoiceOwner, setNewInvoiceOwner] = useState(null);
+    const [newInvoicePet,   setNewInvoicePet]   = useState(null);
+    const [newInvoiceType,  setNewInvoiceType]  = useState("direct_sale");
+    const [genericOwner,    setGenericOwner]    = useState(null);
 
     useEffect(() => {
         if (token) loadAll();
@@ -78,19 +74,23 @@ const Billing = () => {
         getPresentations({ active: "true" }).then(r => setPresentations(r));
     }, []);
 
+    useEffect(() => {
+        if (token) {
+            getOwners({ is_generic: true }).then(os => {
+                if (os?.length) setGenericOwner(os[0]);
+            }).catch(() => {});
+        }
+    }, [token]);
+
     const loadAll = async () => {
         setLoading(true);
         try {
-            const [srvs, prods, petsData, ownersData] = await Promise.all([
+            const [srvs, prods] = await Promise.all([
                 getServices(),
                 getProducts({ active: "true" }),
-                getPets(token),
-                getOwners(),
             ]);
             setServices(srvs);
             setProducts(prods);
-            setPets(petsData);
-            setOwners(ownersData);
             await loadInvoices();
         } catch (err) {
             console.log(err);
@@ -117,49 +117,68 @@ const Billing = () => {
             setShowDetailModal(true);
             setItemMode(null);
             setItemForm(EMPTY_ITEM);
-            setError("");
         } catch (err) {
-            setError("Error al cargar la factura");
+            toast.error("Error al cargar la factura");
         }
     };
 
     const handleConfirm = async () => {
         try {
-            const updated = await confirmInvoice(selectedInvoice.id);
-            setSelectedInvoice(updated);
-            setSuccess("Factura confirmada");
-            loadInvoices();
-        } catch (err) {
-            const errors = err.response?.data?.detail;
-            if (Array.isArray(errors)) {
-                setError(errors.join("; "));
-            } else {
-                setError(apiError(err, "Error al confirmar"));
-            }
-        }
+            const p = confirmInvoice(selectedInvoice.id).then(updated => {
+                setSelectedInvoice(updated);
+                loadInvoices();
+            });
+            await toast.promise(p, {
+                loading: 'Confirmando...',
+                success: 'Factura confirmada',
+                error: (err) => {
+                    const errors = err.response?.data?.detail;
+                    return Array.isArray(errors) ? errors.join("; ") : apiError(err, "Error al confirmar");
+                }
+            });
+        } catch (err) {}
     };
 
     const handlePay = async () => {
         try {
-            const updated = await payInvoice(selectedInvoice.id, payMethod);
-            setSelectedInvoice(updated);
-            setShowPayModal(false);
-            setSuccess("Pago registrado");
-            loadInvoices();
-        } catch (err) {
-            setError(apiError(err, "Error al registrar pago"));
-        }
+            const p = payInvoice(selectedInvoice.id, payMethod).then(updated => {
+                setSelectedInvoice(updated);
+                setShowPayModal(false);
+                loadInvoices();
+            });
+            await toast.promise(p, {
+                loading: 'Registrando pago...',
+                success: 'Pago registrado',
+                error: (err) => apiError(err, "Error al registrar pago")
+            });
+        } catch (err) {}
+    };
+
+    const handleAddPrescriptionSuggestion = async (suggestion) => {
+        try {
+            const p = addInvoiceItem(selectedInvoice.id, {
+                presentation: suggestion.presentation_id,
+                quantity: suggestion.suggested_quantity,
+            }).then(() => getInvoice(selectedInvoice.id)).then(updated => {
+                setSelectedInvoice(updated);
+                loadInvoices();
+            });
+            await toast.promise(p, {
+                loading: 'Agregando producto...',
+                success: 'Producto agregado',
+                error: (err) => apiError(err, "Error al agregar producto de receta")
+            });
+        } catch (err) {}
     };
 
     const handleAddItem = async (e) => {
         e.preventDefault();
-        setError("");
 
         const hasService = Boolean(itemForm.service);
         const hasPresentation = Boolean(itemForm.presentation);
 
         if (!hasService && !hasPresentation) {
-            setError("Selecciona un servicio o una presentación");
+            toast.error("Selecciona un servicio o una presentación");
             return;
         }
 
@@ -174,43 +193,58 @@ const Billing = () => {
         };
 
         try {
-            await addInvoiceItem(selectedInvoice.id, payload);
-            const updated = await getInvoice(selectedInvoice.id);
-            setSelectedInvoice(updated);
-            setItemForm(EMPTY_ITEM);
-            setItemMode(null);
-            loadInvoices();
-        } catch (err) {
-            const detail = err.response?.data;
-            if (Array.isArray(detail)) {
-                setError(detail.join("; "));
-            } else if (typeof detail === 'object') {
-                setError(Object.values(detail).flat().join("; "));
-            } else {
-                setError("Error al agregar ítem");
-            }
-        }
+            const p = addInvoiceItem(selectedInvoice.id, payload)
+                .then(() => getInvoice(selectedInvoice.id))
+                .then(updated => {
+                    setSelectedInvoice(updated);
+                    setItemForm(EMPTY_ITEM);
+                    setItemMode(null);
+                    loadInvoices();
+                });
+            await toast.promise(p, {
+                loading: 'Agregando ítem...',
+                success: 'Ítem agregado',
+                error: (err) => {
+                    const detail = err.response?.data;
+                    if (Array.isArray(detail)) return detail.join("; ");
+                    if (typeof detail === 'object') return Object.values(detail).flat().join("; ");
+                    return "Error al agregar ítem";
+                }
+            });
+        } catch (err) {}
     };
 
     const handleDeleteItem = async (itemId) => {
         const ok = await confirm({ message: "¿Eliminar este ítem de la factura?", confirmText: "Eliminar", dangerMode: true });
         if (!ok) return;
         try {
-            await deleteInvoiceItem(selectedInvoice.id, itemId);
-            const updated = await getInvoice(selectedInvoice.id);
-            setSelectedInvoice(updated);
-            loadInvoices();
-        } catch (err) {
-            setError("Error al eliminar ítem");
-        }
+            const p = deleteInvoiceItem(selectedInvoice.id, itemId)
+                .then(() => getInvoice(selectedInvoice.id))
+                .then(updated => {
+                    setSelectedInvoice(updated);
+                    loadInvoices();
+                });
+            await toast.promise(p, {
+                loading: 'Eliminando ítem...',
+                success: 'Ítem eliminado',
+                error: 'Error al eliminar ítem'
+            });
+        } catch (err) {}
     };
 
     const handleTaxRateChange = async (taxRate) => {
         try {
-            await updateInvoice(selectedInvoice.id, { tax_rate: taxRate });
-            const updated = await getInvoice(selectedInvoice.id);
-            setSelectedInvoice(updated);
-            loadInvoices();
+            const p = updateInvoice(selectedInvoice.id, { tax_rate: taxRate })
+                .then(() => getInvoice(selectedInvoice.id))
+                .then(updated => {
+                    setSelectedInvoice(updated);
+                    loadInvoices();
+                });
+            await toast.promise(p, {
+                loading: 'Actualizando...',
+                success: 'IVA actualizado',
+                error: 'Error al actualizar IVA'
+            });
         } catch (err) {
             console.log(err);
         }
@@ -218,36 +252,29 @@ const Billing = () => {
 
     const handleServiceSubmit = async (e) => {
         e.preventDefault();
-        setError("");
-        if (!serviceForm.name.trim()) { setError("El nombre es obligatorio"); return; }
-        if (!serviceForm.base_price || Number(serviceForm.base_price) < 0) { setError("El precio es obligatorio"); return; }
+        if (!serviceForm.name.trim()) { toast.error("El nombre es obligatorio"); return; }
+        if (!serviceForm.base_price || Number(serviceForm.base_price) < 0) { toast.error("El precio es obligatorio"); return; }
         try {
-            if (editingService) {
-                await updateService(editingService.id, serviceForm);
-                setSuccess("Servicio actualizado");
-            } else {
-                await createService(serviceForm);
-                setSuccess("Servicio creado");
-            }
+            const p = editingService ? updateService(editingService.id, serviceForm) : createService(serviceForm);
+            await toast.promise(p, {
+                loading: editingService ? 'Actualizando...' : 'Creando...',
+                success: editingService ? 'Servicio actualizado' : 'Servicio creado',
+                error: (err) => apiError(err, "Error al guardar")
+            });
             const srvs = await getServices();
             setServices(srvs);
             closeServiceModal();
-        } catch (err) {
-            setError(apiError(err, "Error al guardar"));
-        }
+        } catch (err) {}
     };
 
     const handleDeleteService = async (id) => {
         const ok = await confirm({ message: "¿Eliminar este servicio del catálogo?", confirmText: "Eliminar", dangerMode: true });
         if (!ok) return;
         try {
-            await deleteService(id);
-            setSuccess("Servicio eliminado");
+            await toast.promise(deleteService(id), { loading: 'Eliminando...', success: 'Servicio eliminado', error: 'Error al eliminar' });
             const srvs = await getServices();
             setServices(srvs);
-        } catch (err) {
-            setError("Error al eliminar");
-        }
+        } catch (err) {}
     };
 
     const onServiceSelect = (serviceId) => {
@@ -263,14 +290,12 @@ const Billing = () => {
         setShowServiceModal(false);
         setEditingService(null);
         setServiceForm(EMPTY_SERVICE);
-        setError("");
     };
 
     const closeDetailModal = () => {
         setShowDetailModal(false);
         setSelectedInvoice(null);
         setItemMode(null);
-        setError("");
     };
 
     const formatDate = (dateString) => {
@@ -296,19 +321,6 @@ const Billing = () => {
                 <h1 className="page-title">Cobros</h1>
             </div>
 
-            {error && (
-                <div className="alert alert-danger">
-                    {error}
-                    <button className="alert-close" onClick={() => setError("")}><Icon.X s={14} /></button>
-                </div>
-            )}
-            {success && (
-                <div className="alert alert-success">
-                    {success}
-                    <button className="alert-close" onClick={() => setSuccess("")}><Icon.X s={14} /></button>
-                </div>
-            )}
-
             {/* Header with filter and new invoice button */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px", gap: "20px", flexWrap: "wrap" }}>
                 <div>
@@ -328,7 +340,9 @@ const Billing = () => {
                     <button
                         className="btn btn-primary"
                         onClick={() => {
-                            setNewInvoiceForm({ owner: "", pet: "", invoice_type: "direct_sale" });
+                            setNewInvoiceOwner(null);
+                            setNewInvoicePet(null);
+                            setNewInvoiceType("direct_sale");
                             setShowNewInvoiceModal(true);
                         }}
                     >
@@ -414,7 +428,6 @@ const Billing = () => {
                             <button className="modal-close" onClick={closeDetailModal}><Icon.X s={16} /></button>
                         </div>
                         <div className="modal-body">
-                            {error && <div className="alert alert-danger">{error}</div>}
 
                             {/* Patient info */}
                             <div style={{
@@ -519,8 +532,10 @@ const Billing = () => {
                                     >
                                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "10px" }}>
                                             <div>
-                                                <label className="form-label">SERVICIO *</label>
+                                                <label className="form-label" htmlFor="billing-service">SERVICIO *</label>
                                                 <select
+                                                    id="billing-service"
+                                                    name="billing-service"
                                                     className="select-input"
                                                     value={itemForm.service}
                                                     onChange={e => setItemForm(f => ({ ...f, service: e.target.value, presentation: "" }))}
@@ -535,16 +550,20 @@ const Billing = () => {
                                                 </select>
                                             </div>
                                             <div>
-                                                <label className="form-label">CANTIDAD</label>
+                                                <label className="form-label" htmlFor="billing-service-quantity">CANTIDAD</label>
                                                 <input
+                                                    id="billing-service-quantity"
+                                                    name="billing-service-quantity"
                                                     type="number" min="0.01" step="0.01" className="input"
                                                     value={itemForm.quantity}
                                                     onChange={e => setItemForm(f => ({ ...f, quantity: e.target.value }))}
                                                 />
                                             </div>
                                             <div>
-                                                <label className="form-label">DESCUENTO (opcional)</label>
+                                                <label className="form-label" htmlFor="billing-service-discount-type">DESCUENTO (opcional)</label>
                                                 <select
+                                                    id="billing-service-discount-type"
+                                                    name="billing-service-discount-type"
                                                     className="select-input"
                                                     value={itemForm.discount_type}
                                                     onChange={e => setItemForm(f => ({ ...f, discount_type: e.target.value, discount_value: "" }))}
@@ -556,10 +575,12 @@ const Billing = () => {
                                             </div>
                                             {itemForm.discount_type && (
                                                 <div>
-                                                    <label className="form-label">
+                                                    <label className="form-label" htmlFor="billing-service-discount-value">
                                                         {itemForm.discount_type === "percentage" ? "PORCENTAJE" : "MONTO A DESCONTAR"}
                                                     </label>
                                                     <input
+                                                        id="billing-service-discount-value"
+                                                        name="billing-service-discount-value"
                                                         type="number" min="0.01" step="0.01" className="input"
                                                         value={itemForm.discount_value}
                                                         onChange={e => setItemForm(f => ({ ...f, discount_value: e.target.value }))}
@@ -625,15 +646,19 @@ const Billing = () => {
                                     >
                                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "10px" }}>
                                             <div>
-                                                <label className="form-label">PRESENTACIÓN *</label>
+                                                <label className="form-label" htmlFor="billing-presentation">PRESENTACIÓN *</label>
                                                 <select
+                                                    id="billing-presentation"
+                                                    name="billing-presentation"
                                                     className="select-input"
                                                     value={itemForm.presentation}
                                                     onChange={e => setItemForm(f => ({ ...f, presentation: e.target.value, service: "" }))}
                                                     required
                                                 >
                                                     <option value="">— Seleccionar producto —</option>
-                                                    {presentations.map(p => (
+                                                    {presentations
+                                                        .filter(p => !selectedInvoice?.items?.some(i => i.presentation === p.id))
+                                                        .map(p => (
                                                         <option key={p.id} value={p.id} disabled={p.stock <= 0}>
                                                             {p.product_name} — {p.name}
                                                             {p.stock <= 0 ? ' (sin stock)' : ` ($${formatCurrency(p.sale_price)} | stock: ${p.stock})`}
@@ -642,16 +667,20 @@ const Billing = () => {
                                                 </select>
                                             </div>
                                             <div>
-                                                <label className="form-label">CANTIDAD</label>
+                                                <label className="form-label" htmlFor="billing-product-quantity">CANTIDAD</label>
                                                 <input
+                                                    id="billing-product-quantity"
+                                                    name="billing-product-quantity"
                                                     type="number" min="0.01" step="0.01" className="input"
                                                     value={itemForm.quantity}
                                                     onChange={e => setItemForm(f => ({ ...f, quantity: e.target.value }))}
                                                 />
                                             </div>
                                             <div>
-                                                <label className="form-label">DESCUENTO (opcional)</label>
+                                                <label className="form-label" htmlFor="billing-product-discount-type">DESCUENTO (opcional)</label>
                                                 <select
+                                                    id="billing-product-discount-type"
+                                                    name="billing-product-discount-type"
                                                     className="select-input"
                                                     value={itemForm.discount_type}
                                                     onChange={e => setItemForm(f => ({ ...f, discount_type: e.target.value, discount_value: "" }))}
@@ -663,10 +692,12 @@ const Billing = () => {
                                             </div>
                                             {itemForm.discount_type && (
                                                 <div>
-                                                    <label className="form-label">
+                                                    <label className="form-label" htmlFor="billing-product-discount-value">
                                                         {itemForm.discount_type === "percentage" ? "PORCENTAJE" : "MONTO A DESCONTAR"}
                                                     </label>
                                                     <input
+                                                        id="billing-product-discount-value"
+                                                        name="billing-product-discount-value"
                                                         type="number" min="0.01" step="0.01" className="input"
                                                         value={itemForm.discount_value}
                                                         onChange={e => setItemForm(f => ({ ...f, discount_value: e.target.value }))}
@@ -720,6 +751,54 @@ const Billing = () => {
                                     </form>
                                 )}
                             </div>
+
+                            {/* Productos recetados disponibles */}
+                            {selectedInvoice.status === "draft" && (() => {
+                                const pendingSuggestions = (selectedInvoice.prescription_suggestions || []).filter(
+                                    s => !selectedInvoice.items.some(i => i.presentation === s.presentation_id)
+                                );
+                                if (pendingSuggestions.length === 0) return null;
+                                return (
+                                    <div style={{
+                                        border: "1px solid #bfdbfe",
+                                        borderRadius: "var(--r-lg)",
+                                        padding: "12px 14px",
+                                        marginBottom: "14px",
+                                        background: "#eff6ff",
+                                    }}>
+                                        <p style={{ fontWeight: "600", fontSize: "12.5px", color: "#1d4ed8", marginBottom: "8px" }}>
+                                            Productos recetados — el cliente decide cuáles lleva
+                                        </p>
+                                        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                                            {pendingSuggestions.map(s => (
+                                                <div key={s.prescription_item_id} style={{
+                                                    display: "flex", alignItems: "center",
+                                                    justifyContent: "space-between",
+                                                    background: "#fff", borderRadius: "var(--r-md)",
+                                                    padding: "7px 10px",
+                                                    border: "1px solid #dbeafe",
+                                                }}>
+                                                    <div>
+                                                        <span style={{ fontWeight: "600", fontSize: "13px" }}>
+                                                            {s.product_name}
+                                                        </span>
+                                                        <span style={{ color: "var(--c-text-3)", fontSize: "11.5px", marginLeft: "8px" }}>
+                                                            Dosis: {s.dose} · Cant: {s.suggested_quantity} · ${s.unit_price}
+                                                        </span>
+                                                    </div>
+                                                    <button
+                                                        className="btn btn-sm"
+                                                        style={{ background: "#1d4ed8", color: "#fff", borderColor: "transparent", minWidth: "70px" }}
+                                                        onClick={() => handleAddPrescriptionSuggestion(s)}
+                                                    >
+                                                        Agregar
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                );
+                            })()}
 
                             {/* Totals */}
                             <div style={{ borderTop: "1px solid var(--c-border)", paddingTop: "14px", marginBottom: "8px" }}>
@@ -815,8 +894,8 @@ const Billing = () => {
                             <button className="modal-close" onClick={() => setShowPayModal(false)}><Icon.X s={16} /></button>
                         </div>
                         <div className="modal-body">
-                            <div className="form-group">
-                                <label className="form-label">MÉTODO DE PAGO</label>
+                            <fieldset className="form-group" style={{ border: "none", margin: 0, padding: 0 }}>
+                                <legend className="form-label">MÉTODO DE PAGO</legend>
                                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
                                     {PAYMENT_METHODS.map(m => (
                                         <button
@@ -829,7 +908,7 @@ const Billing = () => {
                                         </button>
                                     ))}
                                 </div>
-                            </div>
+                            </fieldset>
                             <p style={{ fontSize: "13px", color: "var(--c-text-2)" }}>
                                 Total a cobrar:{" "}
                                 <strong style={{ color: "var(--c-success-text)", fontSize: "16px" }}>
@@ -862,50 +941,57 @@ const Billing = () => {
                             <button className="modal-close" onClick={() => setShowNewInvoiceModal(false)}><Icon.X s={16} /></button>
                         </div>
                         <div className="modal-body">
-                            {error && <div className="alert alert-danger">{error}</div>}
 
-                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px", marginBottom: "20px" }}>
+                            {genericOwner && (
+                            <button
+                                type="button"
+                                className="btn btn-secondary btn-sm"
+                                style={{ marginBottom: "16px" }}
+                                onClick={() => {
+                                    setNewInvoiceOwner({ id: genericOwner.id, label: genericOwner.name });
+                                    setNewInvoicePet(null);
+                                    setNewInvoiceType("direct_sale");
+                                }}
+                            >
+                                Venta a público general
+                            </button>
+                        )}
+
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px", marginBottom: "20px" }}>
                                 <div>
-                                    <label className="label">Propietario</label>
-                                    <select
-                                        className="input"
-                                        value={newInvoiceForm.owner}
-                                        onChange={e => setNewInvoiceForm(f => ({ ...f, owner: e.target.value }))}
-                                    >
-                                        <option value="">— Seleccionar propietario —</option>
-                                        {owners.map(o => (
-                                            <option key={o.id} value={o.id}>{o.name}</option>
-                                        ))}
-                                    </select>
+                                    <label className="label" htmlFor="new-invoice-owner">Propietario</label>
+                                    <SearchSelect
+                                        id="new-invoice-owner"
+                                        name="new-invoice-owner"
+                                        value={newInvoiceOwner}
+                                        onChange={item => { setNewInvoiceOwner(item); setNewInvoicePet(null); }}
+                                        onSearch={q => getOwners({ search: q }).then(os => os.filter(o => !o.is_generic).map(o => ({ id: o.id, label: o.name })))}
+                                        placeholder="Buscar propietario..."
+                                    />
                                 </div>
 
                                 <div>
-                                    <label className="label">Mascota</label>
-                                    <select
-                                        className="input"
-                                        value={newInvoiceForm.pet}
-                                        onChange={e => setNewInvoiceForm(f => ({ ...f, pet: e.target.value }))}
-                                        disabled={!newInvoiceForm.owner}
-                                    >
-                                        <option value="">— Seleccionar mascota —</option>
-                                        {pets
-                                            .filter(p => {
-                                                if (!newInvoiceForm.owner) return true;
-                                                return parseInt(p.owner_id) === parseInt(newInvoiceForm.owner);
-                                            })
-                                            .map(p => (
-                                                <option key={p.id} value={p.id}>{p.name}</option>
-                                            ))}
-                                    </select>
+                                    <label className="label" htmlFor="new-invoice-pet">Mascota {newInvoiceOwner?.id === genericOwner?.id ? "(no requerida)" : "*"}</label>
+                                    <SearchSelect
+                                        id="new-invoice-pet"
+                                        name="new-invoice-pet"
+                                        value={newInvoicePet}
+                                        onChange={item => setNewInvoicePet(item)}
+                                        onSearch={q => getPets({ search: q, owner: newInvoiceOwner?.id }).then(ps => ps.map(p => ({ id: p.id, label: p.name })))}
+                                        placeholder={newInvoiceOwner ? "Buscar mascota..." : "Selecciona propietario primero"}
+                                        disabled={!newInvoiceOwner || newInvoiceOwner?.id === genericOwner?.id}
+                                    />
                                 </div>
                             </div>
 
                             <div>
-                                <label className="label">Tipo de Factura</label>
+                                <label className="label" htmlFor="new-invoice-type">Tipo de Factura</label>
                                 <select
+                                    id="new-invoice-type"
+                                    name="new-invoice-type"
                                     className="input"
-                                    value={newInvoiceForm.invoice_type}
-                                    onChange={e => setNewInvoiceForm(f => ({ ...f, invoice_type: e.target.value }))}
+                                    value={newInvoiceType}
+                                    onChange={e => setNewInvoiceType(e.target.value)}
                                 >
                                     <option value="direct_sale">Venta directa</option>
                                     <option value="consultation">Consulta</option>
@@ -923,17 +1009,25 @@ const Billing = () => {
                                 className="btn btn-primary"
                                 onClick={async () => {
                                     try {
-                                        setError("");
-                                        const newInv = await createInvoice({
-                                            owner: parseInt(newInvoiceForm.owner),
-                                            pet: parseInt(newInvoiceForm.pet),
-                                            invoice_type: newInvoiceForm.invoice_type,
+                                        if (!newInvoiceOwner) { toast.error("Selecciona un propietario"); return; }
+                                        const isGeneric = newInvoiceOwner?.id === genericOwner?.id;
+                                        if (!isGeneric && !newInvoicePet) { toast.error("Selecciona una mascota"); return; }
+                                        const p = createInvoice({
+                                            owner: newInvoiceOwner.id,
+                                            pet: isGeneric ? undefined : newInvoicePet.id,
+                                            invoice_type: newInvoiceType,
+                                        }).then(async (newInv) => {
+                                            setShowNewInvoiceModal(false);
+                                            await loadInvoices();
+                                            await openInvoiceDetail(newInv);
                                         });
-                                        setShowNewInvoiceModal(false);
-                                        await loadInvoices();
-                                        await openInvoiceDetail(newInv);
+
+                                        await toast.promise(p, {
+                                            loading: 'Creando factura...',
+                                            success: 'Factura creada',
+                                            error: (err) => err.response?.data?.detail || "Error al crear factura"
+                                        });
                                     } catch (err) {
-                                        setError(err.response?.data?.detail || "Error al crear factura");
                                     }
                                 }}
                             >

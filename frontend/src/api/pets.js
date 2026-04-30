@@ -1,9 +1,7 @@
 import api from "./client";
 
-export const getPets = async (token) => {
-    const res = await api.get("pets/");
-    return res.data;
-};
+export const getPets = (params = {}) =>
+    api.get("pets/", { params }).then(r => r.data);
 
 export const getPet = async (id) => {
     const res = await api.get(`pets/${id}/`);
@@ -25,8 +23,6 @@ export const deletePet = async (token, id) => {
     return res.data;
 };
 
-export const getOwners = async () => {
-    const res = await api.get("owners/");
-    return res.data;
-};
+export const getOwners = (params = {}) =>
+    api.get("owners/", { params }).then(r => r.data);
 

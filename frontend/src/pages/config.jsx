@@ -1,10 +1,40 @@
 import { useEffect, useState } from "react";
 import { getServices, createService, updateService, deleteService } from "../api/billing";
+import { getOrgSettings, updateOrgSettings } from "../api/organizations";
 import { apiError } from "../utils/apiError";
 import { useAuth } from "../auth/authContext";
 import { Icon } from "../components/icons";
+import { toast } from "sonner";
 
 const EMPTY_SERVICE = { name: "", description: "", base_price: "", is_active: true };
+
+const FLOW_TOGGLES = [
+    {
+        key: "auto_create_invoice_on_done",
+        label: "Crear factura automática al completar cita",
+        description: "Al marcar una cita como completada, se genera una factura en borrador automáticamente.",
+    },
+    {
+        key: "require_confirmation_before_start",
+        label: "Requerir confirmación antes de iniciar consulta",
+        description: "No se puede pasar a 'En consulta' sin pasar primero por 'Confirmada'.",
+    },
+    {
+        key: "auto_create_medical_record",
+        label: "Crear historial clínico automático al completar cita",
+        description: "Al completar una cita, se abre un historial clínico vacío listo para que el veterinario lo llene.",
+    },
+    {
+        key: "allow_anonymous_walkin",
+        label: "Permitir walk-in sin mascota registrada",
+        description: "Permite registrar una consulta sin seleccionar mascota, usando el paciente anónimo genérico.",
+    },
+    {
+        key: "show_status_change_history",
+        label: "Mostrar historial de cambios de estado en citas",
+        description: "Muestra un registro de cada cambio de estado en el detalle de la cita.",
+    },
+];
 
 const Config = () => {
     const { token, user, initializing } = useAuth();
@@ -13,11 +43,15 @@ const Config = () => {
     const [showModal, setShowModal] = useState(false);
     const [editingService, setEditingService] = useState(null);
     const [form, setForm] = useState(EMPTY_SERVICE);
-    const [error, setError] = useState("");
-    const [success, setSuccess] = useState("");
+
+    const [orgSettings, setOrgSettings] = useState(null);
+    const [savingToggle, setSavingToggle] = useState(null);
 
     useEffect(() => {
-        if (token) loadServices();
+        if (token) {
+            loadServices();
+            getOrgSettings().then(setOrgSettings).catch(err => console.error('[Config] OrgSettings error:', err?.response?.status, err?.response?.data));
+        }
     }, [token]);
 
     const loadServices = async () => {
@@ -32,34 +66,48 @@ const Config = () => {
         }
     };
 
+    const handleToggle = async (key, value) => {
+        setSavingToggle(key);
+        try {
+            const updated = await updateOrgSettings({ [key]: value });
+            setOrgSettings(updated);
+            toast.success("Configuración guardada");
+        } catch {
+            toast.error("Error al guardar configuración");
+        } finally {
+            setSavingToggle(null);
+        }
+    };
+
     const handleSubmit = async (e) => {
         e.preventDefault();
-        setError("");
-        if (!form.name.trim()) { setError("El nombre es obligatorio"); return; }
-        if (!form.base_price || Number(form.base_price) < 0) { setError("El precio es obligatorio"); return; }
+        const normalizedName = form.name.trim().replace(/\b\w/g, c => c.toUpperCase());
+        if (!normalizedName) { toast.error("El nombre es obligatorio"); return; }
+        if (!form.base_price || Number(form.base_price) < 0) { toast.error("El precio es obligatorio"); return; }
+        const form_ = { ...form, name: normalizedName };
         try {
-            if (editingService) {
-                await updateService(editingService.id, form);
-                setSuccess("Servicio actualizado");
-            } else {
-                await createService(form);
-                setSuccess("Servicio creado");
-            }
+            const p = editingService ? updateService(editingService.id, form_) : createService(form_);
+            await toast.promise(p, {
+                loading: editingService ? 'Actualizando...' : 'Creando...',
+                success: editingService ? 'Servicio actualizado' : 'Servicio creado',
+                error: (err) => apiError(err, "Error al guardar"),
+            });
             loadServices();
             closeModal();
         } catch (err) {
-            setError(apiError(err, "Error al guardar"));
         }
     };
 
     const handleDelete = async (id) => {
         if (!confirm("¿Eliminar este servicio?")) return;
         try {
-            await deleteService(id);
-            setSuccess("Servicio eliminado");
+            await toast.promise(deleteService(id), {
+                loading: 'Eliminando...',
+                success: 'Servicio eliminado',
+                error: 'No se puede eliminar: puede estar en uso en facturas'
+            });
             loadServices();
         } catch (err) {
-            setError("No se puede eliminar: puede estar en uso en facturas");
         }
     };
 
@@ -73,7 +121,6 @@ const Config = () => {
         setShowModal(false);
         setEditingService(null);
         setForm(EMPTY_SERVICE);
-        setError("");
     };
 
     const formatCurrency = (amount) => Number(amount || 0).toFixed(2);
@@ -97,16 +144,43 @@ const Config = () => {
                 </div>
             </div>
 
-            {error && (
-                <div className="alert alert-danger">
-                    {error}
-                    <button className="alert-close" onClick={() => setError("")}><Icon.X s={14} /></button>
-                </div>
-            )}
-            {success && (
-                <div className="alert alert-success">
-                    {success}
-                    <button className="alert-close" onClick={() => setSuccess("")}><Icon.X s={14} /></button>
+            {/* Flujo Clínico */}
+            {orgSettings !== null && (
+                <div className="card" style={{ marginBottom: "20px" }}>
+                    <div style={{ marginBottom: "18px" }}>
+                        <p style={{ fontWeight: "600", fontSize: "14px", marginBottom: "3px" }}>Flujo Clínico</p>
+                        <p style={{ fontSize: "12.5px", color: "var(--c-text-2)" }}>
+                            Comportamiento automático de citas y consultas en tu organización
+                        </p>
+                    </div>
+                    <div style={{ display: "grid", gap: "12px" }}>
+                        {FLOW_TOGGLES.map(({ key, label, description }) => (
+                            <div
+                                key={key}
+                                style={{
+                                    display: "flex", justifyContent: "space-between", alignItems: "flex-start",
+                                    padding: "12px 14px", border: "1px solid var(--c-border)",
+                                    borderRadius: "var(--r-md)",
+                                    opacity: savingToggle === key ? 0.6 : 1,
+                                    transition: "opacity 0.15s",
+                                }}
+                            >
+                                <div style={{ flex: 1, marginRight: "16px" }}>
+                                    <p style={{ fontWeight: "600", fontSize: "13.5px", marginBottom: "2px" }}>{label}</p>
+                                    <p style={{ fontSize: "12px", color: "var(--c-text-3)" }}>{description}</p>
+                                </div>
+                                <label style={{ display: "flex", alignItems: "center", cursor: "pointer", flexShrink: 0 }}>
+                                    <input
+                                        type="checkbox"
+                                        checked={!!orgSettings[key]}
+                                        disabled={savingToggle === key || !canManage}
+                                        onChange={e => handleToggle(key, e.target.checked)}
+                                        style={{ width: "16px", height: "16px", cursor: "pointer" }}
+                                    />
+                                </label>
+                            </div>
+                        ))}
+                    </div>
                 </div>
             )}
 
@@ -184,21 +258,22 @@ const Config = () => {
                         </div>
                         <div className="modal-body">
                             <form onSubmit={handleSubmit}>
-                                {error && <div className="alert alert-danger">{error}</div>}
-
                                 <div className="form-group">
-                                    <label className="form-label">NOMBRE *</label>
+                                    <label className="form-label" htmlFor="service-name">NOMBRE *</label>
                                     <input
+                                        id="service-name"
+                                        name="service-name"
                                         className="input"
                                         value={form.name}
                                         onChange={e => setForm({ ...form, name: e.target.value })}
                                         placeholder="Ej: Consulta general"
                                     />
                                 </div>
-
                                 <div className="form-group">
-                                    <label className="form-label">PRECIO BASE *</label>
+                                    <label className="form-label" htmlFor="service-price">PRECIO BASE *</label>
                                     <input
+                                        id="service-price"
+                                        name="service-price"
                                         type="number"
                                         step="0.01"
                                         min="0"
@@ -208,10 +283,11 @@ const Config = () => {
                                         placeholder="0.00"
                                     />
                                 </div>
-
                                 <div className="form-group">
-                                    <label className="form-label">DESCRIPCIÓN</label>
+                                    <label className="form-label" htmlFor="service-description">DESCRIPCIÓN</label>
                                     <textarea
+                                        id="service-description"
+                                        name="service-description"
                                         className="textarea-input"
                                         style={{ minHeight: "60px" }}
                                         value={form.description}
@@ -219,10 +295,11 @@ const Config = () => {
                                         placeholder="Descripción opcional..."
                                     />
                                 </div>
-
                                 <div className="form-group">
                                     <label className="checkbox-label">
                                         <input
+                                            id="service-active"
+                                            name="service-active"
                                             type="checkbox"
                                             checked={form.is_active}
                                             onChange={e => setForm({ ...form, is_active: e.target.checked })}

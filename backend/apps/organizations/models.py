@@ -28,6 +28,20 @@ class Organization(models.Model):
         return self.name
 
 
+class OrganizationSettings(models.Model):
+    organization = models.OneToOneField(
+        Organization, on_delete=models.CASCADE, related_name='settings'
+    )
+    auto_create_medical_record = models.BooleanField(default=True)
+    auto_create_invoice_on_done = models.BooleanField(default=True)
+    require_confirmation_before_start = models.BooleanField(default=False)
+    allow_anonymous_walkin = models.BooleanField(default=False)
+    show_status_change_history = models.BooleanField(default=True)
+
+    def __str__(self):
+        return f"Settings — {self.organization.name}"
+
+
 class OrganizationTimezoneAudit(models.Model):
     organization = models.ForeignKey(
         Organization,

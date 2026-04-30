@@ -2,6 +2,7 @@ import { useState } from "react";
 import { loginRequest, getMe } from "../auth/login";
 import { useAuth } from "../auth/authContext";
 import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
 import s from "./login.module.css";
 
 const Login = () => {
@@ -10,7 +11,6 @@ const Login = () => {
 
     const [form, setForm] = useState({ username: "", password: "" });
     const [showPassword, setShowPassword] = useState(false);
-    const [error, setError] = useState("");
     const [loading, setLoading] = useState(false);
 
     if (initializing) {
@@ -23,7 +23,6 @@ const Login = () => {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        setError("");
         setLoading(true);
         try {
             const data = await loginRequest(form.username, form.password);
@@ -33,9 +32,9 @@ const Login = () => {
             navigate("/");
         } catch (err) {
             if (err.response?.status === 401) {
-                setError("Usuario o contraseña incorrectos.");
+                toast.error("Usuario o contraseña incorrectos.");
             } else {
-                setError("Error de conexión. Verifica tu internet e intenta de nuevo.");
+                toast.error("Error de conexión. Verifica tu internet e intenta de nuevo.");
             }
         } finally {
             setLoading(false);
@@ -76,8 +75,6 @@ const Login = () => {
                 <p className={s.cardSub}>
                     Accede a tu panel para gestionar citas, pacientes y tu equipo.
                 </p>
-
-                {error && <div className={s.errorAlert}>{error}</div>}
 
                 <form onSubmit={handleSubmit}>
                     {/* Usuario */}

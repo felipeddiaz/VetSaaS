@@ -41,16 +41,13 @@ class Presentation(OrganizationalModel):
         ('unit', 'Unidad'),
     ]
 
-    product = models.OneToOneField(
+    product = models.ForeignKey(
         Product,
         on_delete=models.CASCADE,
-        related_name='presentation',
+        related_name='presentations',
     )
     name = models.CharField(max_length=255)
     base_unit = models.CharField(max_length=20, choices=UNIT_CHOICES)
-    # quantity: cantidad por unidad de esta presentación (default 1).
-    # Existe para escalar a Fase 3 (múltiples presentaciones con conversión).
-    # En Fase 1 no se usa en lógica — siempre vale 1.
     quantity = models.DecimalField(max_digits=10, decimal_places=2, default=1)
     sale_price = models.DecimalField(max_digits=10, decimal_places=2)
     stock = models.DecimalField(max_digits=10, decimal_places=2, default=0)
@@ -64,7 +61,12 @@ class Presentation(OrganizationalModel):
         return f"{self.product.name} — {self.name}"
 
     class Meta:
-        ordering = ['product__name']
+        ordering = ['product__name', 'name']
+        unique_together = [('product', 'name')]
+        indexes = [
+            models.Index(fields=['product']),
+            models.Index(fields=['stock']),
+        ]
         constraints = [
             models.CheckConstraint(
                 condition=models.Q(stock__gte=0),

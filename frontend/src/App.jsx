@@ -18,6 +18,7 @@ import NotFound from "./pages/notFound";
 import ErrorBoundary from "./components/ErrorBoundary";
 import FeedbackButton from "./components/FeedbackButton";
 import { ConfirmProvider } from "./components/ConfirmDialog";
+import { Toaster } from "sonner";
 
 const LoadingScreen = () => (
   <div style={{
@@ -79,6 +80,7 @@ function App() {
             <AppContent />
           </ErrorBoundary>
         </ConfirmProvider>
+        <Toaster richColors position="top-right" toastOptions={{ duration: 4000 }} visibleToasts={3} />
       </AuthProvider>
     </BrowserRouter>
   );

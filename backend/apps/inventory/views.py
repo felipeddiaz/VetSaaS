@@ -22,6 +22,7 @@ from .models import Product, Presentation, StockMovement, MedicalRecordProduct
 from .serializers import (
     ProductSerializer,
     PresentationSerializer,
+    PresentationCreateSerializer,
     StockMovementSerializer,
     StockAdjustmentSerializer,
     MedicalRecordProductSerializer,
@@ -40,10 +41,22 @@ class ProductListCreateView(TenantQueryMixin, generics.ListCreateAPIView):
         queryset = (
             Product.objects
             .for_organization(self.request.user.organization)
-            .select_related('presentation')
+            .prefetch_related('presentations')
         )
         if self.request.query_params.get('active') == 'true':
             queryset = queryset.filter(is_active=True)
+        # Filter by category with stock > 0 (for prescription autocomplete)
+        category = self.request.query_params.get('category')
+        if category:
+            queryset = queryset.filter(category=category)
+        stock_gt = self.request.query_params.get('stock__gt')
+        if stock_gt is not None:
+            try:
+                queryset = queryset.filter(
+                    presentations__stock__gt=float(stock_gt)
+                ).distinct()
+            except ValueError:
+                pass
         return queryset
 
     def perform_create(self, serializer):
@@ -59,22 +72,23 @@ class ProductDetailView(TenantQueryMixin, generics.RetrieveUpdateDestroyAPIView)
         return (
             Product.objects
             .for_organization(self.request.user.organization)
-            .select_related('presentation')
+            .prefetch_related('presentations')
         )
 
 
 @api_view(['GET'])
 @permission_classes([make_permission("inventory.list")])
 def low_stock_products(request):
-    """Productos activos cuyo stock <= min_stock. Filtrado a nivel DB."""
+    """Productos activos cuyo al menos una presentación tiene stock <= min_stock."""
     products = (
         Product.objects
         .filter(
             organization=request.user.organization,
             is_active=True,
-            presentation__stock__lte=F('presentation__min_stock'),
+            presentations__stock__lte=F('presentations__min_stock'),
         )
-        .select_related('presentation')
+        .prefetch_related('presentations')
+        .distinct()
     )
     return Response(ProductSerializer(products, many=True).data)
 
@@ -82,19 +96,20 @@ def low_stock_products(request):
 @api_view(['POST'])
 @permission_classes([make_permission("inventory.update")])
 def adjust_stock(request, pk):
-    """Ajuste manual de stock (entrada, salida o corrección)."""
+    """Ajuste de stock para la primera presentación de un producto (backward compat)."""
     from django.core.exceptions import ValidationError as DjValidationError
     from .services import apply_stock_movement
 
     product = get_object_or_404(
-        Product.objects.select_related('presentation'),
+        Product.objects.prefetch_related('presentations'),
         pk=pk,
         organization=request.user.organization,
     )
 
-    if not hasattr(product, 'presentation'):
+    presentation = product.presentations.first()
+    if presentation is None:
         return Response(
-            {'error': 'Este producto no tiene presentación configurada.'},
+            {'error': 'Este producto no tiene presentaciones configuradas.'},
             status=status.HTTP_400_BAD_REQUEST,
         )
 
@@ -109,7 +124,7 @@ def adjust_stock(request, pk):
 
     try:
         apply_stock_movement(
-            presentation=product.presentation,
+            presentation=presentation,
             quantity=quantity,
             movement_type=movement_type,
             organization=request.user.organization,
@@ -121,6 +136,43 @@ def adjust_stock(request, pk):
 
     product.refresh_from_db()
     return Response(ProductSerializer(product).data)
+
+
+@api_view(['POST'])
+@permission_classes([make_permission("inventory.update")])
+def adjust_presentation_stock(request, pk):
+    """Ajuste de stock para una presentación específica."""
+    from django.core.exceptions import ValidationError as DjValidationError
+    from .services import apply_stock_movement
+
+    presentation = get_object_or_404(
+        Presentation.objects.select_related('product'),
+        pk=pk,
+        organization=request.user.organization,
+    )
+
+    serializer = StockAdjustmentSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+
+    movement_type = serializer.validated_data['movement_type']
+    quantity = serializer.validated_data['quantity']
+    reason = serializer.validated_data.get('reason', '')
+    if movement_type == 'adjustment' and not reason:
+        reason = f'Ajuste manual a {quantity}'
+
+    try:
+        apply_stock_movement(
+            presentation=presentation,
+            quantity=quantity,
+            movement_type=movement_type,
+            organization=request.user.organization,
+            reason=reason,
+            created_by=request.user,
+        )
+    except DjValidationError as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    return Response(PresentationSerializer(presentation).data)
 
 
 class StockMovementListView(TenantQueryMixin, generics.ListAPIView):
@@ -151,6 +203,81 @@ def unit_choices(request):
         {'value': key, 'label': label}
         for key, label in Presentation.UNIT_CHOICES
     ])
+
+
+class PresentationListView(TenantQueryMixin, generics.ListAPIView):
+    serializer_class = PresentationSerializer
+    permission_classes = [HybridPermission]
+    resource_name = "inventory"
+
+    def get_queryset(self):
+        qs = Presentation.objects.for_organization(
+            self.request.user.organization
+        ).filter(product__is_active=True).select_related('product')
+        category = self.request.query_params.get('product__category')
+        if category:
+            qs = qs.filter(product__category=category)
+        stock_gt = self.request.query_params.get('stock__gt')
+        if stock_gt is not None:
+            try:
+                qs = qs.filter(stock__gt=float(stock_gt))
+            except ValueError:
+                pass
+        search = self.request.query_params.get('search')
+        if search:
+            qs = qs.filter(product__name__icontains=search)
+        return qs.order_by('product__name', 'name').select_related('product')
+
+
+class PresentationCreateView(TenantQueryMixin, generics.CreateAPIView):
+    """Add a new presentation variant to an existing product."""
+    serializer_class = PresentationCreateSerializer
+    permission_classes = [HybridPermission]
+    resource_name = "inventory"
+
+    def perform_create(self, serializer):
+        product = get_object_or_404(
+            Product,
+            pk=self.kwargs['product_pk'],
+            organization=self.request.user.organization,
+        )
+        serializer.save(
+            product=product,
+            organization=self.request.user.organization,
+        )
+
+
+class PresentationDetailView(TenantQueryMixin, generics.RetrieveUpdateDestroyAPIView):
+    """Update or delete a specific presentation variant."""
+    serializer_class = PresentationCreateSerializer
+    permission_classes = [HybridPermission]
+    resource_name = "inventory"
+    http_method_names = ['get', 'patch', 'delete']
+
+    def get_queryset(self):
+        return Presentation.objects.for_organization(
+            self.request.user.organization
+        ).select_related('product')
+
+    def perform_destroy(self, instance):
+        with transaction.atomic():
+            pres = Presentation.objects.select_for_update().get(pk=instance.pk)
+            if pres.stock > 0:
+                raise ValidationError("No se puede eliminar una presentación con stock disponible.")
+            if StockMovement.objects.filter(presentation=pres).exists():
+                raise ValidationError(
+                    "No se puede eliminar: esta presentación tiene movimientos de stock registrados."
+                )
+            from apps.billing.models import InvoiceItem
+            if InvoiceItem.objects.filter(presentation=pres).exists():
+                raise ValidationError(
+                    "No se puede eliminar: esta presentación está referenciada en facturas."
+                )
+            if MedicalRecordProduct.objects.filter(presentation=pres).exists():
+                raise ValidationError(
+                    "No se puede eliminar: esta presentación fue usada en consultas médicas."
+                )
+            pres.delete()
 
 
 class MedicalRecordProductListCreateView(TenantQueryMixin, generics.ListCreateAPIView):
@@ -199,28 +326,41 @@ class MedicalRecordProductListCreateView(TenantQueryMixin, generics.ListCreateAP
             )
             self._assert_can_modify(medical_record)
             presentation = serializer.validated_data['presentation']
+            quantity = serializer.validated_data['quantity']
             if presentation.organization_id != self.request.user.organization_id:
                 raise ValidationError({'presentation': 'Presentación fuera de tu organización'})
-            mrp = serializer.save(medical_record=medical_record)
-            self._sync_invoice_item(mrp)
 
-    def _sync_invoice_item(self, mrp):
+            mrp = MedicalRecordProduct.objects.filter(
+                medical_record=medical_record,
+                presentation=presentation,
+            ).first()
+
+            if mrp is not None:
+                mrp.quantity += quantity
+                mrp.save()
+            else:
+                mrp = serializer.save(medical_record=medical_record)
+
+            self._sync_invoice_item(medical_record, presentation, quantity)
+
+    def _sync_invoice_item(self, medical_record, presentation, quantity_delta):
         from apps.billing.services import get_or_create_invoice_for_medical_record
         from apps.billing.models import InvoiceItem
-        invoice = get_or_create_invoice_for_medical_record(mrp.medical_record)
+
+        invoice = get_or_create_invoice_for_medical_record(medical_record)
         if invoice.status != 'draft':
             return
         item, created = InvoiceItem.objects.get_or_create(
             invoice=invoice,
-            presentation=mrp.presentation,
+            presentation=presentation,
             defaults={
-                'description': str(mrp.presentation),
-                'quantity': mrp.quantity,
-                'unit_price': mrp.presentation.sale_price,
+                'description': str(presentation),
+                'quantity': quantity_delta,
+                'unit_price': presentation.sale_price,
             }
         )
         if not created:
-            item.quantity += mrp.quantity
+            item.quantity += quantity_delta
             item.save()
 
 
@@ -287,14 +427,3 @@ class MedicalRecordProductDeleteView(generics.DestroyAPIView):
         else:
             item.quantity = new_quantity
             item.save()
-
-
-class PresentationListView(TenantQueryMixin, generics.ListAPIView):
-    serializer_class = PresentationSerializer
-    permission_classes = [HybridPermission]
-    resource_name = "inventory"
-
-    def get_queryset(self):
-        return Presentation.objects.for_organization(
-            self.request.user.organization
-        ).filter(product__is_active=True).select_related('product')

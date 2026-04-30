@@ -26,3 +26,23 @@ export const deleteAppointment = async (token, id) => {
     const res = await api.delete(`appointments/${id}/`);
     return res.data;
 };
+
+export const walkInAppointment = async (token, data) => {
+    const res = await api.post("appointments/walk-in/", data);
+    return res.data;
+};
+
+export const getAppointmentHistory = async (id) => {
+    const res = await api.get(`appointments/${id}/history/`);
+    return res.data;
+};
+
+export const assignPatient = async (id, petId) => {
+    const res = await api.patch(`appointments/${id}/assign-patient/`, { pet: petId });
+    return res.data;
+};
+
+export const createAppointmentWithPatient = async (data) => {
+    const res = await api.post("appointments/create-with-patient/", data);
+    return res.data;
+};

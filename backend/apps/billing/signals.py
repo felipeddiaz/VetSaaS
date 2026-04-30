@@ -1,6 +1,8 @@
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
+from apps.organizations.utils import get_org_setting
+
 
 @receiver(post_save, sender='medical_records.MedicalRecord')
 def create_draft_invoice_on_medical_record(sender, instance, created, **kwargs):
@@ -11,6 +13,8 @@ def create_draft_invoice_on_medical_record(sender, instance, created, **kwargs):
     if not created:
         return
     if instance.appointment_id:
+        return
+    if not get_org_setting(instance.organization, 'auto_create_invoice_on_done'):
         return
     from apps.billing.services import get_or_create_invoice_for_medical_record
     get_or_create_invoice_for_medical_record(instance)
@@ -23,6 +27,8 @@ def create_draft_invoice_on_done(sender, instance, **kwargs):
     Uses get_or_create to guarantee idempotency (runs safely on every save).
     """
     if instance.status != 'done':
+        return
+    if not get_org_setting(instance.organization, 'auto_create_invoice_on_done'):
         return
 
     from .models import Invoice

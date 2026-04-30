@@ -64,7 +64,9 @@ class Invoice(OrganizationalModel):
     pet = models.ForeignKey(
         'patients.Pet',
         on_delete=models.PROTECT,
-        related_name='invoices'
+        related_name='invoices',
+        null=True,
+        blank=True,
     )
     created_by = models.ForeignKey(
         'users.User',

@@ -1,2 +1,597 @@
 [WARNING] 2026-04-23 13:39:48,520 permissions: Usuario 21 usando fallback estático de permisos (sin roles en DB)
 [WARNING] 2026-04-24 11:23:52,318 models: Validación fallida | model=InvoiceItem pk=50 organization_id=3 user_id=None | {'__all__': ['Invoice item with this Invoice and Presentation already exists.']}
+[ERROR] 2026-04-26 01:00:35,779 log: Internal Server Error: /api/prescriptions/17/pdf/
+Traceback (most recent call last):
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\core\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\core\handlers\base.py", line 198, in _get_response
+    response = wrapped_callback(request, *callback_args, **callback_kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\sentry_sdk\integrations\django\views.py", line 87, in sentry_wrapped_callback
+    return callback(request, *args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\views\decorators\csrf.py", line 65, in _view_wrapper
+    return view_func(request, *args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\views\generic\base.py", line 106, in view
+    return self.dispatch(request, *args, **kwargs)
+           ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 515, in dispatch
+    response = self.handle_exception(exc)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 475, in handle_exception
+    self.raise_uncaught_exception(exc)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 486, in raise_uncaught_exception
+    raise exc
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 512, in dispatch
+    response = handler(request, *args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\decorators.py", line 50, in handler
+    return func(*args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\backend\apps\prescriptions\views.py", line 152, in prescription_pdf
+    unit = item.product.unit or ''
+           ^^^^^^^^^^^^^^^^^
+AttributeError: 'Product' object has no attribute 'unit'
+[ERROR] 2026-04-26 01:00:35,794 log: "GET /api/prescriptions/17/pdf/ HTTP/1.1" 500 22797
+[ERROR] 2026-04-26 17:10:36,442 log: Internal Server Error: /api/staff/create/
+Traceback (most recent call last):
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\backends\utils.py", line 105, in _execute
+    return self.cursor.execute(sql, params)
+           ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+psycopg2.errors.UniqueViolation: llave duplicada viola restricción de unicidad «users_user_username_key»
+DETAIL:  Ya existe la llave (username)=(pedro_car).
+
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\core\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\core\handlers\base.py", line 198, in _get_response
+    response = wrapped_callback(request, *callback_args, **callback_kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\sentry_sdk\integrations\django\views.py", line 87, in sentry_wrapped_callback
+    return callback(request, *args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\views\decorators\csrf.py", line 65, in _view_wrapper
+    return view_func(request, *args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\views\generic\base.py", line 106, in view
+    return self.dispatch(request, *args, **kwargs)
+           ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 515, in dispatch
+    response = self.handle_exception(exc)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 475, in handle_exception
+    self.raise_uncaught_exception(exc)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 486, in raise_uncaught_exception
+    raise exc
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 512, in dispatch
+    response = handler(request, *args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\backend\apps\users\views.py", line 70, in post
+    user = serializer.save()
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\serializers.py", line 210, in save
+    self.instance = self.create(validated_data)
+                    ~~~~~~~~~~~^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\backend\apps\users\serializers.py", line 50, in create
+    user = User.objects.create_user(
+        username=validated_data['username'],
+    ...<6 lines>...
+        organization=organization,
+    )
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\contrib\auth\models.py", line 175, in create_user
+    return self._create_user(username, email, password, **extra_fields)
+           ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\contrib\auth\models.py", line 163, in _create_user
+    user.save(using=self._db)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\contrib\auth\base_user.py", line 62, in save
+    super().save(**kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\base.py", line 874, in save
+    self.save_base(
+    ~~~~~~~~~~~~~~^
+        using=using,
+        ^^^^^^^^^^^^
+    ...<2 lines>...
+        update_fields=update_fields,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\base.py", line 966, in save_base
+    updated = self._save_table(
+        raw,
+    ...<4 lines>...
+        update_fields,
+    )
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\base.py", line 1169, in _save_table
+    results = self._do_insert(
+        cls._base_manager, using, insert_fields, returning_fields, raw
+    )
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\base.py", line 1220, in _do_insert
+    return manager._insert(
+           ~~~~~~~~~~~~~~~^
+        [self],
+        ^^^^^^^
+    ...<3 lines>...
+        raw=raw,
+        ^^^^^^^^
+    )
+    ^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\manager.py", line 87, in manager_method
+    return getattr(self.get_queryset(), name)(*args, **kwargs)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 1918, in _insert
+    return query.get_compiler(using=using).execute_sql(returning_fields)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\sql\compiler.py", line 1925, in execute_sql
+    cursor.execute(sql, params)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\backends\utils.py", line 122, in execute
+    return super().execute(sql, params)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\sentry_sdk\utils.py", line 1900, in runner
+    return sentry_patched_function(*args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\sentry_sdk\integrations\django\__init__.py", line 645, in execute
+    result = real_execute(self, sql, params)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\backends\utils.py", line 79, in execute
+    return self._execute_with_wrappers(
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        sql, params, many=False, executor=self._execute
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\backends\utils.py", line 92, in _execute_with_wrappers
+    return executor(sql, params, many, context)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\backends\utils.py", line 100, in _execute
+    with self.db.wrap_database_errors:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\utils.py", line 94, in __exit__
+    raise dj_exc_value.with_traceback(traceback) from exc_value
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\backends\utils.py", line 105, in _execute
+    return self.cursor.execute(sql, params)
+           ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+django.db.utils.IntegrityError: llave duplicada viola restricción de unicidad «users_user_username_key»
+DETAIL:  Ya existe la llave (username)=(pedro_car).
+
+[ERROR] 2026-04-26 17:10:36,477 log: "POST /api/staff/create/ HTTP/1.1" 500 27151
+[ERROR] 2026-04-28 01:22:30,057 log: Internal Server Error: /api/medical-records/
+Traceback (most recent call last):
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\core\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\core\handlers\base.py", line 198, in _get_response
+    response = wrapped_callback(request, *callback_args, **callback_kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\sentry_sdk\integrations\django\views.py", line 87, in sentry_wrapped_callback
+    return callback(request, *args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\views\decorators\csrf.py", line 65, in _view_wrapper
+    return view_func(request, *args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\views\generic\base.py", line 106, in view
+    return self.dispatch(request, *args, **kwargs)
+           ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 515, in dispatch
+    response = self.handle_exception(exc)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 475, in handle_exception
+    self.raise_uncaught_exception(exc)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 486, in raise_uncaught_exception
+    raise exc
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 512, in dispatch
+    response = handler(request, *args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\generics.py", line 243, in get
+    return self.list(request, *args, **kwargs)
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\mixins.py", line 40, in list
+    page = self.paginate_queryset(queryset)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\generics.py", line 175, in paginate_queryset
+    return self.paginator.paginate_queryset(queryset, self.request, view=self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\pagination.py", line 213, in paginate_queryset
+    return list(self.page)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\core\paginator.py", line 319, in __len__
+    return len(self.object_list)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 372, in __len__
+    self._fetch_all()
+    ~~~~~~~~~~~~~~~^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 2002, in _fetch_all
+    self._prefetch_related_objects()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 1369, in _prefetch_related_objects
+    prefetch_related_objects(self._result_cache, *self._prefetch_related_lookups)
+    ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 2426, in prefetch_related_objects
+    raise AttributeError(
+    ...<7 lines>...
+    )
+AttributeError: Cannot find 'presentation' on Product object, 'prescription__items__product__presentation' is an invalid parameter to prefetch_related()
+[ERROR] 2026-04-28 01:22:35,526 log: Internal Server Error: /api/medical-records/
+Traceback (most recent call last):
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\core\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\core\handlers\base.py", line 198, in _get_response
+    response = wrapped_callback(request, *callback_args, **callback_kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\sentry_sdk\integrations\django\views.py", line 87, in sentry_wrapped_callback
+    return callback(request, *args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\views\decorators\csrf.py", line 65, in _view_wrapper
+    return view_func(request, *args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\views\generic\base.py", line 106, in view
+    return self.dispatch(request, *args, **kwargs)
+           ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 515, in dispatch
+    response = self.handle_exception(exc)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 475, in handle_exception
+    self.raise_uncaught_exception(exc)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 486, in raise_uncaught_exception
+    raise exc
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 512, in dispatch
+    response = handler(request, *args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\generics.py", line 243, in get
+    return self.list(request, *args, **kwargs)
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\mixins.py", line 40, in list
+    page = self.paginate_queryset(queryset)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\generics.py", line 175, in paginate_queryset
+    return self.paginator.paginate_queryset(queryset, self.request, view=self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\pagination.py", line 213, in paginate_queryset
+    return list(self.page)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\core\paginator.py", line 319, in __len__
+    return len(self.object_list)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 372, in __len__
+    self._fetch_all()
+    ~~~~~~~~~~~~~~~^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 2002, in _fetch_all
+    self._prefetch_related_objects()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 1369, in _prefetch_related_objects
+    prefetch_related_objects(self._result_cache, *self._prefetch_related_lookups)
+    ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 2426, in prefetch_related_objects
+    raise AttributeError(
+    ...<7 lines>...
+    )
+AttributeError: Cannot find 'presentation' on Product object, 'prescription__items__product__presentation' is an invalid parameter to prefetch_related()
+[ERROR] 2026-04-28 01:27:12,530 log: Internal Server Error: /api/medical-records/
+Traceback (most recent call last):
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\core\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\core\handlers\base.py", line 198, in _get_response
+    response = wrapped_callback(request, *callback_args, **callback_kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\sentry_sdk\integrations\django\views.py", line 87, in sentry_wrapped_callback
+    return callback(request, *args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\views\decorators\csrf.py", line 65, in _view_wrapper
+    return view_func(request, *args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\views\generic\base.py", line 106, in view
+    return self.dispatch(request, *args, **kwargs)
+           ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 515, in dispatch
+    response = self.handle_exception(exc)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 475, in handle_exception
+    self.raise_uncaught_exception(exc)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 486, in raise_uncaught_exception
+    raise exc
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 512, in dispatch
+    response = handler(request, *args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\generics.py", line 243, in get
+    return self.list(request, *args, **kwargs)
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\mixins.py", line 40, in list
+    page = self.paginate_queryset(queryset)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\generics.py", line 175, in paginate_queryset
+    return self.paginator.paginate_queryset(queryset, self.request, view=self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\pagination.py", line 213, in paginate_queryset
+    return list(self.page)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\core\paginator.py", line 319, in __len__
+    return len(self.object_list)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 372, in __len__
+    self._fetch_all()
+    ~~~~~~~~~~~~~~~^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 2002, in _fetch_all
+    self._prefetch_related_objects()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 1369, in _prefetch_related_objects
+    prefetch_related_objects(self._result_cache, *self._prefetch_related_lookups)
+    ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 2426, in prefetch_related_objects
+    raise AttributeError(
+    ...<7 lines>...
+    )
+AttributeError: Cannot find 'presentation' on Product object, 'prescription__items__product__presentation' is an invalid parameter to prefetch_related()
+[ERROR] 2026-04-28 01:27:12,693 log: Internal Server Error: /api/medical-records/
+Traceback (most recent call last):
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\core\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\core\handlers\base.py", line 198, in _get_response
+    response = wrapped_callback(request, *callback_args, **callback_kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\sentry_sdk\integrations\django\views.py", line 87, in sentry_wrapped_callback
+    return callback(request, *args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\views\decorators\csrf.py", line 65, in _view_wrapper
+    return view_func(request, *args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\views\generic\base.py", line 106, in view
+    return self.dispatch(request, *args, **kwargs)
+           ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 515, in dispatch
+    response = self.handle_exception(exc)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 475, in handle_exception
+    self.raise_uncaught_exception(exc)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 486, in raise_uncaught_exception
+    raise exc
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 512, in dispatch
+    response = handler(request, *args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\generics.py", line 243, in get
+    return self.list(request, *args, **kwargs)
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\mixins.py", line 40, in list
+    page = self.paginate_queryset(queryset)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\generics.py", line 175, in paginate_queryset
+    return self.paginator.paginate_queryset(queryset, self.request, view=self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\pagination.py", line 213, in paginate_queryset
+    return list(self.page)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\core\paginator.py", line 319, in __len__
+    return len(self.object_list)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 372, in __len__
+    self._fetch_all()
+    ~~~~~~~~~~~~~~~^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 2002, in _fetch_all
+    self._prefetch_related_objects()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 1369, in _prefetch_related_objects
+    prefetch_related_objects(self._result_cache, *self._prefetch_related_lookups)
+    ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 2426, in prefetch_related_objects
+    raise AttributeError(
+    ...<7 lines>...
+    )
+AttributeError: Cannot find 'presentation' on Product object, 'prescription__items__product__presentation' is an invalid parameter to prefetch_related()
+[ERROR] 2026-04-28 01:28:22,696 log: Internal Server Error: /api/medical-records/
+Traceback (most recent call last):
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\core\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\core\handlers\base.py", line 198, in _get_response
+    response = wrapped_callback(request, *callback_args, **callback_kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\sentry_sdk\integrations\django\views.py", line 87, in sentry_wrapped_callback
+    return callback(request, *args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\views\decorators\csrf.py", line 65, in _view_wrapper
+    return view_func(request, *args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\views\generic\base.py", line 106, in view
+    return self.dispatch(request, *args, **kwargs)
+           ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 515, in dispatch
+    response = self.handle_exception(exc)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 475, in handle_exception
+    self.raise_uncaught_exception(exc)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 486, in raise_uncaught_exception
+    raise exc
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 512, in dispatch
+    response = handler(request, *args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\generics.py", line 243, in get
+    return self.list(request, *args, **kwargs)
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\mixins.py", line 40, in list
+    page = self.paginate_queryset(queryset)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\generics.py", line 175, in paginate_queryset
+    return self.paginator.paginate_queryset(queryset, self.request, view=self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\pagination.py", line 213, in paginate_queryset
+    return list(self.page)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\core\paginator.py", line 319, in __len__
+    return len(self.object_list)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 372, in __len__
+    self._fetch_all()
+    ~~~~~~~~~~~~~~~^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 2002, in _fetch_all
+    self._prefetch_related_objects()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 1369, in _prefetch_related_objects
+    prefetch_related_objects(self._result_cache, *self._prefetch_related_lookups)
+    ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 2426, in prefetch_related_objects
+    raise AttributeError(
+    ...<7 lines>...
+    )
+AttributeError: Cannot find 'presentation' on Product object, 'prescription__items__product__presentation' is an invalid parameter to prefetch_related()
+[ERROR] 2026-04-28 01:28:22,940 log: Internal Server Error: /api/medical-records/
+Traceback (most recent call last):
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\core\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\core\handlers\base.py", line 198, in _get_response
+    response = wrapped_callback(request, *callback_args, **callback_kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\sentry_sdk\integrations\django\views.py", line 87, in sentry_wrapped_callback
+    return callback(request, *args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\views\decorators\csrf.py", line 65, in _view_wrapper
+    return view_func(request, *args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\views\generic\base.py", line 106, in view
+    return self.dispatch(request, *args, **kwargs)
+           ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 515, in dispatch
+    response = self.handle_exception(exc)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 475, in handle_exception
+    self.raise_uncaught_exception(exc)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 486, in raise_uncaught_exception
+    raise exc
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 512, in dispatch
+    response = handler(request, *args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\generics.py", line 243, in get
+    return self.list(request, *args, **kwargs)
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\mixins.py", line 40, in list
+    page = self.paginate_queryset(queryset)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\generics.py", line 175, in paginate_queryset
+    return self.paginator.paginate_queryset(queryset, self.request, view=self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\pagination.py", line 213, in paginate_queryset
+    return list(self.page)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\core\paginator.py", line 319, in __len__
+    return len(self.object_list)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 372, in __len__
+    self._fetch_all()
+    ~~~~~~~~~~~~~~~^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 2002, in _fetch_all
+    self._prefetch_related_objects()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 1369, in _prefetch_related_objects
+    prefetch_related_objects(self._result_cache, *self._prefetch_related_lookups)
+    ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 2426, in prefetch_related_objects
+    raise AttributeError(
+    ...<7 lines>...
+    )
+AttributeError: Cannot find 'presentation' on Product object, 'prescription__items__product__presentation' is an invalid parameter to prefetch_related()
+[ERROR] 2026-04-28 01:28:42,680 log: Internal Server Error: /api/medical-records/
+Traceback (most recent call last):
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\core\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\core\handlers\base.py", line 198, in _get_response
+    response = wrapped_callback(request, *callback_args, **callback_kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\sentry_sdk\integrations\django\views.py", line 87, in sentry_wrapped_callback
+    return callback(request, *args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\views\decorators\csrf.py", line 65, in _view_wrapper
+    return view_func(request, *args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\views\generic\base.py", line 106, in view
+    return self.dispatch(request, *args, **kwargs)
+           ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 515, in dispatch
+    response = self.handle_exception(exc)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 475, in handle_exception
+    self.raise_uncaught_exception(exc)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 486, in raise_uncaught_exception
+    raise exc
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 512, in dispatch
+    response = handler(request, *args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\generics.py", line 243, in get
+    return self.list(request, *args, **kwargs)
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\mixins.py", line 40, in list
+    page = self.paginate_queryset(queryset)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\generics.py", line 175, in paginate_queryset
+    return self.paginator.paginate_queryset(queryset, self.request, view=self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\pagination.py", line 213, in paginate_queryset
+    return list(self.page)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\core\paginator.py", line 319, in __len__
+    return len(self.object_list)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 372, in __len__
+    self._fetch_all()
+    ~~~~~~~~~~~~~~~^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 2002, in _fetch_all
+    self._prefetch_related_objects()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 1369, in _prefetch_related_objects
+    prefetch_related_objects(self._result_cache, *self._prefetch_related_lookups)
+    ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 2426, in prefetch_related_objects
+    raise AttributeError(
+    ...<7 lines>...
+    )
+AttributeError: Cannot find 'presentation' on Product object, 'prescription__items__product__presentation' is an invalid parameter to prefetch_related()
+[ERROR] 2026-04-28 01:29:25,422 log: Internal Server Error: /api/medical-records/
+Traceback (most recent call last):
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\core\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\core\handlers\base.py", line 198, in _get_response
+    response = wrapped_callback(request, *callback_args, **callback_kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\sentry_sdk\integrations\django\views.py", line 87, in sentry_wrapped_callback
+    return callback(request, *args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\views\decorators\csrf.py", line 65, in _view_wrapper
+    return view_func(request, *args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\views\generic\base.py", line 106, in view
+    return self.dispatch(request, *args, **kwargs)
+           ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 515, in dispatch
+    response = self.handle_exception(exc)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 475, in handle_exception
+    self.raise_uncaught_exception(exc)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 486, in raise_uncaught_exception
+    raise exc
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 512, in dispatch
+    response = handler(request, *args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\generics.py", line 243, in get
+    return self.list(request, *args, **kwargs)
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\mixins.py", line 40, in list
+    page = self.paginate_queryset(queryset)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\generics.py", line 175, in paginate_queryset
+    return self.paginator.paginate_queryset(queryset, self.request, view=self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\pagination.py", line 213, in paginate_queryset
+    return list(self.page)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\core\paginator.py", line 319, in __len__
+    return len(self.object_list)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 372, in __len__
+    self._fetch_all()
+    ~~~~~~~~~~~~~~~^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 2002, in _fetch_all
+    self._prefetch_related_objects()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 1369, in _prefetch_related_objects
+    prefetch_related_objects(self._result_cache, *self._prefetch_related_lookups)
+    ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 2426, in prefetch_related_objects
+    raise AttributeError(
+    ...<7 lines>...
+    )
+AttributeError: Cannot find 'presentation' on Product object, 'prescription__items__product__presentation' is an invalid parameter to prefetch_related()
+[WARNING] 2026-04-28 12:39:25,829 models: Validación fallida | model=Owner pk=None organization_id=1 user_id=None | {'phone': ['This field cannot be blank.']}
+[WARNING] 2026-04-28 17:40:09,271 models: Validación fallida | model=MedicalRecord pk=None organization_id=2 user_id=3 | {'diagnosis': ['This field cannot be blank.'], 'treatment': ['This field cannot be blank.']}
+[ERROR] 2026-04-28 17:40:09,690 log: Internal Server Error: /api/appointments/76/status/
+Traceback (most recent call last):
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 987, in get_or_create
+    return self.get(**kwargs), False
+           ~~~~~~~~^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 639, in get
+    raise self.model.DoesNotExist(
+        "%s matching query does not exist." % self.model._meta.object_name
+    )
+apps.medical_records.models.MedicalRecord.DoesNotExist: MedicalRecord matching query does not exist.
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\core\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\core\handlers\base.py", line 198, in _get_response
+    response = wrapped_callback(request, *callback_args, **callback_kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\sentry_sdk\integrations\django\views.py", line 87, in sentry_wrapped_callback
+    return callback(request, *args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\views\decorators\csrf.py", line 65, in _view_wrapper
+    return view_func(request, *args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\views\generic\base.py", line 106, in view
+    return self.dispatch(request, *args, **kwargs)
+           ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 515, in dispatch
+    response = self.handle_exception(exc)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 475, in handle_exception
+    self.raise_uncaught_exception(exc)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 486, in raise_uncaught_exception
+    raise exc
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\views.py", line 512, in dispatch
+    response = handler(request, *args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\rest_framework\decorators.py", line 50, in handler
+    return func(*args, **kwargs)
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\backend\apps\appointments\views.py", line 148, in update_status
+    MedicalRecord.objects.get_or_create(
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        appointment=appointment,
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+        }
+        ^
+    )
+    ^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\manager.py", line 87, in manager_method
+    return getattr(self.get_queryset(), name)(*args, **kwargs)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 994, in get_or_create
+    return self.create(**params), True
+           ~~~~~~~~~~~^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\query.py", line 669, in create
+    obj.save(force_insert=True, using=self.db)
+    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\backend\apps\core\models.py", line 178, in save
+    self.full_clean()
+    ~~~~~~~~~~~~~~~^^
+  File "C:\Users\LAP\Desktop\VeterinariaSaaS\venv\Lib\site-packages\django\db\models\base.py", line 1712, in full_clean
+    raise ValidationError(errors)
+django.core.exceptions.ValidationError: {'diagnosis': ['This field cannot be blank.'], 'treatment': ['This field cannot be blank.']}

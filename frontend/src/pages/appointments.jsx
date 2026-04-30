@@ -1,12 +1,17 @@
 import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useConfirm } from "../components/ConfirmDialog";
+import { toast } from "sonner";
 import {
     getAppointments, createAppointment,
-    updateAppointment, updateAppointmentStatus,
+    updateAppointment, updateAppointmentStatus, walkInAppointment,
+    getAppointmentHistory, assignPatient, createAppointmentWithPatient,
 } from "../api/appointments";
+import { getOrgSettings } from "../api/organizations";
 import { getPets } from "../api/pets";
 import { getStaff } from "../api/staff";
+import SearchSelect from "../components/SearchSelect";
+import QuickPatientForm from "../components/QuickPatientForm";
 import { useAuth } from "../auth/authContext";
 import { Icon } from "../components/icons";
 
@@ -28,8 +33,22 @@ const PAL = {
     slate:  { bg:"#F1F4F8", text:"#2E3A4E", border:"#7A8FA6" },
 };
 
-const S_BADGE = { scheduled:"badge-info", done:"badge-success", canceled:"badge-danger" };
-const S_LABEL = { scheduled:"Programada",  done:"Completada",    canceled:"Cancelada"   };
+const S_BADGE = {
+    scheduled:   "badge-info",
+    confirmed:   "badge-purple",
+    in_progress: "badge-warning",
+    done:        "badge-success",
+    canceled:    "badge-danger",
+    no_show:     "badge-secondary",
+};
+const S_LABEL = {
+    scheduled:   "Programada",
+    confirmed:   "Confirmada",
+    in_progress: "En consulta",
+    done:        "Completada",
+    canceled:    "Cancelada",
+    no_show:     "No se presentó",
+};
 
 // ── Utils ──────────────────────────────────────────────────────────────────────
 const pad = n => String(n).padStart(2,"0");
@@ -152,16 +171,65 @@ function ApptBadge({ appt, pal, petName, ownerName, onClick }) {
     );
 }
 
+// ── localTodayStr ──────────────────────────────────────────────────────────────
+function localTodayStr() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
 // ── Detail Modal ───────────────────────────────────────────────────────────────
-function DetailModal({ appt, petName, vetName, petId, onClose, onStatusChange, onEdit, navigate, canEdit }) {
+function DetailModal({ appt, petName, vetName, petId, onClose, onStatusChange, onEdit, onNewFromAppt, navigate, canEdit, showHistory, onRefresh }) {
     const confirm = useConfirm();
+    const [history,          setHistory]          = useState([]);
+    const [historyOpen,      setHistoryOpen]      = useState(false);
+    const [loadingHist,      setLoadingHist]      = useState(false);
+    const [assigningPatient, setAssigningPatient] = useState(false);
+    const [newPetItem,       setNewPetItem]       = useState(null);
+    const [savingAssign,     setSavingAssign]     = useState(false);
+
+    const canReschedule = appt.status === "canceled" && appt.date >= localTodayStr();
+    const showNewAppt   = (appt.status === "canceled" && appt.date < localTodayStr()) || appt.status === "no_show";
+
+    const toggleHistory = async () => {
+        if (!historyOpen && history.length === 0) {
+            setLoadingHist(true);
+            try {
+                const data = await getAppointmentHistory(appt.id);
+                setHistory(data);
+            } catch {
+                // silenciar — historial no crítico
+            } finally {
+                setLoadingHist(false);
+            }
+        }
+        setHistoryOpen(prev => !prev);
+    };
+
+    const handleAssign = async () => {
+        if (!newPetItem) { toast.error("Selecciona una mascota"); return; }
+        setSavingAssign(true);
+        try {
+            const updated = await assignPatient(appt.id, newPetItem.id);
+            onRefresh(updated);
+            setAssigningPatient(false);
+            setNewPetItem(null);
+            toast.success("Paciente vinculado correctamente");
+        } catch (err) {
+            toast.error(apiError(err, "Error al vincular paciente"));
+        } finally {
+            setSavingAssign(false);
+        }
+    };
+
     return (
         <div className="modal-overlay" onClick={onClose}>
             <div className="modal modal-md" onClick={e=>e.stopPropagation()}>
                 <div className="modal-header">
                     <div>
                         <h3 style={{marginBottom:"5px"}}>{petName || "—"}</h3>
-                        <span className={`badge ${S_BADGE[appt.status]}`}>{S_LABEL[appt.status]}</span>
+                        <span className={`badge ${S_BADGE[appt.status] || "badge-info"}`}>
+                            {S_LABEL[appt.status] || appt.status}
+                        </span>
                     </div>
                     <button className="modal-close" onClick={onClose}>×</button>
                 </div>
@@ -186,24 +254,166 @@ function DetailModal({ appt, petName, vetName, petId, onClose, onStatusChange, o
                             {appt.notes}
                         </div>
                     )}
-                </div>
-                <div className="modal-footer" style={{flexDirection:"column",gap:"8px"}}>
-                    {appt.status === "scheduled" && canEdit && (
-                        <div style={{display:"flex",gap:"8px",width:"100%"}}>
-                            <button className="btn btn-info btn-md" style={{flex:1}}
-                                onClick={()=>onEdit(appt)}>Editar</button>
-                            <button className="btn btn-md" style={{flex:1,background:"#22c55e",borderColor:"#22c55e",color:"#fff"}}
-                                onClick={()=>onStatusChange(appt.id,"done")}>Completar</button>
-                            <button className="btn btn-danger btn-md" style={{flex:1}}
-                                onClick={async ()=>{ if(await confirm({ message: "¿Cancelar esta cita? El paciente quedará sin turno.", confirmText: "Cancelar cita", dangerMode: true })) onStatusChange(appt.id,"canceled"); }}>
-                                Cancelar
-                            </button>
+                    {appt.cancellation_reason && (
+                        <div style={{marginTop:"8px",padding:"8px 12px",background:"#fef2f2",
+                            borderRadius:"var(--r-md)",fontSize:"12px",color:"#991b1b",borderLeft:"3px solid #f87171"}}>
+                            <strong>Motivo cancelación:</strong> {appt.cancellation_reason}
                         </div>
                     )}
-                    {appt.status === "canceled" && canEdit && (
-                        <button className="btn btn-info btn-md" style={{width:"100%"}}
-                            onClick={()=>onStatusChange(appt.id,"scheduled")}>Reprogramar</button>
+
+                    {/* Banner: paciente genérico — vincular a real */}
+                    {appt.pet_is_generic && canEdit && (
+                        <div style={{
+                            marginTop:"12px", padding:"12px 14px",
+                            background:"#fffbeb", border:"1px solid #fbbf24",
+                            borderRadius:"var(--r-md)",
+                        }}>
+                            <p style={{fontSize:"12.5px",fontWeight:"600",color:"#92400e",marginBottom:"8px"}}>
+                                Paciente anónimo — vincular a paciente real
+                            </p>
+                            {appt.status === 'done' ? (
+                                <p style={{fontSize:"12px",color:"#b45309"}}>
+                                    La consulta ya fue completada. El paciente no puede reasignarse.
+                                </p>
+                            ) : assigningPatient ? (
+                                <div>
+                                    <SearchSelect
+                                        value={newPetItem}
+                                        onChange={item => setNewPetItem(item)}
+                                        onSearch={q => getPets({ search: q }).then(ps =>
+                                            ps.filter(p => !p.is_generic)
+                                               .map(p => ({ id: p.id, label: `${p.name} – ${(p.owner?.name ?? "").trim()}`.trim().replace(/ – $/, "") }))
+                                        )}
+                                        placeholder="Buscar mascota..."
+                                    />
+                                    <div style={{display:"flex",gap:"6px",marginTop:"8px"}}>
+                                        <button className="btn btn-primary btn-sm"
+                                            disabled={!newPetItem || savingAssign}
+                                            onClick={handleAssign}>
+                                            {savingAssign ? "Guardando..." : "Vincular"}
+                                        </button>
+                                        <button className="btn btn-secondary btn-sm"
+                                            onClick={() => { setAssigningPatient(false); setNewPetItem(null); }}>
+                                            Cancelar
+                                        </button>
+                                    </div>
+                                </div>
+                            ) : (
+                                <button className="btn btn-secondary btn-sm"
+                                    onClick={() => setAssigningPatient(true)}>
+                                    Vincular paciente
+                                </button>
+                            )}
+                        </div>
                     )}
+
+                    {/* Historial de estados — solo si el toggle está activo */}
+                    {showHistory && (
+                        <div style={{marginTop:"12px"}}>
+                            <button
+                                type="button"
+                                onClick={toggleHistory}
+                                style={{
+                                    display:"flex",alignItems:"center",gap:"6px",
+                                    background:"none",border:"none",cursor:"pointer",
+                                    fontSize:"12px",fontWeight:"600",color:"var(--c-text-2)",padding:"0",
+                                }}
+                            >
+                                <span style={{fontSize:"10px"}}>{historyOpen ? "▼" : "▶"}</span>
+                                Historial de estados
+                            </button>
+                            {historyOpen && (
+                                <div style={{marginTop:"8px",borderLeft:"2px solid var(--c-border)",paddingLeft:"12px"}}>
+                                    {loadingHist ? (
+                                        <p style={{fontSize:"12px",color:"var(--c-text-3)"}}>Cargando...</p>
+                                    ) : history.length === 0 ? (
+                                        <p style={{fontSize:"12px",color:"var(--c-text-3)"}}>Sin cambios registrados.</p>
+                                    ) : history.map(h => (
+                                        <div key={h.id} style={{marginBottom:"8px"}}>
+                                            <div style={{display:"flex",alignItems:"center",gap:"6px",fontSize:"12.5px"}}>
+                                                <span className={`badge ${S_BADGE[h.from_status] || "badge-default"}`} style={{fontSize:"10px"}}>
+                                                    {h.from_status_display || h.from_status}
+                                                </span>
+                                                <span style={{color:"var(--c-text-3)"}}>→</span>
+                                                <span className={`badge ${S_BADGE[h.to_status] || "badge-default"}`} style={{fontSize:"10px"}}>
+                                                    {h.to_status_display || h.to_status}
+                                                </span>
+                                            </div>
+                                            <p style={{fontSize:"11px",color:"var(--c-text-3)",marginTop:"2px"}}>
+                                                {h.changed_by_name || "—"} · {h.created_at ? new Date(h.created_at).toLocaleString("es-MX",{dateStyle:"short",timeStyle:"short"}) : ""}
+                                            </p>
+                                            {h.reason && (
+                                                <p style={{fontSize:"11px",color:"var(--c-text-3)",fontStyle:"italic"}}>{h.reason}</p>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+                <div className="modal-footer" style={{flexDirection:"column",gap:"8px"}}>
+
+                    {/* scheduled → confirm / start / no_show / cancel */}
+                    {appt.status === "scheduled" && canEdit && (
+                        <>
+                            <div style={{display:"flex",gap:"6px",width:"100%"}}>
+                                <button className="btn btn-info btn-md" style={{flex:1}}
+                                    onClick={()=>onEdit(appt)}>Editar</button>
+                                <button className="btn btn-purple btn-md" style={{flex:1}}
+                                    onClick={()=>onStatusChange(appt.id,"confirmed")}>Confirmar</button>
+                                <button className="btn btn-md" style={{flex:1,background:"#f59e0b",borderColor:"#f59e0b",color:"#fff"}}
+                                    onClick={()=>onStatusChange(appt.id,"in_progress")}>Iniciar</button>
+                            </div>
+                            <div style={{display:"flex",gap:"6px",width:"100%"}}>
+                                <button className="btn btn-secondary btn-md" style={{flex:1}}
+                                    onClick={async ()=>{
+                                        if(await confirm({ message:"¿Marcar como no presentado?", confirmText:"No se presentó" }))
+                                            onStatusChange(appt.id,"no_show");
+                                    }}>No se presentó</button>
+                                <button className="btn btn-danger btn-md" style={{flex:1}}
+                                    onClick={async ()=>{
+                                        if(await confirm({ message:"¿Cancelar esta cita?", confirmText:"Cancelar cita", dangerMode:true }))
+                                            onStatusChange(appt.id,"canceled");
+                                    }}>Cancelar</button>
+                            </div>
+                        </>
+                    )}
+
+                    {/* confirmed → start / no_show / cancel */}
+                    {appt.status === "confirmed" && canEdit && (
+                        <>
+                            <button className="btn btn-md btn-md" style={{width:"100%",background:"#f59e0b",borderColor:"#f59e0b",color:"#fff"}}
+                                onClick={()=>onStatusChange(appt.id,"in_progress")}>Iniciar consulta</button>
+                            <div style={{display:"flex",gap:"6px",width:"100%"}}>
+                                <button className="btn btn-secondary btn-md" style={{flex:1}}
+                                    onClick={async ()=>{
+                                        if(await confirm({ message:"¿Marcar como no presentado?", confirmText:"No se presentó" }))
+                                            onStatusChange(appt.id,"no_show");
+                                    }}>No se presentó</button>
+                                <button className="btn btn-danger btn-md" style={{flex:1}}
+                                    onClick={async ()=>{
+                                        if(await confirm({ message:"¿Cancelar esta cita?", confirmText:"Cancelar cita", dangerMode:true }))
+                                            onStatusChange(appt.id,"canceled");
+                                    }}>Cancelar</button>
+                            </div>
+                        </>
+                    )}
+
+                    {/* in_progress → done / cancel */}
+                    {appt.status === "in_progress" && canEdit && (
+                        <div style={{display:"flex",gap:"6px",width:"100%"}}>
+                            <button className="btn btn-md" style={{flex:2,background:"#22c55e",borderColor:"#22c55e",color:"#fff"}}
+                                onClick={()=>onStatusChange(appt.id,"done")}>Completar consulta</button>
+                            <button className="btn btn-danger btn-md" style={{flex:1}}
+                                onClick={async ()=>{
+                                    if(await confirm({ message:"¿Cancelar esta consulta en progreso?", confirmText:"Cancelar", dangerMode:true }))
+                                        onStatusChange(appt.id,"canceled");
+                                }}>Cancelar</button>
+                        </div>
+                    )}
+
+                    {/* done → medical record / invoice */}
                     {appt.status === "done" && (
                         <>
                             {appt.medical_record_ids?.length > 0 ? (
@@ -226,6 +436,19 @@ function DetailModal({ appt, petName, vetName, petId, onClose, onStatusChange, o
                             )}
                         </>
                     )}
+
+                    {/* canceled → reschedule (if date still valid) or new appt */}
+                    {canReschedule && canEdit && (
+                        <button className="btn btn-info btn-md" style={{width:"100%"}}
+                            onClick={()=>onStatusChange(appt.id,"scheduled")}>Reprogramar</button>
+                    )}
+                    {showNewAppt && canEdit && (
+                        <button className="btn btn-info btn-md" style={{width:"100%"}}
+                            onClick={()=>{ onClose(); onNewFromAppt(appt); }}>
+                            + Crear nueva cita
+                        </button>
+                    )}
+
                     <button className="btn btn-secondary btn-md" style={{width:"100%"}} onClick={onClose}>
                         Cerrar
                     </button>
@@ -236,7 +459,7 @@ function DetailModal({ appt, petName, vetName, petId, onClose, onStatusChange, o
 }
 
 // ── Edit Modal ─────────────────────────────────────────────────────────────────
-function EditModal({ appt, pets, staff, user, onClose, onSave }) {
+function EditModal({ appt, staff, user, onClose, onSave }) {
     const [form, setForm] = useState({
         veterinarian: String(appt.veterinarian || ""),
         date:         appt.date || "",
@@ -245,20 +468,24 @@ function EditModal({ appt, pets, staff, user, onClose, onSave }) {
         reason:       appt.reason || "",
         notes:        appt.notes  || "",
     });
-    const [error, setError] = useState("");
     const [saving, setSaving] = useState(false);
 
     async function handleSave() {
-        if (!form.veterinarian) { setError("Selecciona un veterinario"); return; }
-        if (!form.date)         { setError("La fecha es obligatoria"); return; }
-        if (!form.reason.trim()) { setError("El motivo es obligatorio"); return; }
-        setError(""); setSaving(true);
-        try { await onSave(form); }
-        catch (err) { setError(apiError(err, "Error al guardar")); }
-        finally { setSaving(false); }
+        if (!form.veterinarian) { toast.error("Selecciona un veterinario"); return; }
+        if (!form.date)         { toast.error("La fecha es obligatoria"); return; }
+        if (!form.reason.trim()) { toast.error("El motivo es obligatorio"); return; }
+        setSaving(true);
+        try {
+            await toast.promise(onSave(form), {
+                loading: 'Guardando cambios...',
+                success: 'Cita actualizada',
+                error: (err) => apiError(err, "Error al guardar")
+            });
+        } catch (err) {
+        } finally { setSaving(false); }
     }
 
-    const petName = pets.find(p => p.id === appt.pet)?.name || "—";
+    const petName = appt.pet_name || "—";
 
     return (
         <div className="modal-overlay" onClick={onClose}>
@@ -268,14 +495,13 @@ function EditModal({ appt, pets, staff, user, onClose, onSave }) {
                     <button className="modal-close" onClick={onClose}>×</button>
                 </div>
                 <div className="modal-body">
-                    {error && <div className="alert alert-danger" style={{marginBottom:"14px"}}>{error}</div>}
                     <div className="form-group">
-                        <label className="form-label">MASCOTA</label>
-                        <p style={{fontSize:"14px",fontWeight:"600"}}>{petName}</p>
+                        <label className="form-label" htmlFor="edit-appt-pet">MASCOTA</label>
+                        <input id="edit-appt-pet" name="edit-appt-pet" value={petName} readOnly className="input" />
                     </div>
                     <div className="form-group">
-                        <label className="form-label">VETERINARIO *</label>
-                        <select className="select-input" value={form.veterinarian}
+                        <label className="form-label" htmlFor="edit-appt-vet">VETERINARIO *</label>
+                        <select id="edit-appt-vet" name="edit-appt-vet" className="select-input" value={form.veterinarian}
                             onChange={e=>setForm({...form,veterinarian:e.target.value})}
                             disabled={user?.role==="VET"}>
                             <option value="">Seleccionar</option>
@@ -285,32 +511,32 @@ function EditModal({ appt, pets, staff, user, onClose, onSave }) {
                         </select>
                     </div>
                     <div className="form-group">
-                        <label className="form-label">FECHA *</label>
-                        <input type="date" className="input" value={form.date}
-                            min={new Date().toISOString().split('T')[0]}
+                        <label className="form-label" htmlFor="edit-appt-date">FECHA *</label>
+                        <input id="edit-appt-date" name="edit-appt-date" type="date" className="input" value={form.date}
+                            min={localTodayStr()}
                             onChange={e=>setForm({...form,date:e.target.value})}/>
                     </div>
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"14px"}}>
                         <div className="form-group">
-                            <label className="form-label">HORA INICIO *</label>
-                            <input type="time" className="input" value={form.start_time}
+                            <label className="form-label" htmlFor="edit-appt-start">HORA INICIO *</label>
+                            <input id="edit-appt-start" name="edit-appt-start" type="time" className="input" value={form.start_time}
                                 onChange={e=>setForm({...form,start_time:e.target.value})}/>
                         </div>
                         <div className="form-group">
-                            <label className="form-label">HORA FIN *</label>
-                            <input type="time" className="input" value={form.end_time}
+                            <label className="form-label" htmlFor="edit-appt-end">HORA FIN *</label>
+                            <input id="edit-appt-end" name="edit-appt-end" type="time" className="input" value={form.end_time}
                                 onChange={e=>setForm({...form,end_time:e.target.value})}/>
                         </div>
                     </div>
                     <div className="form-group">
-                        <label className="form-label">MOTIVO *</label>
-                        <input type="text" className="input" value={form.reason}
+                        <label className="form-label" htmlFor="edit-appt-reason">MOTIVO *</label>
+                        <input id="edit-appt-reason" name="edit-appt-reason" type="text" className="input" value={form.reason}
                             onChange={e=>setForm({...form,reason:e.target.value})}
                             placeholder="Ej: Vacunación, Revisión general"/>
                     </div>
                     <div className="form-group">
-                        <label className="form-label">NOTAS</label>
-                        <textarea className="textarea-input" style={{minHeight:"60px"}} value={form.notes}
+                        <label className="form-label" htmlFor="edit-appt-notes">NOTAS</label>
+                        <textarea id="edit-appt-notes" name="edit-appt-notes" className="textarea-input" style={{minHeight:"60px"}} value={form.notes}
                             onChange={e=>setForm({...form,notes:e.target.value})}
                             placeholder="Notas adicionales..."/>
                     </div>
@@ -330,42 +556,95 @@ function EditModal({ appt, pets, staff, user, onClose, onSave }) {
 }
 
 // ── Sidebar Form (new appointment) ─────────────────────────────────────────────
-function SidebarForm({ slot, onSave, onClear, pets, staff, user, formRef }) {
-    const [petId,  setPetId]  = useState("");
-    const [vetId,  setVetId]  = useState(user?.role==="VET" ? String(user.id) : "");
-    const [reason, setReason] = useState("");
-    const [notes,  setNotes]  = useState("");
-    const [hour,   setHour]   = useState(slot?.hour ?? 9);
-    const [error,  setError]  = useState("");
-    const [saving, setSaving] = useState(false);
+const EMPTY_QUICK = { ownerName: '', ownerPhone: '', petName: '', species: '', sex: 'unknown', birthDate: '' };
+
+function SidebarForm({ slot, onSave, onSaveWithPatient, onClear, staff, user, formRef }) {
+    const [petItem,          setPetItem]          = useState(null);
+    const [vetId,            setVetId]            = useState(user?.role==="VET" ? String(user.id) : "");
+    const [reason,           setReason]           = useState("");
+    const [notes,            setNotes]            = useState("");
+    const [hour,             setHour]             = useState(slot?.hour ?? 9);
+    const [saving,           setSaving]           = useState(false);
+    const [showQuickPatient, setShowQuickPatient] = useState(false);
+    const [quickPatient,     setQuickPatient]     = useState(EMPTY_QUICK);
+    const warnedPastRef = useRef(false);
 
     useEffect(() => {
         if (slot?.hour !== undefined) setHour(slot.hour);
     }, [slot?.hour]);
 
     useEffect(() => {
+        if (!slot) { warnedPastRef.current = false; return; }
+        const isPast = toDateStr(slot.date) < localTodayStr();
+        if (isPast && !warnedPastRef.current) {
+            warnedPastRef.current = true;
+            toast.error("No puedes crear una cita pasada. Revisa la fecha o cambia el estado a 'Completada'.");
+        }
+        if (!isPast) warnedPastRef.current = false;
+    }, [slot]);
+
+    useEffect(() => {
         if (user?.role === "VET") setVetId(String(user.id));
     }, [user]);
 
     async function handleSave() {
-        if (!petId)        { setError("Selecciona una mascota"); return; }
-        if (!vetId)        { setError("Selecciona un veterinario"); return; }
-        if (!reason.trim()){ setError("Ingresa el motivo de la consulta"); return; }
-        if (!slot)         { setError("Selecciona un horario en el calendario"); return; }
-        setError(""); setSaving(true);
-        try {
-            await onSave({
-                petId, vetId,
-                reason: reason.trim(), notes,
-                start_time: `${pad(hour)}:00`,
-                end_time:   `${pad(Math.min(hour+1,20))}:00`,
-            });
-            setPetId(""); setReason(""); setNotes("");
-            if (user?.role !== "VET") setVetId("");
-        } catch (err) {
-            setError(apiError(err, "Error al crear la cita"));
-        } finally {
-            setSaving(false);
+        if (!petItem && !showQuickPatient) { toast.error("Selecciona una mascota"); return; }
+        if (!vetId)         { toast.error("Selecciona un veterinario"); return; }
+        if (!reason.trim()) { toast.error("Ingresa el motivo de la consulta"); return; }
+        if (!slot)          { toast.error("Selecciona un horario en el calendario"); return; }
+
+        if (showQuickPatient) {
+            if (!quickPatient.ownerName.trim())            { toast.error("Nombre del dueño requerido"); return; }
+            if (!/^\d{10}$/.test(quickPatient.ownerPhone)) { toast.error("Teléfono del dueño: 10 dígitos"); return; }
+            if (!quickPatient.petName.trim())              { toast.error("Nombre de la mascota requerido"); return; }
+            if (!quickPatient.species)                     { toast.error("Especie requerida"); return; }
+
+            setSaving(true);
+            try {
+                await toast.promise(onSaveWithPatient({
+                    owner_name:     quickPatient.ownerName.trim(),
+                    owner_phone:    quickPatient.ownerPhone,
+                    pet_name:       quickPatient.petName.trim(),
+                    pet_species:    quickPatient.species,
+                    pet_sex:        quickPatient.sex,
+                    pet_birth_date: quickPatient.birthDate || null,
+                    veterinarian:   parseInt(vetId),
+                    date:           toDateStr(slot.date),
+                    start_time:     `${pad(hour)}:00`,
+                    end_time:       hour < 20 ? `${pad(hour)}:30` : '20:00',
+                    reason:         reason.trim(),
+                    notes,
+                }), {
+                    loading: 'Guardando cita...',
+                    success: 'Cita creada exitosamente',
+                    error: (err) => apiError(err, "Error al crear la cita"),
+                });
+                setPetItem(null); setReason(""); setNotes("");
+                setShowQuickPatient(false); setQuickPatient(EMPTY_QUICK);
+                if (user?.role !== "VET") setVetId("");
+            } catch (err) {
+            } finally {
+                setSaving(false);
+            }
+        } else {
+            setSaving(true);
+            try {
+                await toast.promise(onSave({
+                    petId: petItem.id, vetId,
+                    reason: reason.trim(), notes,
+                    start_time: `${pad(hour)}:00`,
+                    end_time:   hour < 20 ? `${pad(hour)}:30` : `20:00`,
+                }), {
+                    loading: 'Guardando cita...',
+                    success: 'Cita creada exitosamente',
+                    error: (err) => apiError(err, "Error al crear la cita"),
+                });
+                setPetItem(null); setReason(""); setNotes("");
+                if (user?.role !== "VET") setVetId("");
+            } catch (err) {
+            } finally {
+                setSaving(false);
+            }
         }
     }
 
@@ -400,20 +679,44 @@ function SidebarForm({ slot, onSave, onClear, pets, staff, user, formRef }) {
 
             <div style={{marginBottom:"10px"}}>
                 <label style={lblStyle}>Mascota</label>
-                <select className="select-input" value={petId}
-                    onChange={e=>setPetId(e.target.value)} style={{fontSize:"13px"}}>
-                    <option value="">Seleccionar mascota</option>
-                    {pets.map(p=>(
-                        <option key={p.id} value={p.id}>
-                            {p.name}{p.owner?.name ? ` – ${p.owner.name}` : ""}
-                        </option>
-                    ))}
-                </select>
+                {!showQuickPatient ? (
+                    <>
+                        <SearchSelect
+                            id="new-appt-pet"
+                            name="new-appt-pet"
+                            value={petItem}
+                            onChange={item => setPetItem(item)}
+                            onSearch={q => getPets({ search: q }).then(ps =>
+                                ps.map(p => ({ id: p.id, label: `${p.name} – ${(p.owner?.name ?? "").trim()}`.trim().replace(/ – $/, "") }))
+                            )}
+                            placeholder="Buscar mascota..."
+                            disabled={saving}
+                        />
+                        <button
+                            type="button"
+                            onClick={() => setShowQuickPatient(true)}
+                            disabled={saving}
+                            style={{
+                                background:"none",border:"none",cursor:"pointer",padding:"4px 0 0",
+                                fontSize:"11px",color:"var(--c-text-3)",display:"block",
+                            }}
+                        >
+                            No encuentro la mascota →
+                        </button>
+                    </>
+                ) : (
+                    <QuickPatientForm
+                        value={quickPatient}
+                        onChange={setQuickPatient}
+                        onCancel={() => { setShowQuickPatient(false); setQuickPatient(EMPTY_QUICK); }}
+                        disabled={saving}
+                    />
+                )}
             </div>
 
             <div style={{marginBottom:"10px"}}>
-                <label style={lblStyle}>Veterinario</label>
-                <select className="select-input" value={vetId}
+                <label style={lblStyle} htmlFor="new-appt-vet">Veterinario</label>
+                <select id="new-appt-vet" name="new-appt-vet" className="select-input" value={vetId}
                     onChange={e=>setVetId(e.target.value)}
                     disabled={user?.role==="VET"} style={{fontSize:"13px"}}>
                     <option value="">Seleccionar veterinario</option>
@@ -424,13 +727,13 @@ function SidebarForm({ slot, onSave, onClear, pets, staff, user, formRef }) {
             </div>
 
             <div style={{marginBottom:"10px"}}>
-                <label style={lblStyle}>Motivo</label>
-                <input className="input" value={reason} onChange={e=>setReason(e.target.value)}
+                <label style={lblStyle} htmlFor="new-appt-reason">Motivo</label>
+                <input id="new-appt-reason" name="new-appt-reason" className="input" value={reason} onChange={e=>setReason(e.target.value)}
                     placeholder="Ej: Vacunación, Revisión general" style={{fontSize:"13px"}}/>
             </div>
 
-            <div style={{marginBottom:"10px"}}>
-                <label style={lblStyle}>Hora</label>
+            <fieldset style={{marginBottom:"10px", border:"none", padding:0, marginInline:0}}>
+                <legend style={lblStyle}>Hora</legend>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"4px"}}>
                     {HOURS.map(h=>(
                         <button key={h} type="button" onClick={()=>setHour(h)} style={{
@@ -446,25 +749,117 @@ function SidebarForm({ slot, onSave, onClear, pets, staff, user, formRef }) {
                         </button>
                     ))}
                 </div>
-            </div>
+            </fieldset>
 
             <div style={{marginBottom:"10px"}}>
-                <label style={lblStyle}>Notas (opcional)</label>
-                <textarea className="textarea-input" value={notes} onChange={e=>setNotes(e.target.value)}
+                <label style={lblStyle} htmlFor="new-appt-notes">Notas (opcional)</label>
+                <textarea id="new-appt-notes" name="new-appt-notes" className="textarea-input" value={notes} onChange={e=>setNotes(e.target.value)}
                     placeholder="Notas adicionales..." style={{minHeight:"50px",fontSize:"13px"}}/>
             </div>
-
-            {error && (
-                <div className="alert alert-danger"
-                    style={{fontSize:"12.5px",padding:"7px 10px",marginBottom:"10px"}}>
-                    {error}
-                </div>
-            )}
 
             <button className="btn btn-primary btn-md" style={{width:"100%"}}
                 onClick={handleSave} disabled={saving}>
                 {saving ? "Guardando..." : "Guardar cita"}
             </button>
+        </div>
+    );
+}
+
+// ── WalkIn Modal ───────────────────────────────────────────────────────────────
+function WalkInModal({ staff, user, onClose, onSave, allowAnonymousWalkIn }) {
+    const [petItem, setPetItem] = useState(null);
+    const [vetId,  setVetId]  = useState(user?.role === "VET" ? String(user.id) : "");
+    const [reason, setReason] = useState("");
+    const [notes,  setNotes]  = useState("");
+    const [saving, setSaving] = useState(false);
+
+    async function handleSave() {
+        if (!petItem && !allowAnonymousWalkIn) { toast.error("Selecciona una mascota"); return; }
+        if (!vetId)         { toast.error("Selecciona un veterinario"); return; }
+        if (!reason.trim()) { toast.error("El motivo es obligatorio"); return; }
+        setSaving(true);
+        try {
+            const payload = {
+                veterinarian: parseInt(vetId),
+                reason: reason.trim(),
+                notes,
+            };
+            if (petItem) payload.pet = petItem.id;
+
+            await toast.promise(onSave(payload), {
+                loading: 'Registrando walk-in...',
+                success: 'Walk-in registrado — consulta en progreso',
+                error: (err) => apiError(err, "Error al registrar walk-in")
+            });
+        } catch (err) {
+        } finally {
+            setSaving(false);
+        }
+    }
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal modal-md" onClick={e=>e.stopPropagation()}>
+                <div className="modal-header">
+                    <div>
+                        <h3 style={{marginBottom:"4px"}}>Walk-in</h3>
+                        <p style={{fontSize:"12px",color:"var(--c-text-3)",margin:0}}>
+                            Consulta inmediata — la cita se crea en estado "En consulta"
+                        </p>
+                    </div>
+                    <button className="modal-close" onClick={onClose}>×</button>
+                </div>
+                <div className="modal-body">
+                    <div className="form-group">
+                        <label className="form-label" htmlFor="walkin-pet">MASCOTA {allowAnonymousWalkIn ? "(opcional)" : "*"}</label>
+                        <SearchSelect
+                            id="walkin-pet"
+                            name="walkin-pet"
+                            value={petItem}
+                            onChange={item => setPetItem(item)}
+                            onSearch={q => getPets({ search: q }).then(ps =>
+                                ps.map(p => ({ id: p.id, label: `${p.name} – ${(p.owner?.name ?? "").trim()}`.trim().replace(/ – $/, "") }))
+                            )}
+                            placeholder="Buscar mascota..."
+                        />
+                        {allowAnonymousWalkIn && (
+                            <p style={{ fontSize: "11px", color: "var(--c-text-3)", marginTop: "5px" }}>
+                                Si lo dejas vacío, se registrará como paciente anónimo.
+                            </p>
+                        )}
+                    </div>
+                    <div className="form-group">
+                        <label className="form-label" htmlFor="walkin-vet">VETERINARIO *</label>
+                        <select id="walkin-vet" name="walkin-vet" className="select-input" value={vetId}
+                            onChange={e=>setVetId(e.target.value)}
+                            disabled={user?.role === "VET"}>
+                            <option value="">Seleccionar veterinario</option>
+                            {staff.map(s=>(
+                                <option key={s.id} value={s.id}>{s.first_name} {s.last_name}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div className="form-group">
+                        <label className="form-label" htmlFor="walkin-reason">MOTIVO *</label>
+                        <input id="walkin-reason" name="walkin-reason" className="input" value={reason} onChange={e=>setReason(e.target.value)}
+                            placeholder="Ej: Revisión de urgencia, Vacunación"/>
+                    </div>
+                    <div className="form-group">
+                        <label className="form-label" htmlFor="walkin-notes">NOTAS</label>
+                        <textarea id="walkin-notes" name="walkin-notes" className="textarea-input" style={{minHeight:"56px"}} value={notes}
+                            onChange={e=>setNotes(e.target.value)} placeholder="Observaciones adicionales..."/>
+                    </div>
+                </div>
+                <div className="modal-footer">
+                    <button className="btn btn-primary btn-md" style={{flex:1}}
+                        onClick={handleSave} disabled={saving}>
+                        {saving ? "Registrando..." : "Iniciar consulta"}
+                    </button>
+                    <button className="btn btn-secondary btn-md" style={{flex:1}} onClick={onClose}>
+                        Cancelar
+                    </button>
+                </div>
+            </div>
         </div>
     );
 }
@@ -479,7 +874,6 @@ const Appointments = () => {
     today.setHours(0, 0, 0, 0);
 
     const [appointments, setAppointments] = useState([]);
-    const [pets,         setPets]         = useState([]);
     const [staff,        setStaff]        = useState([]);
     const [loading,      setLoading]      = useState(true);
 
@@ -487,21 +881,24 @@ const Appointments = () => {
     const [selectedSlot, setSelectedSlot] = useState(null);
     const [viewAppt,     setViewAppt]     = useState(null);
     const [editingAppt,  setEditingAppt]  = useState(null);
+    const [walkInOpen,   setWalkInOpen]   = useState(false);
+    const [newFromAppt,  setNewFromAppt]  = useState(null);
     const [filterVetId,  setFilterVetId]  = useState("");
-    const [success,      setSuccess]      = useState("");
+    const [orgSettings,  setOrgSettings]  = useState(null);
 
     useEffect(() => {
-        if (token) loadAll();
+        if (token) {
+            loadAll();
+            getOrgSettings().then(setOrgSettings).catch(() => {});
+        }
     }, [token]);
 
     const loadAll = async () => {
         try {
-            const [petsData, staffData, apptData] = await Promise.all([
-                getPets(token),
+            const [staffData, apptData] = await Promise.all([
                 getStaff(token),
                 getAppointments(token),
             ]);
-            setPets(petsData);
             setStaff(staffData);
             setAppointments(Array.isArray(apptData) ? apptData : (apptData.results || []));
         } catch (err) {
@@ -525,7 +922,6 @@ const Appointments = () => {
     staff.forEach((s, i) => { vetPalMap[s.id] = PAL[PAL_KEYS[i % PAL_KEYS.length]]; });
     const getVetPal = id => vetPalMap[id] || PAL.teal;
 
-    const getPetById   = id => pets.find(p => p.id === id);
     const getStaffById = id => staff.find(s => s.id === id);
     const getVetName   = id => {
         const s = getStaffById(id);
@@ -585,24 +981,55 @@ const Appointments = () => {
             status: "scheduled",
         });
         window.dispatchEvent(new Event("dashboard:refresh"));
-        setSuccess("Cita creada exitosamente");
         setSelectedSlot(null);
         loadAppointments();
-        setTimeout(() => setSuccess(""), 3500);
     };
 
-    const handleStatusChange = async (id, status) => {
-        try {
-            await updateAppointmentStatus(token, id, status);
-            window.dispatchEvent(new Event("dashboard:refresh"));
-            setViewAppt(null);
-            loadAppointments();
-            const msg = status==="done"?"Cita completada" : status==="canceled"?"Cita cancelada" : "Cita reprogramada";
-            setSuccess(msg);
-            setTimeout(() => setSuccess(""), 3500);
-        } catch (err) {
-            console.log(err);
-        }
+    const handleSaveWithPatient = async (data) => {
+        await createAppointmentWithPatient(data);
+        window.dispatchEvent(new Event("dashboard:refresh"));
+        setSelectedSlot(null);
+        loadAppointments();
+    };
+
+    const STATUS_MSG = {
+        confirmed:   "Cita confirmada",
+        in_progress: "Consulta iniciada",
+        done:        "Consulta completada",
+        canceled:    "Cita cancelada",
+        no_show:     "Marcada como no presentado",
+        scheduled:   "Cita reprogramada",
+    };
+
+    const handleStatusChange = async (id, newStatus) => {
+        const p = updateAppointmentStatus(token, id, newStatus);
+        toast.promise(p, {
+            loading: 'Actualizando estado...',
+            success: () => {
+                window.dispatchEvent(new Event("dashboard:refresh"));
+                setViewAppt(null);
+                loadAppointments();
+                return STATUS_MSG[newStatus] || "Estado actualizado";
+            },
+            error: (err) => apiError(err, "Error al cambiar estado")
+        });
+    };
+
+    const refreshAppointment = (updatedAppt) => {
+        setAppointments(prev => prev.map(a => a.id === updatedAppt.id ? updatedAppt : a));
+        setViewAppt(updatedAppt);
+    };
+
+    const handleWalkIn = async (data) => {
+        await walkInAppointment(token, data);
+        window.dispatchEvent(new Event("dashboard:refresh"));
+        setWalkInOpen(false);
+        loadAppointments();
+    };
+
+    const handleNewFromAppt = () => {
+        setSelectedSlot(null);
+        setTimeout(() => formRef.current?.scrollIntoView({ behavior:"smooth", block:"nearest" }), 50);
     };
 
     const handleEditSave = async (form) => {
@@ -619,8 +1046,6 @@ const Appointments = () => {
         window.dispatchEvent(new Event("dashboard:refresh"));
         setEditingAppt(null);
         loadAppointments();
-        setSuccess("Cita actualizada");
-        setTimeout(() => setSuccess(""), 3500);
     };
 
     const handleMiniSelect = (date) => {
@@ -647,19 +1072,19 @@ const Appointments = () => {
                 .apt-body::-webkit-scrollbar-thumb { background: var(--c-border-2); border-radius: 4px; }
             `}</style>
 
-            {success && (
-                <div className="alert alert-success" style={{marginBottom:"16px"}}>
-                    {success}
-                    <button className="alert-close" onClick={()=>setSuccess("")}><Icon.X s={14} /></button>
-                </div>
-            )}
-
             {/* Page header */}
             <div className="page-header">
                 <div>
                     <h1 className="page-title">Citas</h1>
                     <p className="page-subtitle">{weekTitle(weekStart)}</p>
                 </div>
+                {canEdit && (
+                    <button className="btn btn-primary btn-md"
+                        style={{display:"flex",alignItems:"center",gap:"6px"}}
+                        onClick={()=>setWalkInOpen(true)}>
+                        <Icon.Plus s={15} /> Walk-in
+                    </button>
+                )}
             </div>
 
             {/* Main grid: calendar + sidebar */}
@@ -754,19 +1179,16 @@ const Appointments = () => {
                                                     + Agendar
                                                 </span>
                                             )}
-                                            {cellAppts.map(a => {
-                                                const pet = getPetById(a.pet);
-                                                return (
-                                                    <ApptBadge
-                                                        key={a.id}
-                                                        appt={a}
-                                                        pal={getVetPal(a.veterinarian)}
-                                                        petName={pet?.name || "—"}
-                                                        ownerName={pet?.owner?.name || ""}
-                                                        onClick={setViewAppt}
-                                                    />
-                                                );
-                                            })}
+                                            {cellAppts.map(a => (
+                                                <ApptBadge
+                                                    key={a.id}
+                                                    appt={a}
+                                                    pal={getVetPal(a.veterinarian)}
+                                                    petName={a.pet_name || "—"}
+                                                    ownerName={a.owner_name || ""}
+                                                    onClick={setViewAppt}
+                                                />
+                                            ))}
                                         </div>
                                     );
                                 })}
@@ -839,8 +1261,8 @@ const Appointments = () => {
                             <SidebarForm
                                 slot={selectedSlot}
                                 onSave={handleFormSave}
+                                onSaveWithPatient={handleSaveWithPatient}
                                 onClear={()=>setSelectedSlot(null)}
-                                pets={pets}
                                 staff={staff}
                                 user={user}
                                 formRef={formRef}
@@ -880,14 +1302,17 @@ const Appointments = () => {
             {viewAppt && (
                 <DetailModal
                     appt={viewAppt}
-                    petName={getPetById(viewAppt.pet)?.name || "—"}
+                    petName={viewAppt.pet_name || "—"}
                     vetName={getVetName(viewAppt.veterinarian) || viewAppt.veterinarian_name}
                     petId={viewAppt.pet}
                     onClose={()=>setViewAppt(null)}
                     onStatusChange={handleStatusChange}
                     onEdit={appt=>{ setEditingAppt(appt); setViewAppt(null); }}
+                    onNewFromAppt={appt=>{ setViewAppt(null); handleNewFromAppt(appt); }}
                     navigate={navigate}
                     canEdit={canEdit}
+                    showHistory={!!orgSettings?.show_status_change_history}
+                    onRefresh={refreshAppointment}
                 />
             )}
 
@@ -895,11 +1320,21 @@ const Appointments = () => {
             {editingAppt && (
                 <EditModal
                     appt={editingAppt}
-                    pets={pets}
                     staff={staff}
                     user={user}
                     onClose={()=>setEditingAppt(null)}
                     onSave={handleEditSave}
+                />
+            )}
+
+            {/* Walk-in Modal */}
+            {walkInOpen && (
+                <WalkInModal
+                    staff={staff}
+                    user={user}
+                    allowAnonymousWalkIn={!!orgSettings?.allow_anonymous_walkin}
+                    onClose={()=>setWalkInOpen(false)}
+                    onSave={handleWalkIn}
                 />
             )}
         </div>

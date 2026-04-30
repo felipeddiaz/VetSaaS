@@ -3,6 +3,7 @@ import { getStaff, createStaff, deactivateStaff } from "../api/staff";
 import { useAuth } from "../auth/authContext";
 import { Icon } from "../components/icons";
 import { useConfirm } from "../components/ConfirmDialog";
+import { toast } from "sonner";
 
 const EMPTY_FORM = {
     username: "",
@@ -36,7 +37,6 @@ const Staff = () => {
     const [staff, setStaff] = useState([]);
     const [loading, setLoading] = useState(true);
     const [showModal, setShowModal] = useState(false);
-    const [error, setError] = useState("");
     const [form, setForm] = useState(EMPTY_FORM);
 
     useEffect(() => {
@@ -59,24 +59,37 @@ const Staff = () => {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        setError("");
 
-        if (!form.username.trim()) { setError("El nombre de usuario es obligatorio"); return; }
-        if (!form.first_name.trim()) { setError("El nombre es obligatorio"); return; }
-        if (!form.email.trim()) { setError("El email es obligatorio"); return; }
-        if (!form.password || form.password.length < 6) { setError("La contraseña debe tener al menos 6 caracteres"); return; }
+        const usernameRe = /^[A-Za-z0-9_.\-]+$/;
+        const nameRe = /^[A-Za-zÁÉÍÓÚáéíóúñÑ ]+$/;
+
+        if (!form.username.trim()) { toast.error("El nombre de usuario es obligatorio"); return; }
+        if (!usernameRe.test(form.username.trim())) { toast.error("El usuario solo puede contener letras, números, puntos, guiones y guiones bajos"); return; }
+        if (!form.first_name.trim()) { toast.error("El nombre es obligatorio"); return; }
+        if (!nameRe.test(form.first_name.trim())) { toast.error("El nombre solo puede contener letras y espacios"); return; }
+        if (!form.email.trim()) { toast.error("El email es obligatorio"); return; }
+        if (!form.password || form.password.length < 8) { toast.error("La contraseña debe tener al menos 8 caracteres"); return; }
+        if (!/[A-Z]/.test(form.password)) { toast.error("La contraseña debe contener al menos una mayúscula"); return; }
+        if (!/[0-9]/.test(form.password)) { toast.error("La contraseña debe contener al menos un número"); return; }
 
         try {
-            await createStaff(form);
+            await toast.promise(createStaff(form), {
+                loading: 'Creando usuario...',
+                success: 'Usuario creado exitosamente',
+                error: (err) => {
+                    const d = err.response?.data;
+                    if (d) {
+                        const first = Object.values(d).flat()[0];
+                        if (first) return String(first);
+                    }
+                    return "Error al crear usuario";
+                },
+            });
             setForm(EMPTY_FORM);
             setShowModal(false);
             fetchStaff();
         } catch (err) {
-            setError(
-                err.response?.data?.username?.[0] ||
-                err.response?.data?.email?.[0] ||
-                "Error al crear usuario"
-            );
+            // Modal stays open — toast already shows the error
         }
     };
 
@@ -89,17 +102,19 @@ const Staff = () => {
         });
         if (!ok) return;
         try {
-            await deactivateStaff(id);
+            await toast.promise(deactivateStaff(id), {
+                loading: 'Desactivando...',
+                success: 'Usuario desactivado',
+                error: 'Error al desactivar usuario'
+            });
             fetchStaff();
         } catch (err) {
-            alert("Error al desactivar usuario");
         }
     };
 
     const closeModal = () => {
         setForm(EMPTY_FORM);
         setShowModal(false);
-        setError("");
     };
 
     if (loading) {
@@ -187,7 +202,6 @@ const Staff = () => {
                             <button className="modal-close" onClick={closeModal}><Icon.X s={16} /></button>
                         </div>
                         <div className="modal-body">
-                            {error && <div className="alert alert-danger">{error}</div>}
                             <form onSubmit={handleSubmit}>
                                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 14px" }}>
                                     <div className="form-group">

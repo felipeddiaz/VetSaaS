@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.utils import timezone
 from zoneinfo import available_timezones
 
-from .models import Organization, OrganizationTimezoneAudit
+from .models import Organization, OrganizationTimezoneAudit, OrganizationSettings
 
 
 class OrganizationSerializer(serializers.ModelSerializer):
@@ -34,3 +34,15 @@ class OrganizationSerializer(serializers.ModelSerializer):
             )
 
         return updated
+
+
+class OrganizationSettingsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OrganizationSettings
+        fields = [
+            'auto_create_medical_record',
+            'auto_create_invoice_on_done',
+            'require_confirmation_before_start',
+            'allow_anonymous_walkin',
+            'show_status_change_history',
+        ]

@@ -1,15 +1,19 @@
 import { useEffect, useState, useMemo } from "react";
-import { useSearchParams, useNavigate } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import { apiError } from "../utils/apiError";
 import { useConfirm } from "../components/ConfirmDialog";
 import {
     getMedicalRecords, createMedicalRecord, updateMedicalRecord,
     deleteMedicalRecord, getMedicalRecord, closeMedicalRecord,
 } from "../api/medicalRecords";
+import { createPrescription, downloadPrescriptionPDF } from "../api/prescriptions";
 import { getPets } from "../api/pets";
 import { getProducts, addMedicalRecordProduct, removeMedicalRecordProduct } from "../api/inventory";
 import { useAuth } from "../auth/authContext";
 import { Icon } from "../components/icons";
+import { toast } from "sonner";
+import PrescriptionForm from "../components/prescriptions/PrescriptionForm";
+import SearchSelect from "../components/SearchSelect";
 import styles from "./medicalRecords.module.css";
 
 const EMPTY_FORM = { pet: "", diagnosis: "", treatment: "", notes: "", weight: "", appointment: null };
@@ -79,11 +83,11 @@ const groupByYearMonth = (records) => {
 const MedicalRecords = () => {
     const { token, initializing, user } = useAuth();
     const confirm = useConfirm();
-    const navigate = useNavigate();
     const [searchParams] = useSearchParams();
 
-    const [records,    setRecords]    = useState([]);
-    const [pets,       setPets]       = useState([]);
+    const [records,       setRecords]       = useState([]);
+    const [pets,          setPets]          = useState([]);
+    const [isLoadingPets, setIsLoadingPets] = useState(true);
     const [products,   setProducts]   = useState([]);
     // R7: mapa O(1) para lookup por id (evita find() en cada interacción)
     const productMap = useMemo(() => {
@@ -107,10 +111,10 @@ const MedicalRecords = () => {
     const [editing,         setEditing]         = useState(null);
     const [savedRecord,     setSavedRecord]     = useState(null);
     const [productLine,     setProductLine]     = useState({ product: "", quantity: "1" });
-    const [productError,    setProductError]    = useState("");
+    const [showPrescriptionModal, setShowPrescriptionModal] = useState(false);
+    const [prescriptionTarget, setPrescriptionTarget] = useState(null);
     const [form,            setForm]            = useState(EMPTY_FORM);
-    const [error,           setError]           = useState("");
-    const [success,         setSuccess]         = useState("");
+    const [downloadingPrescriptionId, setDownloadingPrescriptionId] = useState(null);
 
     useEffect(() => { if (token) loadData(); }, [token]);
     useEffect(() => { if (token) loadRecords(); }, [selectedPet, page, token]);
@@ -135,10 +139,12 @@ const MedicalRecords = () => {
     const normalizeList = (data) => (Array.isArray(data) ? data : (data?.results || []));
 
     const loadData = async () => {
+        setIsLoadingPets(true);
         try {
-            const petsData = await getPets(token);
+            const petsData = await getPets();
             setPets(normalizeList(petsData));
         } catch { setPets([]); }
+        finally { setIsLoadingPets(false); }
 
         try {
             const prodsData = await getProducts({ active: "true" });
@@ -198,8 +204,7 @@ const MedicalRecords = () => {
             p.name?.toLowerCase().includes(q)       ||
             p.species?.toLowerCase().includes(q)    ||
             p.breed?.toLowerCase().includes(q)      ||
-            p.owner_name?.toLowerCase().includes(q) ||
-            p.owner?.toLowerCase().includes(q)
+            p.owner_name?.toLowerCase().includes(q)
         );
     }, [pets, petSearch]);
 
@@ -216,58 +221,76 @@ const MedicalRecords = () => {
 
     /* ── CRUD ────────────────────────────────────────────────────────────── */
     const handleSubmit = async (e) => {
-        e.preventDefault(); setError("");
-        if (!form.pet)              { setError("Selecciona una mascota"); return; }
-        if (!form.diagnosis.trim()) { setError("El diagnóstico es obligatorio"); return; }
-        if (!form.treatment.trim()) { setError("El tratamiento es obligatorio"); return; }
+        e.preventDefault();
+        if (!form.pet)              { toast.error("Selecciona una mascota"); return; }
+        if (!form.diagnosis.trim()) { toast.error("El diagnóstico es obligatorio"); return; }
+        if (!form.treatment.trim()) { toast.error("El tratamiento es obligatorio"); return; }
         try {
             const payload = {
                 pet: form.pet, diagnosis: form.diagnosis, treatment: form.treatment,
                 notes: form.notes, weight: form.weight || null, appointment: form.appointment || null,
             };
             if (editing) {
-                await updateMedicalRecord(token, editing.id, payload);
-                setSuccess("Consulta actualizada");
-                setSavedRecord(await getMedicalRecord(token, editing.id));
+                const p = updateMedicalRecord(token, editing.id, payload)
+                    .then(async () => setSavedRecord(await getMedicalRecord(token, editing.id)));
+                await toast.promise(p, {
+                    loading: 'Actualizando...',
+                    success: 'Consulta actualizada',
+                    error: (err) => apiError(err, "Error al guardar"),
+                });
             } else {
-                const result = await createMedicalRecord(token, payload);
-                setSuccess("Consulta registrada. Ahora puedes agregar productos utilizados.");
-                setSavedRecord(await getMedicalRecord(token, result.id));
-                /* Update counts */
-                setPetCounts(prev => ({ ...prev, [form.pet]: (prev[form.pet] || 0) + 1 }));
+                const p = createMedicalRecord(token, payload).then(async (result) => {
+                    setSavedRecord(await getMedicalRecord(token, result.id));
+                    setPetCounts(prev => ({ ...prev, [form.pet]: (prev[form.pet] || 0) + 1 }));
+                });
+                await toast.promise(p, {
+                    loading: 'Registrando...',
+                    success: 'Consulta registrada. Ahora puedes agregar productos utilizados.',
+                    error: (err) => apiError(err, "Error al guardar"),
+                });
             }
             loadRecords();
-        } catch (err) { setError(apiError(err, "Error al guardar")); }
+        } catch (err) { }
     };
 
     const handleAddProduct = async () => {
-        setProductError("");
-        if (!savedRecord?.can_modify_charges) { setProductError("No puedes modificar esta consulta"); return; }
-        if (savedRecord?.status === "closed") { setProductError("La consulta está cerrada"); return; }
-        if (!productLine.product)                              { setProductError("Selecciona un producto"); return; }
-        if (!productLine.quantity || Number(productLine.quantity) <= 0) { setProductError("La cantidad debe ser mayor a 0"); return; }
-        // R8: validar presentation.id antes de enviar (error explícito, no silencioso)
+        if (!savedRecord?.can_modify_charges) { toast.error("No puedes modificar esta consulta"); return; }
+        if (savedRecord?.status === "closed") { toast.error("La consulta está cerrada"); return; }
+        if (!productLine.product)                              { toast.error("Selecciona un producto"); return; }
+        if (!productLine.quantity || Number(productLine.quantity) <= 0) { toast.error("La cantidad debe ser mayor a 0"); return; }
         const selected = productMap[productLine.product];
-        if (!selected?.presentation?.id) { setProductError("El producto seleccionado no tiene presentación configurada"); return; }
+        if (!selected?.presentation?.id) { toast.error("El producto seleccionado no tiene presentación configurada"); return; }
         try {
-            await addMedicalRecordProduct(savedRecord.id, { presentation: selected.presentation.id, quantity: productLine.quantity });
-            setSavedRecord(await getMedicalRecord(token, savedRecord.id));
-            setProductLine({ product: "", quantity: "1" });
-        } catch (err) { setProductError(apiError(err, "Error al agregar producto")); }
+            const p = addMedicalRecordProduct(savedRecord.id, { presentation: selected.presentation.id, quantity: productLine.quantity })
+                .then(async () => {
+                    setSavedRecord(await getMedicalRecord(token, savedRecord.id));
+                    setProductLine({ product: "", quantity: "1" });
+                });
+            await toast.promise(p, {
+                loading: 'Agregando...',
+                success: 'Producto agregado',
+                error: (err) => apiError(err, "Error al agregar producto"),
+            });
+        } catch (err) {}
     };
 
     const handleRemoveProduct = async (id) => {
-        if (!savedRecord?.can_modify_charges) { setProductError("No puedes modificar esta consulta"); return; }
-        if (savedRecord?.status === "closed") { setProductError("La consulta está cerrada"); return; }
+        if (!savedRecord?.can_modify_charges) { toast.error("No puedes modificar esta consulta"); return; }
+        if (savedRecord?.status === "closed") { toast.error("La consulta está cerrada"); return; }
         try {
-            await removeMedicalRecordProduct(savedRecord.id, id);
-            setSavedRecord(await getMedicalRecord(token, savedRecord.id));
-        } catch (err) { setProductError(apiError(err, "Error al quitar producto")); }
+            const p = removeMedicalRecordProduct(savedRecord.id, id)
+                .then(async () => setSavedRecord(await getMedicalRecord(token, savedRecord.id)));
+            await toast.promise(p, {
+                loading: 'Quitando...',
+                success: 'Producto removido',
+                error: (err) => apiError(err, "Error al quitar producto"),
+            });
+        } catch (err) {}
     };
 
     const handleCloseRecord = async (record) => {
         if (!record?.can_close) {
-            setError("No puedes finalizar esta consulta");
+            toast.error("No puedes finalizar esta consulta");
             return;
         }
         const ok = await confirm({
@@ -279,14 +302,69 @@ const MedicalRecords = () => {
         if (!ok) return;
 
         try {
-            await closeMedicalRecord(token, record.id);
-            setSuccess("Consulta finalizada");
-            await loadRecords();
-            if (savedRecord?.id === record.id) {
-                setSavedRecord(await getMedicalRecord(token, savedRecord.id));
-            }
+            const p = closeMedicalRecord(token, record.id).then(async () => {
+                await loadRecords();
+                if (savedRecord?.id === record.id) {
+                    setSavedRecord(await getMedicalRecord(token, savedRecord.id));
+                }
+            });
+            await toast.promise(p, {
+                loading: 'Finalizando...',
+                success: 'Consulta finalizada',
+                error: (err) => apiError(err, "No se pudo finalizar la consulta")
+            });
+        } catch (err) {}
+    };
+
+    const replaceRecordInState = (updatedRecord) => {
+        setRecords(prev => prev.map(record => record.id === updatedRecord.id ? { ...record, ...updatedRecord } : record));
+        if (savedRecord?.id === updatedRecord.id) {
+            setSavedRecord(updatedRecord);
+        }
+    };
+
+    const openPrescriptionModal = (record) => {
+        if (!record || record.prescription_id) return;
+        if (record.status === "closed") {
+            toast.error("No puedes crear una receta en una consulta cerrada");
+            return;
+        }
+        setPrescriptionTarget(record);
+        setShowPrescriptionModal(true);
+    };
+
+    const closePrescriptionModal = () => {
+        setShowPrescriptionModal(false);
+        setPrescriptionTarget(null);
+    };
+
+    const handlePrescriptionSubmit = async (payload) => {
+        try {
+            const p = createPrescription(payload).then(async () => {
+                const refreshed = await getMedicalRecord(token, payload.medical_record);
+                replaceRecordInState(refreshed);
+                closePrescriptionModal();
+            });
+            await toast.promise(p, { loading: 'Creando receta...', success: 'Receta creada', error: 'Error al crear receta' });
+        } catch (err) {}
+    };
+
+    const handleDownloadPrescription = async (prescriptionId) => {
+        setDownloadingPrescriptionId(prescriptionId);
+        try {
+            const blob = await downloadPrescriptionPDF(prescriptionId);
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `receta_${prescriptionId}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
         } catch (err) {
-            setError(apiError(err, "No se pudo finalizar la consulta"));
+            toast.error(apiError(err, "No se pudo descargar la receta"));
+        } finally {
+            setDownloadingPrescriptionId(null);
         }
     };
 
@@ -308,16 +386,15 @@ const MedicalRecords = () => {
         });
         if (!ok) return;
         try {
-            await deleteMedicalRecord(token, id);
-            setSuccess("Consulta eliminada");
-            loadRecords();
-        } catch { setError("Error al eliminar"); }
+            const p = deleteMedicalRecord(token, id).then(() => loadRecords());
+            await toast.promise(p, { loading: 'Eliminando...', success: 'Consulta eliminada', error: 'Error al eliminar' });
+        } catch {}
     };
 
     const closeModal = () => {
         setShowModal(false); setEditing(null); setSavedRecord(null);
-        setProductLine({ product: "", quantity: "1" }); setProductError("");
-        setError(""); setForm(EMPTY_FORM);
+        setProductLine({ product: "", quantity: "1" });
+        setForm(EMPTY_FORM);
     };
 
     const formatDate     = (ds) => new Date(ds).toLocaleDateString("es-ES", { year: "numeric", month: "long",  day: "numeric" });
@@ -337,7 +414,6 @@ const MedicalRecords = () => {
 
     return (
         <div>
-            {/* ── Header ──────────────────────────────────────────────────── */}
             <div className="page-header">
                 <h1 className="page-title">Historial Clínico</h1>
                 {canCreate && (
@@ -352,9 +428,6 @@ const MedicalRecords = () => {
                 )}
             </div>
 
-            {error   && <div className="alert alert-danger">{error}<button className="alert-close" onClick={() => setError("")}><Icon.X s={14} /></button></div>}
-            {success && <div className="alert alert-success">{success}<button className="alert-close" onClick={() => setSuccess("")}><Icon.X s={14} /></button></div>}
-
             {/* ── Main two-column layout ───────────────────────────────────── */}
             <div className={styles.pageLayout}>
 
@@ -363,7 +436,7 @@ const MedicalRecords = () => {
                     <div className={styles.sidebarHeader}>Mascotas</div>
 
                     <div className={styles.sidebarSearchWrap}>
-                        <span className={styles.sidebarIcon}><Icon.Search /></span>
+                        <span className={styles.sidebarSearchIcon}><Icon.Search /></span>
                         <input
                             className={styles.sidebarSearchInput}
                             placeholder="Nombre, raza, especie…"
@@ -575,11 +648,13 @@ const MedicalRecords = () => {
                                                                                     </div>
                                                                                 )}
                                                                                 <div className={styles.expandedLinks}>
-                                                                                    {record.prescription_id
+                    {record.prescription_id
                                                                                         ? <span className="badge badge-purple">Receta generada ✓</span>
-                                                                                        : canCreate && (
+                                                                                        : record.status === "closed"
+                                                                                            ? <span className="badge badge-default">Consulta cerrada: no admite receta nueva</span>
+                                                                                            : canCreate && (
                                                                                             <button className="btn btn-purple btn-sm"
-                                                                                                onClick={() => navigate(`/prescriptions?medical_record=${record.id}&pet=${record.pet}`)}>
+                                                                                                onClick={() => openPrescriptionModal(record)}>
                                                                                                 Crear Receta
                                                                                             </button>
                                                                                         )
@@ -588,6 +663,48 @@ const MedicalRecords = () => {
                                                                                         <span className="badge badge-info">Factura generada ✓</span>
                                                                                     )}
                                                                                 </div>
+                                                                                {record.prescription_summary && (
+                                                                                    <div className={styles.expandedSection}>
+                                                                                        <div className={styles.expandedLabel}>Receta médica</div>
+                                                                                        <div className="card" style={{ padding: "12px", background: "var(--c-purple-bg)", borderColor: "#ddd6fe" }}>
+                                                                                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", marginBottom: "8px" }}>
+                                                                                                <span style={{ fontSize: "12px", color: "var(--c-text-2)" }}>
+                                                                                                    {record.prescription_summary.items.length} medicamento{record.prescription_summary.items.length !== 1 ? "s" : ""}
+                                                                                                </span>
+                                                                                                <button
+                                                                                                    className="btn btn-purple btn-xs"
+                                                                                                    onClick={() => handleDownloadPrescription(record.prescription_summary.id)}
+                                                                                                    disabled={downloadingPrescriptionId === record.prescription_summary.id}
+                                                                                                >
+                                                                                                    {downloadingPrescriptionId === record.prescription_summary.id ? "..." : "PDF"}
+                                                                                                </button>
+                                                                                            </div>
+                                                                                            <div style={{ display: "grid", gap: "8px" }}>
+                                                                                                {record.prescription_summary.items.map(item => (
+                                                                                                    <div key={item.id} style={{ background: "white", border: "1px solid #ddd6fe", borderRadius: "8px", padding: "10px" }}>
+                                                                                                        <div style={{ fontWeight: "600", fontSize: "13px", marginBottom: "4px" }}>
+                                                                                                            {item.product_name} · {item.quantity} {item.product_unit}
+                                                                                                        </div>
+                                                                                                        <div style={{ fontSize: "12px", color: "var(--c-text-2)" }}>
+                                                                                                            Dosis: {item.dose}
+                                                                                                            {item.duration ? ` · Duración: ${item.duration}` : ""}
+                                                                                                        </div>
+                                                                                                        {item.instructions && (
+                                                                                                            <div style={{ fontSize: "12px", color: "var(--c-text-2)", marginTop: "4px" }}>
+                                                                                                                {item.instructions}
+                                                                                                            </div>
+                                                                                                        )}
+                                                                                                    </div>
+                                                                                                ))}
+                                                                                            </div>
+                                                                                            {record.prescription_summary.notes && (
+                                                                                                <p style={{ fontSize: "12px", color: "var(--c-text-2)", marginTop: "10px", marginBottom: 0 }}>
+                                                                                                    Nota: {record.prescription_summary.notes}
+                                                                                                </p>
+                                                                                            )}
+                                                                                        </div>
+                                                                                    </div>
+                                                                                )}
                                                                             </div>
                                                                         )}
                                                                     </div>
@@ -627,35 +744,42 @@ const MedicalRecords = () => {
                         <div className="modal-body">
                             {!savedRecord ? (
                                 <form onSubmit={handleSubmit}>
-                                    {error && <div className="alert alert-danger">{error}</div>}
                                     <div className="form-group">
-                                        <label className="form-label">MASCOTA *</label>
-                                        <select className="select-input" value={form.pet}
-                                            onChange={e => setForm({ ...form, pet: e.target.value })}>
-                                            <option value="">Seleccionar mascota</option>
-                                            {pets.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                                        </select>
+                                        <label className="form-label" htmlFor="medical-record-pet">MASCOTA *</label>
+                                        <SearchSelect
+                                            id="medical-record-pet"
+                                            name="medical-record-pet"
+                                            value={form.pet ? { id: form.pet, label: pets.find(p => String(p.id) === String(form.pet))?.name ?? "" } : null}
+                                            onChange={item => setForm({ ...form, pet: item?.id ?? "" })}
+                                            onSearch={q => {
+                                                const low = q.toLowerCase();
+                                                const filtered = pets.filter(p => p.name.toLowerCase().includes(low));
+                                                return Promise.resolve(filtered.map(p => ({ id: p.id, label: p.name })));
+                                            }}
+                                            placeholder={isLoadingPets ? "Cargando mascotas..." : "Buscar mascota..."}
+                                            disabled={isLoadingPets}
+                                        />
                                     </div>
                                     <div className="form-group">
-                                        <label className="form-label">PESO (kg)</label>
-                                        <input type="number" step="0.01" className="input" value={form.weight}
+                                        <label className="form-label" htmlFor="medical-record-weight">PESO (kg)</label>
+                                        <input id="medical-record-weight" name="medical-record-weight" type="number" step="0.01" className="input" value={form.weight}
                                             onChange={e => setForm({ ...form, weight: e.target.value })} placeholder="Ej: 5.5" />
                                     </div>
                                     <div className="form-group">
-                                        <label className="form-label">DIAGNÓSTICO *</label>
-                                        <textarea className="textarea-input" value={form.diagnosis}
+                                        <label className="form-label" htmlFor="medical-record-diagnosis">DIAGNÓSTICO *</label>
+                                        <textarea id="medical-record-diagnosis" name="medical-record-diagnosis" className="textarea-input" value={form.diagnosis}
                                             onChange={e => setForm({ ...form, diagnosis: e.target.value })}
                                             placeholder="Describe el diagnóstico..." />
                                     </div>
                                     <div className="form-group">
-                                        <label className="form-label">TRATAMIENTO *</label>
-                                        <textarea className="textarea-input" value={form.treatment}
+                                        <label className="form-label" htmlFor="medical-record-treatment">TRATAMIENTO *</label>
+                                        <textarea id="medical-record-treatment" name="medical-record-treatment" className="textarea-input" value={form.treatment}
                                             onChange={e => setForm({ ...form, treatment: e.target.value })}
                                             placeholder="Describe el tratamiento..." />
                                     </div>
                                     <div className="form-group">
-                                        <label className="form-label">NOTAS</label>
-                                        <textarea className="textarea-input" style={{ minHeight: "60px" }}
+                                        <label className="form-label" htmlFor="medical-record-notes">NOTAS</label>
+                                        <textarea id="medical-record-notes" name="medical-record-notes" className="textarea-input" style={{ minHeight: "60px" }}
                                             value={form.notes}
                                             onChange={e => setForm({ ...form, notes: e.target.value })}
                                             placeholder="Notas adicionales..." />
@@ -663,15 +787,69 @@ const MedicalRecords = () => {
                                 </form>
                             ) : (
                                 <div>
-                                    <div className="alert alert-success" style={{ marginBottom: "20px" }}>
-                                        <div>
-                                            <p style={{ fontWeight: "600" }}>Consulta guardada correctamente</p>
-                                            <p style={{ fontSize: "12.5px" }}>
-                                                {savedRecord.diagnosis.slice(0, 60)}{savedRecord.diagnosis.length > 60 ? "…" : ""}
-                                            </p>
-                                        </div>
+                                    <div style={{ marginBottom: "18px" }}>
+                                        <p style={{ fontWeight: "600", fontSize: "13px", marginBottom: "6px" }}>Medicamentos recetados</p>
+                                        <p style={{ color: "var(--c-text-3)", fontSize: "12px", marginBottom: "10px" }}>
+                                            Esto corresponde a lo que el paciente debe llevar o administrar despues de la consulta.
+                                        </p>
+                                        {savedRecord.prescription_summary ? (
+                                            <div className="card" style={{ padding: "12px", background: "var(--c-purple-bg)", borderColor: "#ddd6fe" }}>
+                                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", marginBottom: "8px" }}>
+                                                    <span style={{ fontSize: "12px", color: "var(--c-text-2)" }}>
+                                                        {savedRecord.prescription_summary.items.length} medicamento{savedRecord.prescription_summary.items.length !== 1 ? "s" : ""}
+                                                    </span>
+                                                    <button
+                                                        className="btn btn-purple btn-xs"
+                                                        onClick={() => handleDownloadPrescription(savedRecord.prescription_summary.id)}
+                                                        disabled={downloadingPrescriptionId === savedRecord.prescription_summary.id}
+                                                    >
+                                                        {downloadingPrescriptionId === savedRecord.prescription_summary.id ? "Descargando..." : "Descargar PDF"}
+                                                    </button>
+                                                </div>
+                                                {savedRecord.prescription_summary.items.map(item => (
+                                                    <div key={item.id} style={{ background: "white", border: "1px solid #ddd6fe", borderRadius: "8px", padding: "10px", marginBottom: "8px" }}>
+                                                        <div style={{ fontWeight: "600", fontSize: "13px", marginBottom: "4px" }}>
+                                                            {item.product_name} · {item.quantity} {item.product_unit}
+                                                        </div>
+                                                        <div style={{ fontSize: "12px", color: "var(--c-text-2)" }}>
+                                                            Dosis: {item.dose}
+                                                            {item.duration ? ` · Duración: ${item.duration}` : ""}
+                                                        </div>
+                                                        {item.instructions && (
+                                                            <div style={{ fontSize: "12px", color: "var(--c-text-2)", marginTop: "4px" }}>
+                                                                {item.instructions}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                                {savedRecord.prescription_summary.notes && (
+                                                    <p style={{ fontSize: "12px", color: "var(--c-text-2)", marginTop: "8px", marginBottom: 0 }}>
+                                                        Nota: {savedRecord.prescription_summary.notes}
+                                                    </p>
+                                                )}
+                                            </div>
+                                        ) : (
+                                            <>
+                                                {!savedRecord.prescription_id && savedRecord.status !== "closed" && canCreate && (
+                                                    <div style={{ marginBottom: "14px" }}>
+                                                        <button className="btn btn-purple btn-sm" onClick={() => openPrescriptionModal(savedRecord)}>
+                                                            Crear Receta
+                                                        </button>
+                                                    </div>
+                                                )}
+                                                {savedRecord.status === "closed" && !savedRecord.prescription_id && (
+                                                    <p style={{ color: "var(--c-text-3)", fontSize: "12px", marginBottom: "12px" }}>
+                                                        La consulta ya está cerrada y no permite crear una receta nueva.
+                                                    </p>
+                                                )}
+                                            </>
+                                        )}
                                     </div>
-                                    <p style={{ fontWeight: "600", fontSize: "13px", marginBottom: "12px" }}>Productos utilizados</p>
+
+                                    <p style={{ fontWeight: "600", fontSize: "13px", marginBottom: "6px" }}>Productos consumidos en consulta</p>
+                                    <p style={{ color: "var(--c-text-3)", fontSize: "12px", marginBottom: "12px" }}>
+                                        Esto descuenta stock interno de la clínica. No sustituye a la receta médica.
+                                    </p>
                                     {savedRecord.products_used?.length > 0 ? (
                                         <div style={{ marginBottom: "14px" }}>
                                             {savedRecord.products_used.map(p => (
@@ -696,7 +874,6 @@ const MedicalRecords = () => {
                                     ) : (
                                         <p style={{ color: "var(--c-text-3)", fontSize: "13px", marginBottom: "14px" }}>Sin productos agregados aún.</p>
                                     )}
-                                    {productError && <div className="alert alert-danger">{productError}</div>}
                                     <div style={{ display: "flex", gap: "8px", marginBottom: "4px" }}>
                                         <select className="select-input" style={{ flex: 2 }} value={productLine.product}
                                             disabled={!savedRecord?.can_modify_charges || savedRecord?.status === "closed"}
@@ -732,7 +909,7 @@ const MedicalRecords = () => {
                             {!savedRecord ? (
                                 <>
                                     <button className="btn btn-primary btn-md" style={{ flex: 1 }} onClick={handleSubmit}>
-                                        Guardar y agregar productos
+                                        Guardar consulta
                                     </button>
                                     <button className="btn btn-secondary btn-md" style={{ flex: 1 }} onClick={closeModal}>Cancelar</button>
                                 </>
@@ -742,6 +919,21 @@ const MedicalRecords = () => {
                         </div>
                     </div>
                 </div>
+            )}
+
+            {showPrescriptionModal && prescriptionTarget && (
+                <PrescriptionForm
+                    title="Nueva Receta"
+                    initialValue={{ pet: prescriptionTarget.pet, medical_record: prescriptionTarget.id, notes: "", items: [] }}
+                    pets={pets}
+                    products={products}
+                    medicalRecordsForPet={[prescriptionTarget]}
+                    lockedPet={true}
+                    lockedMedicalRecord={true}
+                    submitLabel="Crear Receta"
+                    onSubmit={handlePrescriptionSubmit}
+                    onCancel={closePrescriptionModal}
+                />
             )}
         </div>
     );

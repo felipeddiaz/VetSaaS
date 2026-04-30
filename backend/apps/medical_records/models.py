@@ -14,8 +14,8 @@ class MedicalRecord(OrganizationalModel):
     veterinarian = models.ForeignKey(User, on_delete=models.SET_NULL, related_name='medical_records', null=True, blank=True)
     appointment = models.ForeignKey("appointments.Appointment", on_delete=models.SET_NULL, null=True, blank=True, related_name='medical_record')
 
-    diagnosis = models.TextField()
-    treatment = models.TextField()
+    diagnosis = models.TextField(blank=True)
+    treatment = models.TextField(blank=True)
     notes = models.TextField(blank=True)
     weight = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.OPEN, db_index=True)
@@ -58,6 +58,37 @@ class MedicalRecord(OrganizationalModel):
         ordering = ["-created_at"]
         indexes = [
             models.Index(fields=["organization", "pet", "-created_at"]),
+        ]
+
+
+class VaccineRecord(OrganizationalModel):
+    STATUS_CURRENT = 'current'
+    STATUS_OVERDUE = 'overdue'
+    STATUS_NO_SCHEDULED = 'no_scheduled'
+
+    pet = models.ForeignKey(Pet, on_delete=models.CASCADE, related_name='vaccine_records')
+    vaccine_name = models.CharField(max_length=255)
+    application_date = models.DateField()
+    next_due_date = models.DateField(null=True, blank=True)
+    applied_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name='applied_vaccines'
+    )
+    notes = models.TextField(blank=True)
+    medical_record = models.ForeignKey(
+        MedicalRecord, on_delete=models.SET_NULL, null=True, blank=True, related_name='vaccine_records'
+    )
+
+    @property
+    def status(self):
+        if not self.next_due_date:
+            return self.STATUS_NO_SCHEDULED
+        from django.utils import timezone
+        return self.STATUS_CURRENT if self.next_due_date > timezone.localdate() else self.STATUS_OVERDUE
+
+    class Meta:
+        ordering = ['-application_date', '-id']
+        indexes = [
+            models.Index(fields=['pet', 'vaccine_name']),
         ]
 
 

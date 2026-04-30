@@ -31,6 +31,9 @@ class ServiceListCreateView(BillingOrganizationMixin, generics.ListCreateAPIView
         active_only = self.request.query_params.get('active')
         if active_only == 'true':
             queryset = queryset.filter(is_active=True)
+        search = self.request.query_params.get('search', '').strip()
+        if search:
+            queryset = queryset.filter(name__icontains=search)
         return queryset
 
     def perform_create(self, serializer):
@@ -179,6 +182,9 @@ class InvoiceItemCreateView(BillingOrganizationMixin, generics.CreateAPIView):
         return context
 
     def perform_create(self, serializer):
+        from django.db import transaction
+        from apps.inventory.models import Presentation as InventoryPresentation
+
         invoice = get_object_or_404(
             Invoice,
             pk=self.kwargs['invoice_pk'],
@@ -194,15 +200,21 @@ class InvoiceItemCreateView(BillingOrganizationMixin, generics.CreateAPIView):
         if service:
             unit_price = service.base_price
             description = service.name
+            serializer.save(invoice=invoice, unit_price=unit_price, description=description)
         else:
-            unit_price = presentation.sale_price
-            description = str(presentation)
-
-        serializer.save(
-            invoice=invoice,
-            unit_price=unit_price,
-            description=description,
-        )
+            # Lock presentation to prevent concurrent overselling
+            with transaction.atomic():
+                locked_pres = InventoryPresentation.objects.select_for_update().get(
+                    pk=presentation.pk
+                )
+                if locked_pres.stock < data.get('quantity', 1):
+                    raise ValidationError(
+                        f"Stock insuficiente para '{locked_pres.product.name}': "
+                        f"disponible {locked_pres.stock}, solicitado {data.get('quantity', 1)}."
+                    )
+                unit_price = locked_pres.sale_price
+                description = str(locked_pres)
+                serializer.save(invoice=invoice, unit_price=unit_price, description=description)
 
 
 class InvoiceItemDetailView(BillingOrganizationMixin, generics.RetrieveUpdateDestroyAPIView):
