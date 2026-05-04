@@ -5,15 +5,17 @@ from django.db import transaction
 from django.shortcuts import get_object_or_404
 from rest_framework import generics
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError, NotFound
 from rest_framework.response import Response
 from rest_framework import status
+from django.utils import timezone
 from django.utils.dateparse import parse_date
 
 from apps.core.datetime_utils import filter_by_local_day, org_now_local, org_today_local, local_date_time_to_utc, get_context_timezone
-from apps.core.permissions import HybridPermission, make_permission
-from apps.core.views import TenantQueryMixin
-from apps.organizations.utils import get_org_setting
+from apps.core.permissions import HybridPermission, make_permission, user_has_permission
+from apps.core.sanitize import sanitize_text
+from apps.core.views import TenantQueryMixin, PublicIdLookupMixin, resolve_public_id
+from apps.organizations.utils import get_org_setting, SETTING_AUTO_MEDICAL_RECORD
 from apps.patients.models import Pet, SPECIES_CHOICES
 from apps.users.models import User
 
@@ -58,10 +60,11 @@ class AppointmentListCreateView(TenantQueryMixin, generics.ListCreateAPIView):
         serializer.save(organization=self.request.user.organization)
 
 
-class AppointmentDetailView(TenantQueryMixin, generics.RetrieveUpdateDestroyAPIView):
+class AppointmentDetailView(PublicIdLookupMixin, TenantQueryMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = AppointmentSerializer
     permission_classes = [HybridPermission]
     resource_name = "appointment"
+    lookup_url_kwarg = 'pk'
 
     def get_queryset(self):
         return Appointment.objects.for_organization(self.request.user.organization).select_related('pet__owner', 'veterinarian')
@@ -83,10 +86,10 @@ class AppointmentDetailView(TenantQueryMixin, generics.RetrieveUpdateDestroyAPIV
 def update_status(request, pk):
     if not request.user.organization:
         raise PermissionDenied("User has no organization assigned")
-    try:
-        appointment = Appointment.objects.for_organization(request.user.organization).get(pk=pk)
-    except Appointment.DoesNotExist:
-        return Response({'error': 'Cita no encontrada'}, status=status.HTTP_404_NOT_FOUND)
+    appointment = resolve_public_id(
+        Appointment.objects.for_organization(request.user.organization),
+        pk,
+    )
 
     new_status = request.data.get('status')
     valid_statuses = set(ALLOWED_TRANSITIONS.keys())
@@ -119,11 +122,12 @@ def update_status(request, pk):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+    from apps.core.sanitize import sanitize_text
     cancellation_reason = ''
     update_fields = ['status']
     appointment.status = new_status
     if new_status == 'canceled':
-        cancellation_reason = request.data.get('cancellation_reason', '')
+        cancellation_reason = sanitize_text(request.data.get('cancellation_reason') or '', max_length=100)
         if cancellation_reason:
             appointment.cancellation_reason = cancellation_reason
             update_fields.append('cancellation_reason')
@@ -143,7 +147,7 @@ def update_status(request, pk):
 
         # Toggle: auto_create_medical_record
         if new_status == 'done':
-            if get_org_setting(appointment.organization, 'auto_create_medical_record'):
+            if get_org_setting(appointment.organization, SETTING_AUTO_MEDICAL_RECORD):
                 from apps.medical_records.models import MedicalRecord
                 MedicalRecord.objects.get_or_create(
                     appointment=appointment,
@@ -163,8 +167,9 @@ def update_status(request, pk):
 @api_view(['GET'])
 @permission_classes([make_permission("appointment.retrieve")])
 def appointment_history(request, pk):
-    appointment = get_object_or_404(
-        Appointment.objects.for_organization(request.user.organization), pk=pk
+    appointment = resolve_public_id(
+        Appointment.objects.for_organization(request.user.organization),
+        pk,
     )
     changes = appointment.status_changes.select_related('changed_by').all()
     return Response(AppointmentStatusChangeSerializer(changes, many=True).data)
@@ -179,9 +184,9 @@ def assign_patient(request, pk):
     Propaga a MedicalRecord asociado si está abierto.
     Registra el cambio en AppointmentStatusChange.
     """
-    appointment = get_object_or_404(
+    appointment = resolve_public_id(
         Appointment.objects.select_related('pet').for_organization(request.user.organization),
-        pk=pk,
+        pk,
     )
 
     if not appointment.pet.is_generic:
@@ -313,41 +318,35 @@ def walk_in(request):
 
     pet_id = request.data.get('pet')
     vet_id = request.data.get('veterinarian')
-    reason = request.data.get('reason', '').strip()
-    notes = request.data.get('notes', '')
+    reason = sanitize_text(request.data.get('reason') or '', max_length=255)
+    notes = sanitize_text(request.data.get('notes') or '', max_length=5000)
 
-    if not vet_id or not reason:
-        return Response(
-            {'error': 'veterinarian y reason son requeridos'},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+    if not reason.strip():
+        raise ValidationError({'reason': 'El motivo de la consulta es requerido.'})
+    if not vet_id:
+        raise ValidationError({'veterinarian': 'El veterinario es requerido.'})
 
     # Toggle: allow_anonymous_walkin
     if not pet_id:
         if not get_org_setting(org, 'allow_anonymous_walkin'):
-            return Response(
-                {'error': 'Se requiere seleccionar una mascota.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        from apps.patients.models import Owner
-        try:
-            generic_owner = Owner.objects.get(organization=org, is_generic=True)
-            pet = Pet.objects.get(owner=generic_owner, is_generic=True)
-        except (Owner.DoesNotExist, Pet.DoesNotExist):
-            return Response(
-                {'error': 'Entidad genérica no configurada. Contacta al administrador.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            raise ValidationError('Walk-in anónimo no está configurado.')
+
+        from apps.patients.utils import get_or_create_generic_patient
+        _, pet = get_or_create_generic_patient(org)
     else:
         try:
             pet = Pet.objects.for_organization(org).get(pk=pet_id)
         except Pet.DoesNotExist:
-            return Response({'error': 'Mascota no encontrada'}, status=status.HTTP_404_NOT_FOUND)
+            raise NotFound('Mascota no encontrada.')
 
     try:
         vet = User.objects.get(pk=vet_id, organization=org, is_active=True)
     except User.DoesNotExist:
-        return Response({'error': 'Veterinario no encontrado'}, status=status.HTTP_404_NOT_FOUND)
+        raise NotFound('Veterinario no encontrado.')
+
+    # RBAC validation: assigned veterinarian must have permission to create walk-in appointments
+    if not user_has_permission(vet, 'appointments.create_walkin'):
+        raise PermissionDenied('El veterinario asignado no tiene permiso para crear citas walk-in.')
 
     now_local = org_now_local(org)
     today = now_local.date()
@@ -358,21 +357,34 @@ def walk_in(request):
     start_utc = local_date_time_to_utc(org, today, start_time)
     end_utc = local_date_time_to_utc(org, today, end_time)
 
-    appointment = Appointment.objects.create(
-        organization=org,
-        pet=pet,
-        veterinarian=vet,
-        date=today,
-        start_time=start_time,
-        end_time=end_time,
-        start_datetime=start_utc,
-        end_datetime=end_utc,
-        timezone_at_creation=str(get_context_timezone(org)),
-        reason=reason,
-        notes=notes,
-        status='in_progress',
-        created_by=request.user,
-    )
+    with transaction.atomic():
+        # Lock en la fila del vet para serializar walk-ins concurrentes del mismo vet
+        User.objects.select_for_update().get(pk=vet.pk)
+        existing = Appointment.objects.filter(
+            organization=org,
+            veterinarian=vet,
+            created_at__gte=timezone.now() - timedelta(seconds=10),
+            status='in_progress',
+        ).first()
+        if existing:
+            serializer = AppointmentSerializer(existing, context={'request': request})
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        appointment = Appointment.objects.create(
+            organization=org,
+            pet=pet,
+            veterinarian=vet,
+            date=today,
+            start_time=start_time,
+            end_time=end_time,
+            start_datetime=start_utc,
+            end_datetime=end_utc,
+            timezone_at_creation=str(get_context_timezone(org)),
+            reason=reason,
+            notes=notes,
+            status='in_progress',
+            created_by=request.user,
+        )
 
     serializer = AppointmentSerializer(appointment, context={'request': request})
     return Response(serializer.data, status=status.HTTP_201_CREATED)

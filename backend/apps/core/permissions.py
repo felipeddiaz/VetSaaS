@@ -68,6 +68,44 @@ def _rbac_extra(request, user, required: str | None) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Public helpers
+# ---------------------------------------------------------------------------
+
+def user_has_permission(user, perm_code: str) -> bool:
+    """
+    Check if a user has a specific permission code.
+    
+    Used for non-view validation (e.g., walk-in appointment veterinarian validation).
+    
+    Returns True if:
+      - user is superuser
+      - user has the permission via DB-backed roles (UserRole + Role + Permission)
+      - user has the permission via static fallback (PERMISSIONS dict)
+    
+    Args:
+        user: Django User instance
+        perm_code: Permission code in "resource.action" format (e.g., "appointments.create_walkin")
+    
+    Returns:
+        bool: True if user has permission, False otherwise
+    """
+    if not user.is_authenticated:
+        return False
+    
+    if user.is_superuser:
+        return True
+    
+    # Try DB-backed permissions first
+    db_perms = _get_cached_permissions(user)
+    if db_perms is not None:
+        return _is_allowed(perm_code, db_perms)
+    
+    # Fallback to static permissions
+    static_perms = PERMISSIONS.get(user.role, [])
+    return _is_allowed(perm_code, static_perms)
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -128,6 +166,23 @@ def _is_allowed(required: str, allowed: list) -> bool:
         or f"{resource}.*" in allowed
         or required in allowed
     )
+
+
+def _get_cached_permissions(user) -> "set | None":
+    if hasattr(user, "_cached_permissions"):
+        return user._cached_permissions
+    from apps.core.models import UserRole
+    user_roles = UserRole.objects.select_related("role").prefetch_related(
+        "role__permissions"
+    ).filter(user=user)
+    if not user_roles.exists():
+        user._cached_permissions = None
+        return None
+    perms: set[str] = set()
+    for ur in user_roles:
+        perms.update(ur.role.permissions.values_list("code", flat=True))
+    user._cached_permissions = perms
+    return perms
 
 
 # ---------------------------------------------------------------------------
@@ -252,36 +307,7 @@ class HybridPermission(BasePermission):
         return self.has_permission(request, view)
 
     def _get_db_permissions(self, user) -> "set | None":
-        """
-        Retorna el conjunto de códigos de permiso asignados al usuario via DB.
-        Retorna None si el usuario no tiene roles en DB (activa el fallback).
-
-        Cache: almacena en user._cached_permissions para evitar queries
-        repetidas dentro del mismo request.
-        """
-        # Cache hit
-        if hasattr(user, "_cached_permissions"):
-            return user._cached_permissions
-
-        # Evita import circular — UserRole está en core.models
-        from apps.core.models import UserRole
-
-        user_roles = UserRole.objects.select_related("role").prefetch_related(
-            "role__permissions"
-        ).filter(user=user)
-
-        if not user_roles.exists():
-            user._cached_permissions = None
-            return None
-
-        perms: set[str] = set()
-        for user_role in user_roles:
-            perms.update(
-                user_role.role.permissions.values_list("code", flat=True)
-            )
-
-        user._cached_permissions = perms
-        return perms
+        return _get_cached_permissions(user)
 
 
 # ---------------------------------------------------------------------------
