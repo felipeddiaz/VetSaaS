@@ -344,8 +344,9 @@ def walk_in(request):
     except User.DoesNotExist:
         raise NotFound('Veterinario no encontrado.')
 
-    # RBAC validation: assigned veterinarian must have permission to create walk-in appointments
-    if not user_has_permission(vet, 'appointments.create_walkin'):
+    # RBAC validation: assigned veterinarian must have granular permission to create walk-in appointments
+    # Use singular 'appointment.create_walkin' (canonical permission code).
+    if not user_has_permission(vet, 'appointment.create_walkin'):
         raise PermissionDenied('El veterinario asignado no tiene permiso para crear citas walk-in.')
 
     now_local = org_now_local(org)

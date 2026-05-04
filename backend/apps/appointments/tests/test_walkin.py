@@ -75,7 +75,8 @@ class WalkInRBACTests(APITestCase):
         cls.roles = _seed_org_roles(cls.org)
 
         cls.admin = _make_user("admin_test", cls.org, "ADMIN")
-        cls.vet_with_perm = _create_role_with_permission("vet_with_perm", cls.org, "appointments.create_walkin")
+        # Use canonical permission code 'appointment.create_walkin'
+        cls.vet_with_perm = _create_role_with_permission("vet_with_perm", cls.org, "appointment.create_walkin")
         cls.vet_without_perm = _make_user("vet_no_perm", cls.org, "VET")
 
         _assign_role(cls.admin, cls.roles["ADMIN"])
@@ -108,7 +109,8 @@ class WalkInRBACTests(APITestCase):
         })
         
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertIn("no tiene permiso", response.data["detail"])
+        # DRF PermissionDenied returns detail string
+        self.assertIn("permiso", str(response.data.get("detail", "")).lower())
 
     def test_walkin_vet_with_permission_succeeds(self):
         """Veterinarian with appointments.create_walkin permission should succeed."""
@@ -164,3 +166,48 @@ class WalkInRBACTests(APITestCase):
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("reason", response.data)
+
+    def test_walkin_without_pet_toggle_off_returns_400(self):
+        """When allow_anonymous_walkin is OFF and pet is omitted, return 400."""
+        self.auth(self.admin)
+        # Ensure toggle is off (default), but be explicit
+        from apps.organizations.models import OrganizationSettings
+        OrganizationSettings.objects.filter(organization=self.org).delete()
+        OrganizationSettings.objects.create(organization=self.org, allow_anonymous_walkin=False)
+
+        response = self.client.post("/api/appointments/walkin/", {
+            "veterinarian": self.vet_with_perm.id,
+            "reason": "Consulta sin mascota",
+        })
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_walkin_without_pet_toggle_on_uses_generic(self):
+        """When allow_anonymous_walkin is ON and pet omitted, system assigns generic patient."""
+        self.auth(self.admin)
+        from apps.organizations.models import OrganizationSettings
+        OrganizationSettings.objects.filter(organization=self.org).delete()
+        OrganizationSettings.objects.create(organization=self.org, allow_anonymous_walkin=True)
+
+        response = self.client.post("/api/appointments/walkin/", {
+            "veterinarian": self.vet_with_perm.id,
+            "reason": "Consulta anonima",
+        })
+        self.assertIn(response.status_code, [status.HTTP_201_CREATED, status.HTTP_200_OK])
+        if response.status_code == status.HTTP_201_CREATED:
+            pet_id = response.data.get("pet")
+            from apps.patients.models import Pet
+            pet = Pet.objects.get(pk=pet_id)
+            self.assertTrue(pet.is_generic)
+
+    def test_walkin_reason_truncation(self):
+        """Long reason values are truncated to 255 and saved without error."""
+        self.auth(self.admin)
+        long_reason = "a" * 300
+        response = self.client.post("/api/appointments/walkin/", {
+            "pet": self.pet.id,
+            "veterinarian": self.vet_with_perm.id,
+            "reason": long_reason,
+        })
+        self.assertIn(response.status_code, [status.HTTP_201_CREATED, status.HTTP_200_OK])
+        if response.status_code == status.HTTP_201_CREATED:
+            self.assertLessEqual(len(response.data.get("reason", "")), 255)

@@ -47,7 +47,7 @@ El walk-in es para pacientes que llegan sin cita previa.
 
 Endpoint: `POST /api/appointments/walk-in/`
 
-Campos requeridos: `pet`, `veterinarian`, `reason`
+Campos requeridos: `veterinarian`, `reason` (nota: `pet` es condicional — ver toggles)
 Campo opcional: `notes`
 
 Comportamiento:
@@ -56,7 +56,18 @@ Comportamiento:
 - no valida conflictos de horario (es atencion inmediata)
 - el veterinario puede abrir el historial clinico inmediatamente
 
-Si el toggle `allow_anonymous_walkin` está activo, el campo `pet` es opcional. Cuando se omite, el sistema asigna automáticamente la mascota genérica de la organización (`Pet.is_generic=True`). Ver sección "Walk-in anónimo y vinculación de paciente" más abajo.
+Reglas de negocio específicas para walk-in:
+- `reason` se sanitiza y se trunca a 255 caracteres (`sanitize_text(..., max_length=255)`). Si después de sanitizar queda vacío, el endpoint retorna `400` con `reason` en el body.
+- `notes` se sanitiza y se trunca a 5000 caracteres (`sanitize_text(..., max_length=5000)`).
+
+Pet es obligatorio salvo que la organización tenga `allow_anonymous_walkin = True`:
+
+| Caso | Resultado esperado |
+|------|-------------------|
+| toggle OFF + sin `pet` | ❌ 400 ("Walk-in anónimo no está configurado.") |
+| toggle ON + sin `pet`  | ✔  usa paciente genérico de la organización (se asigna `Pet.is_generic=True`) |
+
+Si el campo `pet` se envía, debe pertenecer a la organización del usuario — de lo contrario `404`.
 
 ### Registro rápido + cita (alta de paciente en el momento)
 

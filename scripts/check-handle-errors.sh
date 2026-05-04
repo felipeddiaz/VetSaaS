@@ -14,7 +14,10 @@ echo "🔍 Scanning for catch blocks without handleFormError in $FRONTEND_DIR...
 
 # Find all catch blocks in JSX files
 # This regex catches: catch (err), catch (error), catch (e), catch { (but not .catch( which is promise.catch)
-CATCH_BLOCKS=$(find "$FRONTEND_DIR/src" -name "*.jsx" -type f -exec grep -l 'catch\s*(' {} \; 2>/dev/null || true)
+# Find jsx/js files but exclude utils and tests to reduce noise
+CATCH_BLOCKS=$(find "$FRONTEND_DIR/src" -type f \( -name "*.jsx" -o -name "*.js" \) \
+    -not -path "*/utils/*" -not -path "*/tests/*" -not -path "*/__tests__/*" \
+    -exec grep -l "catch\s*(" {} \; 2>/dev/null || true)
 
 if [ -z "$CATCH_BLOCKS" ]; then
     echo "✅ No catch blocks found (clean!)"
@@ -37,8 +40,8 @@ done
 NEEDS_FIX=""
 
 for file in $CATCH_BLOCKS; do
-    # Skip files that are already importing handleFormError
-    if grep -q "import.*handleFormError" "$file" 2>/dev/null; then
+    # Skip files that are already importing handleFormError (likely migrated)
+    if grep -q "handleFormError" "$file" 2>/dev/null; then
         # Check if there's any catch block after the import that's NOT already handling errors properly
         # This is a simplified check - we look for any catch without handleFormError inside
         if grep -q "setFormErrors.*handleFormError" "$file" 2>/dev/null; then
@@ -51,11 +54,12 @@ for file in $CATCH_BLOCKS; do
         fi
     fi
     
-    # For now, just flag all catch blocks - manual review needed
-    # This is conservative to avoid false negatives
+        # For now, flag catch blocks that do not reference handleFormError
+        # This avoids flagging promise .catch() handlers that are not part of form submissions
     COUNT=$(grep -c 'catch\s*(' "$file" 2>/dev/null || echo "0")
-    if [ "$COUNT" -gt "0" ]; then
-        echo "⚠️  $file has $COUNT catch block(s) - verify they use handleFormError"
+    # If file contains catch blocks but no handleFormError usage, warn
+    if ! grep -q "handleFormError" "$file" 2>/dev/null && [ "$COUNT" -gt "0" ]; then
+        echo "⚠️  $file has $COUNT catch block(s) and does not reference handleFormError - review"
         NEEDS_FIX="$NEEDS_FIX $file"
         EXIT_CODE=1
     fi

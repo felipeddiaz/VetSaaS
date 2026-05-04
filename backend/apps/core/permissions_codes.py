@@ -19,6 +19,8 @@ PERMISSION_CODES = [
     "appointment.list",
     "appointment.retrieve",
     "appointment.create",
+    # Granular permiso para walk-ins (creacion de citas en modo walk-in)
+    "appointment.create_walkin",
     "appointment.update",
     "appointment.destroy",
 
@@ -75,6 +77,12 @@ PERMISSION_CODES = [
     "staff.create",
     "staff.destroy",
 
+    # Organización
+    "organization.list",
+    "organization.retrieve",
+    "organization.update",
+    "organization.create",
+
     # Dashboard
     "dashboard.view",
 ]
@@ -93,6 +101,8 @@ PERMISSIONS = {
     "VET": [
         "appointment.list", "appointment.retrieve", "appointment.create",
         "appointment.update", "appointment.destroy",
+        # walk-in granular
+        "appointment.create_walkin",
         "medicalrecord.list", "medicalrecord.retrieve", "medicalrecord.create",
         "medicalrecord.update", "medicalrecord.close",
         "prescription.list", "prescription.retrieve", "prescription.create",
