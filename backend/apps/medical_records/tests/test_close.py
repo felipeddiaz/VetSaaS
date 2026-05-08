@@ -198,3 +198,187 @@ class CloseMedicalRecordTests(APITestCase):
             self.assertEqual(r.status_code, status.HTTP_200_OK)
         mr.refresh_from_db()
         self.assertEqual(mr.status, MedicalRecord.Status.CLOSED)
+
+    # ── validación de campos requeridos al cerrar ────────────────────────────
+
+    def test_close_sin_diagnostico_retorna_400(self):
+        mr = self._make_record()
+        mr.diagnosis = ""
+        mr.save(update_fields=["diagnosis"])
+        self.client.force_authenticate(self.vet_a)
+        r = self.client.post(self._close_url(mr.pk))
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("diagnosis", r.data["errors"])
+
+    def test_close_cirugia_sin_treatment_retorna_400(self):
+        mr = self._make_record()
+        mr.consultation_type = MedicalRecord.ConsultationType.SURGERY
+        mr.diagnosis = "fractura"
+        mr.treatment = ""
+        mr.save(update_fields=["consultation_type", "diagnosis", "treatment"])
+        self.client.force_authenticate(self.vet_a)
+        r = self.client.post(self._close_url(mr.pk))
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("treatment", r.data["errors"])
+
+    def test_close_cirugia_con_ambos_retorna_200(self):
+        mr = self._make_record()
+        mr.consultation_type = MedicalRecord.ConsultationType.SURGERY
+        mr.diagnosis = "fractura tibia"
+        mr.treatment = "osteosíntesis con placa"
+        mr.save(update_fields=["consultation_type", "diagnosis", "treatment"])
+        self.client.force_authenticate(self.vet_a)
+        r = self.client.post(self._close_url(mr.pk))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+
+    def test_close_general_sin_treatment_retorna_400(self):
+        mr = self._make_record()
+        mr.consultation_type = MedicalRecord.ConsultationType.GENERAL
+        mr.diagnosis = "revisión general sin hallazgos"
+        mr.treatment = ""
+        mr.save(update_fields=["consultation_type", "diagnosis", "treatment"])
+        self.client.force_authenticate(self.vet_a)
+        r = self.client.post(self._close_url(mr.pk))
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("treatment", r.data["errors"])
+
+    def test_close_emergency_sin_treatment_retorna_400(self):
+        mr = self._make_record()
+        mr.consultation_type = MedicalRecord.ConsultationType.EMERGENCY
+        mr.diagnosis = "urgencia sin tratamiento"
+        mr.treatment = ""
+        mr.save(update_fields=["consultation_type", "diagnosis", "treatment"])
+        self.client.force_authenticate(self.vet_a)
+        r = self.client.post(self._close_url(mr.pk))
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("treatment", r.data["errors"])
+
+    def test_close_vaccine_sin_treatment_retorna_200(self):
+        mr = self._make_record()
+        mr.consultation_type = MedicalRecord.ConsultationType.VACCINE
+        mr.diagnosis = "vacunación programada"
+        mr.treatment = ""
+        mr.save(update_fields=["consultation_type", "diagnosis", "treatment"])
+        self.client.force_authenticate(self.vet_a)
+        r = self.client.post(self._close_url(mr.pk))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+
+    def test_close_validation_failure_emits_warning_log(self):
+        mr = self._make_record()
+        mr.consultation_type = MedicalRecord.ConsultationType.GENERAL
+        mr.diagnosis = "revisión"
+        mr.treatment = ""
+        mr.save(update_fields=["consultation_type", "diagnosis", "treatment"])
+        self.client.force_authenticate(self.vet_a)
+        with self.assertLogs("medical_records.events", level="WARNING") as cm:
+            self.client.post(self._close_url(mr.pk))
+        self.assertIn("MEDICAL_RECORD_CLOSE_VALIDATION_FAILED", [r.getMessage() for r in cm.records])
+
+    def test_close_ya_cerrado_retorna_200_aunque_diagnostico_vacio(self):
+        """Idempotencia: una consulta ya cerrada retorna 200 sin re-validar campos."""
+        mr = self._make_closed()
+        mr.diagnosis = ""
+        mr.save(update_fields=["diagnosis"])
+        self.client.force_authenticate(self.vet_a)
+        r = self.client.post(self._close_url(mr.pk))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+
+    # ── CREATE sin treatment ──────────────────────────────────────────────────
+
+    def test_create_sin_treatment_retorna_201(self):
+        """CREATE acepta record sin tratamiento; tratamiento se valida al cerrar."""
+        owner = Owner.objects.create(name="OC", phone="3", organization=self.org_a)
+        pet = Pet.objects.create(name="PC", species="cat", owner=owner, organization=self.org_a)
+        self.client.force_authenticate(self.vet_a)
+        r = self.client.post("/api/medical-records/", {
+            "pet": pet.id,
+            "consultation_type": MedicalRecord.ConsultationType.GENERAL,
+            "diagnosis": "diagnóstico inicial",
+        }, format="json")
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(r.data["diagnosis"], "diagnóstico inicial")
+        self.assertEqual(r.data["treatment"], "")
+        self.assertEqual(r.data["status"], "open")
+
+    def test_create_sin_diagnosis_retorna_400(self):
+        """CREATE sin diagnóstico sigue siendo rechazado."""
+        owner = Owner.objects.create(name="OD", phone="4", organization=self.org_a)
+        pet = Pet.objects.create(name="PD", species="dog", owner=owner, organization=self.org_a)
+        self.client.force_authenticate(self.vet_a)
+        r = self.client.post("/api/medical-records/", {
+            "pet": pet.id,
+            "consultation_type": MedicalRecord.ConsultationType.GENERAL,
+            "diagnosis": "",
+            "treatment": "t",
+        }, format="json")
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("diagnosis", r.data["errors"])
+
+    # ── PATCH parcial (stepper) ────────────────────────────────────────────────
+
+    def test_patch_without_organization_returns_200(self):
+        """PATCH parcial (stepper) no requiere organization."""
+        mr = self._make_record()
+        self.client.force_authenticate(self.vet_a)
+        r = self.client.patch(self._detail_url(mr.pk), {
+            "treatment": "nuevo tratamiento",
+        }, format="json")
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        mr.refresh_from_db()
+        self.assertEqual(mr.treatment, "nuevo tratamiento")
+
+    def test_patch_organization_is_ignored(self):
+        """Intentar cambiar organization vía PATCH es ignorado (defensa multi-tenant)."""
+        mr = self._make_record()
+        original_org = mr.organization_id
+        self.client.force_authenticate(self.vet_a)
+        r = self.client.patch(self._detail_url(mr.pk), {
+            "organization": 999,
+        }, format="json")
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        mr.refresh_from_db()
+        self.assertEqual(mr.organization_id, original_org)
+
+    # ── bloqueos por contenido clínico ───────────────────────────────────────
+
+    def _make_empty_record(self, org=None, vet=None):
+        org = org or self.org_a
+        vet = vet or self.vet_a
+        owner = Owner.objects.create(name="OEmpty", phone="0", organization=org)
+        pet   = Pet.objects.create(name="PEmpty", species="cat", owner=owner, organization=org)
+        return MedicalRecord.objects.create(
+            pet=pet, veterinarian=vet, organization=org,
+        ), owner, pet
+
+    def test_delete_open_record_with_diagnosis_returns_403(self):
+        mr = self._make_record()
+        self.client.force_authenticate(self.admin_a)
+        r = self.client.delete(self._detail_url(mr.pk))
+        self.assertEqual(r.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_delete_open_record_with_prescription_returns_403(self):
+        from apps.prescriptions.models import Prescription
+        mr, _owner, pet = self._make_empty_record()
+        Prescription.objects.create(
+            medical_record=mr, pet=pet, organization=self.org_a,
+        )
+        self.client.force_authenticate(self.admin_a)
+        r = self.client.delete(self._detail_url(mr.pk))
+        self.assertEqual(r.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_delete_open_record_with_invoice_returns_403(self):
+        from apps.billing.models import Invoice
+        mr, owner, _pet = self._make_empty_record()
+        Invoice.objects.create(
+            medical_record=mr, owner=owner, organization=self.org_a,
+        )
+        self.client.force_authenticate(self.admin_a)
+        r = self.client.delete(self._detail_url(mr.pk))
+        self.assertEqual(r.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_delete_empty_open_record_succeeds(self):
+        mr, _owner, _pet = self._make_empty_record()
+        self.client.force_authenticate(self.admin_a)
+        r = self.client.delete(self._detail_url(mr.pk))
+        self.assertEqual(r.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(MedicalRecord.objects.filter(pk=mr.pk).exists())

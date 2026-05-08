@@ -2,10 +2,10 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from apps.patients.models import Pet
 from apps.users.models import User
-from apps.core.models import OrganizationalModel
+from apps.core.models import OrganizationalModel, PublicIdMixin
 
 
-class Appointment(OrganizationalModel):
+class Appointment(PublicIdMixin, OrganizationalModel):
     STATUS_CHOICES = (
         ('scheduled', 'Programada'),
         ('confirmed', 'Confirmada'),

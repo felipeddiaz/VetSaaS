@@ -15,13 +15,13 @@ Estos toggles estaban documentados en `flujo_citas.txt` como requerimiento pendi
 Se introduce el modelo `OrganizationSettings` con un registro por organizacion.
 
 Campos:
-- `auto_create_medical_record` (default `True`) — al crear consulta sin cita, genera factura draft automaticamente
-- `auto_create_invoice_on_done` (default `True`) — al marcar cita como `done`, genera factura draft automaticamente
+- `auto_create_medical_record` (default `False`) — al marcar cita como `done`, puede crear `MedicalRecord` vacio en `open` si la clinica lo habilita
+- `auto_create_invoice_on_done` (default `False`) — al marcar cita como `done`, puede generar factura draft automaticamente si la clinica lo habilita
 - `require_confirmation_before_start` (default `False`) — obliga pasar por `confirmed` antes de `in_progress`
 - `allow_anonymous_walkin` (default `False`) — permite walk-in sin propietario registrado
 - `show_status_change_history` (default `True`) — expone el historial de cambios de estado en cada cita
 
-Los valores por defecto replican el comportamiento anterior para que organizaciones existentes no noten cambio.
+Los defaults actuales privilegian un flujo manual y explicito. Completar una cita no crea por defecto artefactos clinicos ni financieros.
 
 El registro se crea automaticamente al crear la organizacion via signal.
 Si no existe (caso de datos anteriores a la migracion), el sistema usa los defaults definidos en `DEFAULT_ORG_SETTINGS`.
@@ -60,7 +60,7 @@ Requiere re-deploy para cambiar un toggle.
 
 Positivas:
 - cada clinica puede ajustar su flujo sin deploy
-- los defaults mantienen el comportamiento conocido
+- los defaults actuales reducen basura operativa (consultas vacias y facturas draft sin items)
 - el modelo es extensible: agregar un toggle nuevo es una migracion aditiva
 
 Costos:
@@ -72,8 +72,8 @@ Costos:
 
 | Toggle | Backend | Frontend |
 |--------|---------|----------|
-| `auto_create_invoice_on_done` | ✅ Signal en `billing/signals.py` | ✅ Toggle en `/config` |
-| `auto_create_medical_record` | ✅ Lógica en `update_status` al pasar a `done` | ✅ Toggle en `/config` |
+| `auto_create_invoice_on_done` | ✅ Signal en `billing/signals.py` (default OFF) | ✅ Toggle en `/config` |
+| `auto_create_medical_record` | ✅ Lógica en `update_status` al pasar a `done` (default OFF) | ✅ Toggle en `/config` |
 | `require_confirmation_before_start` | ✅ Validación en `update_status` antes de `in_progress` | ✅ Toggle en `/config` |
 | `allow_anonymous_walkin` | ✅ Walk-in usa `Pet.is_generic=True` si no se envía `pet` | ✅ Toggle en `/config` |
 | `show_status_change_history` | ✅ Modelo `AppointmentStatusChange` + endpoint `GET <id>/history/` | ✅ Toggle en `/config` + panel en detalle de cita |
@@ -89,3 +89,12 @@ Ver historial de brechas resueltas en `2026-04-28-toggles-backlog.md`.
 - `OrganizationSettingsView` en `apps/organizations/views.py`: solo accesible por `ADMIN`
 - `apps/organizations/apps.py` registra la signal via `ready()`
 - La UI de toggles está en `config.jsx` sección "Flujo Clínico" (solo visible para `ADMIN`)
+
+## Actualizacion 2026-05-06
+
+Se cambian los defaults de `auto_create_medical_record` y `auto_create_invoice_on_done` de `True` a `False`.
+
+Motivos:
+- evitar que `done` genere automaticamente documentos que el usuario no pidio
+- mantener mas clara la separacion entre agenda (`Appointment`), acto clinico (`MedicalRecord`) y cobro (`Invoice`)
+- apoyarse en CTAs explicitos post-`done` en el modal de citas en lugar de crear datos de fondo

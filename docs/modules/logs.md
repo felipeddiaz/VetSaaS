@@ -98,6 +98,16 @@ Accion requerida: si aparece seguido, revisar si hay una condicion en el fronten
 
 ---
 
+### `MEDICAL_RECORD_DELETED` · INFO
+
+Una consulta medica vacia (sin diagnostico, tratamiento, notas, productos, servicios, vitales ni receta) fue eliminada correctamente. Corresponde al caso de "error de dedo" al abrir una consulta equivocada.
+
+Campos: `user_id`, `organization_id`, `medical_record_id`, `public_id`, `endpoint`, `method`
+
+Accion requerida: ninguna.
+
+---
+
 ## Regla practica para monitorear en Railway
 
 Filtrar el stdout por nombre de evento:
@@ -108,5 +118,6 @@ Filtrar el stdout por nombre de evento:
 | `RBAC_FALLBACK_ALLOWED` | Decrece hasta cero | Usuarios sin rol en DB — correr `seed_permissions` |
 | `RBAC_DENIED` | Bajo, ocasional | Permisos mal configurados o bug en frontend |
 | `RBAC_ALLOWED_DB` | La mayoria de requests | Estado normal |
+| `MEDICAL_RECORD_DELETED` | Bajo, ocasional | Normal — registro vacio eliminado por error |
 
 El `request_id` presente en todos los eventos de `rbac.events` permite agrupar multiples eventos del mismo request HTTP para reconstruir que paso exactamente en una solicitud especifica.

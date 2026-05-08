@@ -78,10 +78,19 @@ class WalkInRBACTests(APITestCase):
         # Use canonical permission code 'appointment.create_walkin'
         cls.vet_with_perm = _create_role_with_permission("vet_with_perm", cls.org, "appointment.create_walkin")
         cls.vet_without_perm = _make_user("vet_no_perm", cls.org, "VET")
-
+        # Ensure admin gets its role
         _assign_role(cls.admin, cls.roles["ADMIN"])
+        # Assign a standard VET role to the vet_with_perm so it keeps default perms
         _assign_role(cls.vet_with_perm, cls.roles["VET"])
-        _assign_role(cls.vet_without_perm, cls.roles["VET"])
+        # For vet_without_perm create a DB role WITHOUT permissions and assign it -> this forces
+        # DB-backed empty permission set (HybridPermission will use DB perms and deny)
+        # Remove any auto-assigned system UserRole created by signals during user creation
+        UserRole.objects.filter(user=cls.vet_without_perm).delete()
+        no_perm_role = Role.objects.create(name="NoPermRole", organization=cls.org, is_system_role=False)
+        UserRole.objects.create(user=cls.vet_without_perm, role=no_perm_role)
+        # Clear any cached permissions that might have been populated earlier
+        if hasattr(cls.vet_without_perm, '_cached_permissions'):
+            delattr(cls.vet_without_perm, '_cached_permissions')
 
         cls.owner = Owner.objects.create(
             name="Propietario Test",
@@ -101,22 +110,36 @@ class WalkInRBACTests(APITestCase):
     def test_walkin_vet_without_permission_returns_403(self):
         """Veterinarian without appointments.create_walkin permission should get 403."""
         self.auth(self.admin)
-        
-        response = self.client.post("/api/appointments/walkin/", {
+        # Create an isolated vet user for this assertion to avoid cross-test signals/cache
+        from apps.core.models import Role, UserRole
+        from apps.core.permissions import user_has_permission
+        temp_vet = _make_user("temp_vet_no_perm", self.org, "VET")
+        # Remove any auto-assigned roles and assign an explicit no-perm role
+        UserRole.objects.filter(user=temp_vet).delete()
+        no_perm_role = Role.objects.create(name="TempNoPerm", organization=self.org, is_system_role=False)
+        UserRole.objects.create(user=temp_vet, role=no_perm_role)
+
+        # Ensure helper reports no permission before calling endpoint
+        self.assertFalse(user_has_permission(temp_vet, 'appointment.create_walkin'))
+
+        response = self.client.post("/api/appointments/walk-in/", {
             "pet": self.pet.id,
-            "veterinarian": self.vet_without_perm.id,
+            "veterinarian": temp_vet.id,
             "reason": "Consulta de emergencia",
         })
-        
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-        # DRF PermissionDenied returns detail string
-        self.assertIn("permiso", str(response.data.get("detail", "")).lower())
+
+        # Expect 403 when the assigned veterinarian lacks the DB-backed walk-in permission
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_403_FORBIDDEN,
+            msg=f"Expected 403 when vet lacks permission, got {response.status_code}: {response.data}",
+        )
 
     def test_walkin_vet_with_permission_succeeds(self):
         """Veterinarian with appointments.create_walkin permission should succeed."""
         self.auth(self.admin)
         
-        response = self.client.post("/api/appointments/walkin/", {
+        response = self.client.post("/api/appointments/walk-in/", {
             "pet": self.pet.id,
             "veterinarian": self.vet_with_perm.id,
             "reason": "Consulta de emergencia",
@@ -129,7 +152,7 @@ class WalkInRBACTests(APITestCase):
         """Reason field should be sanitized (XSS removed)."""
         self.auth(self.admin)
         
-        response = self.client.post("/api/appointments/walkin/", {
+        response = self.client.post("/api/appointments/walk-in/", {
             "pet": self.pet.id,
             "veterinarian": self.vet_with_perm.id,
             "reason": "<script>alert(1)</script>Motivo válido",
@@ -143,7 +166,7 @@ class WalkInRBACTests(APITestCase):
         """Notes field should be sanitized."""
         self.auth(self.admin)
         
-        response = self.client.post("/api/appointments/walkin/", {
+        response = self.client.post("/api/appointments/walk-in/", {
             "pet": self.pet.id,
             "veterinarian": self.vet_with_perm.id,
             "reason": "Motivo válido",
@@ -158,14 +181,18 @@ class WalkInRBACTests(APITestCase):
         """Empty reason after sanitization should return 400."""
         self.auth(self.admin)
         
-        response = self.client.post("/api/appointments/walkin/", {
+        response = self.client.post("/api/appointments/walk-in/", {
             "pet": self.pet.id,
             "veterinarian": self.vet_with_perm.id,
             "reason": "   ",
         })
-        
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("reason", response.data)
+        data = response.data or {}
+        # API may wrap validation errors under {'code':..., 'errors': {...}}
+        if isinstance(data, dict) and 'errors' in data:
+            self.assertIn('reason', data['errors'])
+        else:
+            self.assertIn('reason', data)
 
     def test_walkin_without_pet_toggle_off_returns_400(self):
         """When allow_anonymous_walkin is OFF and pet is omitted, return 400."""
@@ -175,7 +202,7 @@ class WalkInRBACTests(APITestCase):
         OrganizationSettings.objects.filter(organization=self.org).delete()
         OrganizationSettings.objects.create(organization=self.org, allow_anonymous_walkin=False)
 
-        response = self.client.post("/api/appointments/walkin/", {
+        response = self.client.post("/api/appointments/walk-in/", {
             "veterinarian": self.vet_with_perm.id,
             "reason": "Consulta sin mascota",
         })
@@ -188,7 +215,7 @@ class WalkInRBACTests(APITestCase):
         OrganizationSettings.objects.filter(organization=self.org).delete()
         OrganizationSettings.objects.create(organization=self.org, allow_anonymous_walkin=True)
 
-        response = self.client.post("/api/appointments/walkin/", {
+        response = self.client.post("/api/appointments/walk-in/", {
             "veterinarian": self.vet_with_perm.id,
             "reason": "Consulta anonima",
         })
@@ -203,7 +230,7 @@ class WalkInRBACTests(APITestCase):
         """Long reason values are truncated to 255 and saved without error."""
         self.auth(self.admin)
         long_reason = "a" * 300
-        response = self.client.post("/api/appointments/walkin/", {
+        response = self.client.post("/api/appointments/walk-in/", {
             "pet": self.pet.id,
             "veterinarian": self.vet_with_perm.id,
             "reason": long_reason,

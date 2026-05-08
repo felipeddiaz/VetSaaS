@@ -23,7 +23,7 @@ export const createMedicalRecord = async (token, data) => {
 };
 
 export const updateMedicalRecord = async (token, id, data) => {
-    const res = await api.put(`medical-records/${id}/`, data);
+    const res = await api.patch(`medical-records/${id}/`, data);
     return res.data;
 };
 
@@ -34,5 +34,21 @@ export const deleteMedicalRecord = async (token, id) => {
 
 export const closeMedicalRecord = async (token, id) => {
     const res = await api.post(`medical-records/${id}/close/`);
+    return res.data;
+};
+
+// Servicios de consulta
+export const getMedicalRecordServices = async (recordPublicId) => {
+    const res = await api.get(`medical-records/${recordPublicId}/services/`);
+    return res.data;
+};
+
+export const addMedicalRecordService = async (recordPublicId, data) => {
+    const res = await api.post(`medical-records/${recordPublicId}/services/`, data);
+    return res.data;
+};
+
+export const removeMedicalRecordService = async (recordPublicId, serviceId) => {
+    const res = await api.delete(`medical-records/${recordPublicId}/services/${serviceId}/`);
     return res.data;
 };

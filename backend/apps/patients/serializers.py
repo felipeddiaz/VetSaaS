@@ -20,8 +20,8 @@ def _validate_name(value, field_label="Nombre"):
 class OwnerSerializer(serializers.ModelSerializer):
     class Meta:
         model = Owner
-        fields = ['id', 'name', 'phone', 'is_generic']
-        read_only_fields = ['is_generic']
+        fields = ['id', 'public_id', 'name', 'phone', 'is_generic']
+        read_only_fields = ['public_id', 'is_generic']
 
     def validate_name(self, value):
         return _validate_name(value, "Nombre del dueño")
@@ -43,7 +43,8 @@ class PetSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Pet
-        fields = ['id', 'name', 'species', 'breed', 'birth_date', 'sex', 'color', 'owner', 'owner_id']
+        fields = ['id', 'public_id', 'name', 'species', 'breed', 'birth_date', 'sex', 'color', 'owner', 'owner_id']
+        read_only_fields = ['public_id']
 
     def validate_name(self, value):
         return _validate_name(value, "Nombre de la mascota")
@@ -60,6 +61,9 @@ class PetSerializer(serializers.ModelSerializer):
     def validate_birth_date(self, value):
         if value is None:
             raise serializers.ValidationError("La fecha de nacimiento es requerida.")
+        from datetime import date
+        if value > date.today():
+            raise serializers.ValidationError("La fecha de nacimiento no puede ser en el futuro.")
         return value
 
     def validate(self, attrs):

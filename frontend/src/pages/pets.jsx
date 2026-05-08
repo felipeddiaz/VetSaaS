@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getPets, createPet, updatePet, deletePet } from "../api/pets";
 import { useConfirm } from "../components/ConfirmDialog";
@@ -7,6 +7,11 @@ import { getMedicalRecords } from "../api/medicalRecords";
 import { getAppointments } from "../api/appointments";
 import { useAuth } from "../auth/authContext";
 import { Icon } from "../components/icons";
+import { DayPicker } from 'react-day-picker';
+import { es } from 'react-day-picker/locale';
+import 'react-day-picker/style.css';
+import '../styles/day-picker.css';
+import handleFormError from "../utils/handleFormError";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const SEX_LABELS = { male: "Macho", female: "Hembra", unknown: "Desconocido" };
@@ -71,6 +76,62 @@ const speciesAccent = (pet) => isCanino(pet)
     ? { bg: "#fce7f3", icon: "#ec4899", border: "#fbcfe8", text: "#be185d" }
     : { bg: "var(--c-primary-light)", icon: "var(--c-primary-dark)", border: "#99f6e4", text: "var(--c-primary-dark)" };
 
+// ─── Birth Date Picker ────────────────────────────────────────────────────────
+function BirthDatePicker({ value, onChange }) {
+    const [open, setOpen] = useState(false);
+    const ref = useRef(null);
+    const today = new Date();
+
+    // value is "YYYY-MM-DD" string or ""
+    // Parse with noon time to avoid UTC offset flipping the day
+    const selected = value ? new Date(`${value}T12:00:00`) : undefined;
+
+    useEffect(() => {
+        const handleClickOutside = (e) => {
+            if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
+    const handleSelect = (date) => {
+        if (!date) return;
+        // Build YYYY-MM-DD using local date parts — never toISOString() (UTC shift)
+        const str = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+        onChange(str);
+        setOpen(false);
+    };
+
+    const displayValue = selected
+        ? selected.toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric' })
+        : '';
+
+    return (
+        <div ref={ref} style={{ position: 'relative' }}>
+            <input
+                className="input"
+                readOnly
+                value={displayValue}
+                placeholder="Selecciona una fecha"
+                onClick={() => setOpen(o => !o)}
+                style={{ cursor: 'pointer' }}
+            />
+            {open && (
+                <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 200 }}>
+                    <DayPicker
+                        mode="single"
+                        selected={selected}
+                        onSelect={handleSelect}
+                        disabled={{ after: today }}
+                        defaultMonth={selected || today}
+                        locale={es}
+                    />
+                </div>
+            )}
+        </div>
+    );
+}
+
 // ─── Pet Form Modal ───────────────────────────────────────────────────────────
 const SPECIES_OPTIONS = [
     { value: "canino",  label: "Canino" },
@@ -86,7 +147,7 @@ const COLOR_OPTIONS = [
     "Atigrado", "Bicolor", "Tricolor", "Multicolor", "Otro",
 ];
 
-const PetModal = ({ form, setForm, editing, onSubmit, onClose }) => (
+const PetModal = ({ form, setForm, editing, onSubmit, onClose, formErrors }) => (
     <div className="modal-overlay">
         <div className="modal modal-md">
             <div className="modal-header">
@@ -113,7 +174,15 @@ const PetModal = ({ form, setForm, editing, onSubmit, onClose }) => (
                         </div>
                         <div className="form-group">
                             <label className="form-label">FECHA DE NACIMIENTO *</label>
-                            <input type="date" className="input" value={form.birth_date} onChange={e => setForm({ ...form, birth_date: e.target.value })} />
+                            <BirthDatePicker
+                                value={form.birth_date}
+                                onChange={(dateStr) => setForm({ ...form, birth_date: dateStr })}
+                            />
+                            {formErrors?.birth_date && (
+                                <p style={{ color: "var(--c-danger-text)", fontSize: "11.5px", marginTop: "4px" }}>
+                                    {Array.isArray(formErrors.birth_date) ? formErrors.birth_date[0] : formErrors.birth_date}
+                                </p>
+                            )}
                         </div>
                         <div className="form-group">
                             <label className="form-label">SEXO</label>
@@ -205,21 +274,21 @@ const PetCard = ({ pet, onSelect, onEdit, onDelete }) => {
             </div>
 
             {/* Data grid */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "14px" }}>
+            <div style={{ borderTop: "1px solid var(--c-subtle)", marginBottom: "14px", paddingTop: "12px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                 <div>
-                    <p style={{ fontSize: "10.5px", color: "var(--c-text-3)", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: "2px" }}>Edad</p>
-                    <p style={{ fontSize: "13px", color: "var(--c-text-2)" }}>{age || "—"}</p>
+                    <p style={{ fontSize: "11px", color: "var(--c-text-3)", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "3px" }}>Edad</p>
+                    <p style={{ fontSize: "13.5px", color: "var(--c-text)", fontWeight: "500" }}>{age || "—"}</p>
                 </div>
                 <div>
-                    <p style={{ fontSize: "10.5px", color: "var(--c-text-3)", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: "2px" }}>Sexo</p>
-                    <p style={{ fontSize: "13px", color: "var(--c-text-2)" }}>
+                    <p style={{ fontSize: "11px", color: "var(--c-text-3)", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "3px" }}>Sexo</p>
+                    <p style={{ fontSize: "13.5px", color: "var(--c-text)", fontWeight: "500" }}>
                         {pet.sex && pet.sex !== "unknown" ? SEX_LABELS[pet.sex] : "—"}
                     </p>
                 </div>
                 {pet.color && (
                     <div style={{ gridColumn: "1 / -1" }}>
-                        <p style={{ fontSize: "10.5px", color: "var(--c-text-3)", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: "2px" }}>Color</p>
-                        <p style={{ fontSize: "13px", color: "var(--c-text-2)" }}>{pet.color}</p>
+                        <p style={{ fontSize: "11px", color: "var(--c-text-3)", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "3px" }}>Color</p>
+                        <p style={{ fontSize: "13.5px", color: "var(--c-text)", fontWeight: "500" }}>{pet.color}</p>
                     </div>
                 )}
             </div>
@@ -555,6 +624,7 @@ const Pets = () => {
     const [showModal, setShowModal] = useState(false);
     const [editing, setEditing] = useState(null);
     const [form, setForm] = useState(EMPTY_FORM);
+    const [formErrors, setFormErrors] = useState({});
 
     // Quick panel
     const [selectedPet, setSelectedPet] = useState(null);
@@ -656,28 +726,28 @@ const Pets = () => {
     // ─── CRUD ─────────────────────────────────────────────────
     const handleSubmit = async (e) => {
         e.preventDefault();
+        setFormErrors({});
         const nameRe = /^[A-Za-z0-9ÁÉÍÓÚáéíóúñÑ' \-]+$/;
         if (!form.name.trim()) { toast.error("El nombre es obligatorio"); return; }
         if (!nameRe.test(form.name.trim())) { toast.error("El nombre solo puede contener letras, números, espacios, acentos y guiones"); return; }
         if (!form.species) { toast.error("La especie es obligatoria"); return; }
         if (!form.birth_date) { toast.error("La fecha de nacimiento es obligatoria"); return; }
+        if (new Date(form.birth_date) > new Date()) { toast.error("La fecha de nacimiento no puede ser en el futuro"); return; }
         if (!form.owner.name.trim()) { toast.error("El nombre del propietario es obligatorio"); return; }
         if (!nameRe.test(form.owner.name.trim())) { toast.error("El nombre del dueño solo puede contener letras, espacios y acentos"); return; }
         if (!form.owner.phone || form.owner.phone.length !== 10) { toast.error("El teléfono debe tener exactamente 10 dígitos"); return; }
         const payload = { ...form, birth_date: form.birth_date || null };
         try {
             const p = editing ? updatePet(token, editing.id, payload) : createPet(token, payload);
-            await toast.promise(p, {
-                loading: 'Guardando...',
-                success: 'Mascota guardada correctamente',
-                error: (err) => err.response?.data?.detail || "Error al guardar mascota"
-            });
+            await p;
+            toast.success('Mascota guardada correctamente');
             setForm(EMPTY_FORM);
             setEditing(null);
+            setFormErrors({});
             setShowModal(false);
             loadAll();
         } catch (err) {
-            // Error global manejado por toast, no sobreescribir formError unless you want to
+            handleFormError(err, setFormErrors);
         }
     };
 
@@ -720,7 +790,7 @@ const Pets = () => {
         setShowModal(false);
         setEditing(null);
         setForm(EMPTY_FORM);
-        ;
+        setFormErrors({});
     };
 
     if (initializing || loading) {
@@ -769,7 +839,7 @@ const Pets = () => {
                 </div>
 
                 {/* Caninos */}
-                <div className="stat-card">
+                <div className="stat-card" style={{ borderTop: "3px solid #3b82f6" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "10px" }}>
                         <p className="stat-label">Caninos</p>
                         <div style={iconBox("#dbeafe")}>
@@ -783,7 +853,7 @@ const Pets = () => {
                 </div>
 
                 {/* Felinos */}
-                <div className="stat-card">
+                <div className="stat-card" style={{ borderTop: "3px solid #ec4899" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "10px" }}>
                         <p className="stat-label">Felinos</p>
                         <div style={iconBox("#fce7f3")}>
@@ -797,7 +867,7 @@ const Pets = () => {
                 </div>
 
                 {/* Citas esta semana */}
-                <div className="stat-card">
+                <div className="stat-card" style={{ borderTop: "3px solid var(--c-warning-text)" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "10px" }}>
                         <p className="stat-label">Citas esta semana</p>
                         <div style={iconBox("var(--c-warning-bg)")}>
@@ -1043,6 +1113,7 @@ const Pets = () => {
                     editing={editing}
                     onSubmit={handleSubmit}
                     onClose={handleClose}
+                    formErrors={formErrors}
                 />
             )}
         </div>

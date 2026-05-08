@@ -13,7 +13,7 @@ export const createAppointment = async (token, data) => {
 };
 
 export const updateAppointment = async (token, id, data) => {
-    const res = await api.put(`appointments/${id}/`, data);
+    const res = await api.patch(`appointments/${id}/`, data);
     return res.data;
 };
 

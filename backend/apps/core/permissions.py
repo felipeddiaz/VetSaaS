@@ -1,5 +1,5 @@
 """
-core/permissions.py — Sistema RBAC de VetCare SaaS
+core/permissions.py — Sistema RBAC de Vet Care SaaS
 ===================================================
 
 FASES IMPLEMENTADAS:
@@ -103,6 +103,51 @@ def user_has_permission(user, perm_code: str) -> bool:
     # Fallback to static permissions
     static_perms = PERMISSIONS.get(user.role, [])
     return _is_allowed(perm_code, static_perms)
+
+
+def user_has_permission_strict(user, perm_code: str) -> bool:
+    """
+    Strict permission check using DB-backed roles ONLY.
+
+    Behavior:
+      - Returns True when the user is superuser.
+      - Returns True if the permission is present in the user's DB-backed
+        roles (UserRole -> Role -> Permission).
+      - Returns False when the user has NO UserRole in DB (no fallback to
+        the legacy static PERMISSIONS mapping).
+
+    Architectural note (IMPORTANT):
+      - Use `user_has_permission(...)` for checks about the request.user
+        (this function performs DB lookup first and *falls back* to the
+        static PERMISSIONS mapping while the project is still in the
+        migration/fallback phase).
+      - Use `user_has_permission_strict(...)` for cross-user validations,
+        i.e. when you validate permissions of another user (assigned
+        veterinarian, owner, etc.). These checks MUST NOT use the legacy
+        fallback because that could grant implicit rights based on the
+        historical `User.role` field.
+
+    This separation prevents accidental privilege escalation when code
+    validates other users' permissions.
+    """
+    if not user.is_authenticated:
+        return False
+    if user.is_superuser:
+        return True
+    db_perms = _get_cached_permissions(user)
+    if db_perms is None:
+        return False
+    return _is_allowed(perm_code, db_perms)
+
+
+# Backwards compatibility alias (deprecated): prefer `user_has_permission_strict`
+def user_has_permission_db_only(user, perm_code: str) -> bool:
+    """Deprecated alias for user_has_permission_strict.
+
+    Keep for backward compatibility; new code should call
+    `user_has_permission_strict` directly.
+    """
+    return user_has_permission_strict(user, perm_code)
 
 
 # ---------------------------------------------------------------------------

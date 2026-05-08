@@ -9,7 +9,7 @@ import { useAuth } from "./auth/authContext";
 import { AuthProvider } from "./auth/authContext";
 import Staff from "./pages/staff";
 import Appointments from "./pages/appointments";
-import MedicalRecords from "./pages/medicalRecords";
+import MedicalRecords from "./pages/medicalRecords/index";
 import Inventory from "./pages/inventory";
 import Billing from "./pages/billing";
 import Prescriptions from "./pages/prescriptions";
@@ -33,7 +33,7 @@ const LoadingScreen = () => (
 );
 
 function AppContent() {
-  const { initializing } = useAuth();
+  const { initializing, user } = useAuth();
 
   if (initializing) {
     return <LoadingScreen />;
@@ -58,14 +58,14 @@ function AppContent() {
         <Route path="/pets/:id" element={wrap(PetDetail)} />
         <Route path="/staff" element={wrap(Staff)} />
         <Route path="/appointments" element={wrap(Appointments)} />
-        <Route path="/medical-records" element={wrap(MedicalRecords)} />
+        <Route path="/medical-records" element={<PrivateRoute><ErrorBoundary><MedicalRecords /></ErrorBoundary></PrivateRoute>} />
         <Route path="/inventory" element={wrap(Inventory)} />
         <Route path="/billing" element={wrap(Billing)} />
         <Route path="/prescriptions" element={wrap(Prescriptions)} />
         <Route path="/config" element={wrap(Config)} />
         <Route path="*" element={<NotFound />} />
       </Routes>
-      <FeedbackButton />
+      {user && <FeedbackButton />}
     </>
   );
 }

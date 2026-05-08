@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import Prescription, PrescriptionItem
+from apps.core.sanitize import sanitize_text
 
 
 class PrescriptionItemSerializer(serializers.ModelSerializer):
@@ -18,9 +19,16 @@ class PrescriptionItemSerializer(serializers.ModelSerializer):
         ]
 
     def validate_dose(self, value):
-        if not value or not value.strip():
+        clean = sanitize_text(value or '', max_length=255)
+        if not clean.strip():
             raise serializers.ValidationError("La dosis es obligatoria.")
-        return value
+        return clean
+
+    def validate_duration(self, value):
+        return sanitize_text(value or '', max_length=255)
+
+    def validate_instructions(self, value):
+        return sanitize_text(value or '', max_length=5000)
 
     def validate_quantity(self, value):
         if value <= 0:
@@ -36,14 +44,17 @@ class PrescriptionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Prescription
         fields = [
-            'id', 'medical_record', 'veterinarian', 'veterinarian_name',
+            'id', 'public_id', 'medical_record', 'veterinarian', 'veterinarian_name',
             'pet', 'pet_name', 'notes', 'items',
             'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'veterinarian', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'public_id', 'veterinarian', 'created_at', 'updated_at']
 
     def get_veterinarian_name(self, obj):
         return f"{obj.veterinarian.first_name} {obj.veterinarian.last_name}".strip()
+
+    def validate_notes(self, value):
+        return sanitize_text(value or '', max_length=5000)
 
     def validate_items(self, items):
         if not items:
@@ -51,6 +62,16 @@ class PrescriptionSerializer(serializers.ModelSerializer):
                 "La receta debe tener al menos un medicamento."
             )
         return items
+
+    def validate_medical_record(self, mr):
+        if mr and mr.organization != self.context['request'].user.organization:
+            raise serializers.ValidationError('Acceso inválido.')
+        return mr
+
+    def validate_pet(self, pet):
+        if pet and pet.organization != self.context['request'].user.organization:
+            raise serializers.ValidationError('Acceso inválido.')
+        return pet
 
     def validate(self, attrs):
         medical_record = attrs.get('medical_record')
@@ -86,6 +107,18 @@ class PrescriptionItemWriteSerializer(serializers.ModelSerializer):
     class Meta:
         model = PrescriptionItem
         fields = ['id', 'product', 'dose', 'duration', 'quantity', 'instructions']
+
+    def validate_dose(self, value):
+        clean = sanitize_text(value or '', max_length=255)
+        if not clean.strip():
+            raise serializers.ValidationError("La dosis es obligatoria.")
+        return clean
+
+    def validate_duration(self, value):
+        return sanitize_text(value or '', max_length=255)
+
+    def validate_instructions(self, value):
+        return sanitize_text(value or '', max_length=5000)
 
     def validate_product(self, product):
         if not product.requires_prescription:

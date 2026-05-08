@@ -18,3 +18,12 @@ venv/
 node_modules/
 dist/
 
+# Local junk / QA / design assets
+nul
+reports/
+gemini/
+frontend/img/
+
+# E2E test file with hardcoded creds
+backend/test_e2e.py
+

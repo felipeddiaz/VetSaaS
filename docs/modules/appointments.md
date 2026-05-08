@@ -3,7 +3,7 @@
 ## Objetivo
 
 El modulo de citas es el punto de entrada al ciclo clinico completo.
-Una cita agendada y atendida dispara la creacion del historial clinico y la factura en borrador.
+Una cita agendada y atendida es el punto de entrada al flujo clinico, pero ya no crea automaticamente ni el historial clinico ni la factura por defecto.
 
 ## Estados y transiciones
 
@@ -39,7 +39,11 @@ Las transiciones invalidas retornan `400` con mensaje explicito.
 3. Opcionalmente: se confirma (`confirmed`) antes de la atencion
 4. Al llegar el paciente: se inicia la consulta (`in_progress`)
 5. Al finalizar: se completa (`done`)
-6. Desde `done`: el veterinario crea el historial clinico o lo visualiza si ya existe
+6. El modal de detalle permanece abierto y muestra CTAs contextuales:
+   - `+ Crear Consulta Médica` si aun no existe historial
+   - `Ver Consulta` si ya existe uno vinculado
+   - `Ver Factura` solo si ya existe una invoice asociada
+7. Desde `done`: el veterinario crea el historial clinico o lo visualiza si ya existe
 
 ### Walk-in
 
@@ -194,13 +198,13 @@ Ver ADR `2026-04-28-organization-settings-toggles.md`.
 
 | Toggle | Default | Comportamiento |
 |--------|---------|----------------|
-| `auto_create_invoice_on_done` | `True` | Al pasar a `done`, crea factura draft automáticamente via signal |
-| `auto_create_medical_record` | `True` | Al pasar a `done`, crea `MedicalRecord` vacío en estado `open` (dentro de `update_status`, no via signal) |
+| `auto_create_invoice_on_done` | `False` | Al pasar a `done`, puede crear factura draft automaticamente via signal si la clinica lo habilita |
+| `auto_create_medical_record` | `False` | Al pasar a `done`, puede crear `MedicalRecord` vacio en estado `open` si la clinica lo habilita |
 | `require_confirmation_before_start` | `False` | Bloquea cualquier transición a `in_progress` si el estado previo no es `confirmed` |
 | `allow_anonymous_walkin` | `False` | Permite walk-in sin mascota; usa paciente genérico (`Pet.is_generic=True`) |
 | `show_status_change_history` | `True` | Controla visibilidad del panel de historial en la UI de detalle de cita |
 
-Los defaults replican el comportamiento previo para organizaciones existentes.
+Los defaults actuales privilegian un flujo manual y explicito: completar la cita no crea automaticamente artefactos clinicos ni financieros salvo que la organizacion lo habilite.
 El fallback cuando no existe registro de settings está en `get_org_setting()` (`apps/organizations/utils.py`).
 
 ## Duracion por defecto de slot en el formulario
@@ -218,10 +222,25 @@ El walk-in tambien usa 30 minutos por defecto (comportamiento sin cambio).
 - **Historial clinico**: una cita `done` puede tener uno o mas `MedicalRecord` asociados.
   El campo `medical_record_ids` en la respuesta lista los IDs vinculados.
   La consulta clinica se crea desde `/medical-records?pet=<id>&appointment=<id>`.
+  El frontend usa esta relacion para mostrar `+ Crear Consulta Médica` o `Ver Consulta` sin depender de estado local.
 
 - **Facturacion**: una cita puede tener una `Invoice` asociada.
   El campo `invoice_id` en la respuesta expone el ID si existe.
-  La factura se genera automaticamente segun el toggle `auto_create_invoice_on_done`.
+  La factura no se genera por defecto; si la organizacion activa `auto_create_invoice_on_done`, se crea en `draft` al pasar a `done`.
+
+## UX al completar la cita
+
+La accion `Completar consulta` usa el modal compartido `ConfirmDialog` del sistema. No se usa `window.confirm`.
+
+Comportamiento actual:
+- antes de pasar a `done`, se muestra confirmacion explicita
+- al confirmar, el backend retorna la cita serializada actualizada
+- el modal de detalle permanece abierto
+- los CTAs posteriores se recalculan desde `medical_record_ids` e `invoice_id` devueltos por backend
+
+Esto evita dos problemas:
+- errores accidentales al marcar `done`
+- CTAs stale que solo existan en memoria del frontend
 
 ## Endpoints
 

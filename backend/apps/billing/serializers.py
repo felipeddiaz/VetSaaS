@@ -1,17 +1,36 @@
+import re
 from rest_framework import serializers
 from decimal import Decimal
 from .models import Service, Invoice, InvoiceItem
 from .money import discount_amount, money
+from apps.core.sanitize import sanitize_text
+
+SERVICE_NAME_REGEX = re.compile(r'^[A-Za-z0-9ÁÉÍÓÚáéíóúñÑ\s\-\(\)\/\%\+]+$')
 
 
 class ServiceSerializer(serializers.ModelSerializer):
     class Meta:
         model = Service
-        fields = ['id', 'name', 'description', 'base_price', 'is_active', 'created_at', 'updated_at']
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        fields = ['id', 'public_id', 'name', 'description', 'base_price', 'is_active', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'public_id', 'created_at', 'updated_at']
 
     def validate_name(self, value):
-        return value.strip().title()
+        clean = sanitize_text(value or '', max_length=255)
+        if not clean.strip():
+            raise serializers.ValidationError("El nombre del servicio es obligatorio.")
+        if not SERVICE_NAME_REGEX.match(clean):
+            raise serializers.ValidationError(
+                "El nombre contiene caracteres no permitidos."
+            )
+        return clean
+
+    def validate_description(self, value):
+        return sanitize_text(value or '', max_length=5000)
+
+    def validate_base_price(self, value):
+        if value is None or value <= 0:
+            raise serializers.ValidationError("El precio debe ser mayor a 0.")
+        return value
 
 
 class InvoiceItemSerializer(serializers.ModelSerializer):
@@ -73,6 +92,10 @@ class InvoiceItemSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     "El servicio no pertenece a la organización de la factura."
                 )
+            if not self.instance and InvoiceItem.objects.filter(invoice=invoice, service=service).exists():
+                raise serializers.ValidationError(
+                    "Este servicio ya está incluido en la factura."
+                )
 
         # Validación de organización (presentation — ya existía)
         if presentation:
@@ -124,7 +147,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
     class Meta:
         model = Invoice
         fields = [
-            'id', 'invoice_type', 'appointment', 'medical_record',
+            'id', 'public_id', 'invoice_type', 'appointment', 'medical_record',
             'owner', 'owner_name', 'pet', 'pet_name',
             'status', 'payment_method', 'tax_rate',
             'subtotal', 'tax_amount', 'total',
@@ -133,15 +156,19 @@ class InvoiceSerializer(serializers.ModelSerializer):
             'items', 'prescription_suggestions',
         ]
         read_only_fields = [
-            'id', 'subtotal', 'tax_amount', 'total',
+            'id', 'public_id', 'subtotal', 'tax_amount', 'total',
             'created_by', 'paid_at', 'created_at', 'updated_at',
-            'tax_rate',   # NUEVO: se hereda de org, no editable por cliente
+            'tax_rate',
         ]
 
     def get_created_by_name(self, obj):
         if obj.created_by:
             return f"{obj.created_by.first_name} {obj.created_by.last_name}".strip()
         return ''
+
+    def validate_notes(self, value):
+        from apps.core.sanitize import sanitize_text
+        return sanitize_text(value or '', max_length=5000)
 
     def validate(self, data):
         owner = data.get('owner')

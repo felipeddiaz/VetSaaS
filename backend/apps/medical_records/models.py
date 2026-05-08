@@ -1,23 +1,36 @@
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.utils import timezone
 from apps.patients.models import Pet
 from apps.users.models import User
-from apps.core.models import OrganizationalModel
+from apps.core.models import OrganizationalModel, PublicIdMixin
 
 
-class MedicalRecord(OrganizationalModel):
+class MedicalRecord(PublicIdMixin, OrganizationalModel):
     class Status(models.TextChoices):
         OPEN = 'open', 'Abierta'
         CLOSED = 'closed', 'Cerrada'
+
+    class ConsultationType(models.TextChoices):
+        GENERAL   = 'general',   'General'
+        VACCINE   = 'vaccine',   'Vacuna'
+        SURGERY   = 'surgery',   'Cirugía'
+        EMERGENCY = 'emergency', 'Emergencia'
 
     pet = models.ForeignKey(Pet, on_delete=models.CASCADE, related_name='medical_records')
     veterinarian = models.ForeignKey(User, on_delete=models.SET_NULL, related_name='medical_records', null=True, blank=True)
     appointment = models.ForeignKey("appointments.Appointment", on_delete=models.SET_NULL, null=True, blank=True, related_name='medical_record')
 
-    diagnosis = models.TextField(blank=True)
-    treatment = models.TextField(blank=True)
-    notes = models.TextField(blank=True)
+    diagnosis = models.TextField(max_length=400, blank=True)
+    treatment = models.TextField(max_length=400, blank=True)
+    notes = models.TextField(max_length=5000, blank=True)
     weight = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    consultation_type = models.CharField(
+        max_length=20,
+        choices=ConsultationType.choices,
+        default=ConsultationType.GENERAL,
+        db_index=True,
+    )
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.OPEN, db_index=True)
     closed_at = models.DateTimeField(null=True, blank=True)
     closed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='closed_medical_records')
@@ -92,6 +105,37 @@ class VaccineRecord(OrganizationalModel):
         ]
 
 
+class VitalSigns(OrganizationalModel):
+    """
+    Registro histórico de signos vitales por consulta. Append-only: sin PATCH/DELETE.
+    recorded_at representa el momento clínico real, que puede diferir de created_at
+    en importaciones o carga tardía de datos.
+    """
+    medical_record   = models.ForeignKey(
+        MedicalRecord, on_delete=models.CASCADE, related_name='vital_signs'
+    )
+    weight           = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    temperature      = models.DecimalField(max_digits=4, decimal_places=1, null=True, blank=True)
+    heart_rate       = models.PositiveSmallIntegerField(null=True, blank=True)
+    respiratory_rate = models.PositiveSmallIntegerField(null=True, blank=True)
+    recorded_by      = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name='recorded_vitals'
+    )
+    recorded_at      = models.DateTimeField(default=timezone.now, db_index=True)
+
+    def save(self, *args, **kwargs):
+        if not self.organization_id:
+            self.organization = self.medical_record.organization
+        super().save(*args, **kwargs)
+
+    class Meta:
+        ordering = ['-recorded_at', '-created_at']
+        indexes = [
+            models.Index(fields=['medical_record', '-recorded_at', '-created_at']),
+            models.Index(fields=['-recorded_at', '-created_at']),
+        ]
+
+
 class MedicalRecordService(OrganizationalModel):
     """
     Servicio clínico aplicado durante una consulta (consulta, vacuna, cirugía, etc.).
@@ -122,3 +166,40 @@ class MedicalRecordService(OrganizationalModel):
                 name="medicalrecordservice_quantity_positive",
             ),
         ]
+
+
+# ---------------------------------------------------------------------------
+# Helpers de peso — fuente de verdad compartida entre serializers
+# ---------------------------------------------------------------------------
+
+def _get_last_weight(pet):
+    """
+    Historial global del paciente: último peso entre VitalSigns y MedicalRecord.
+    Prioriza VitalSigns (más granular). Ordenado por recorded_at (momento clínico).
+    """
+    last_vital = (
+        VitalSigns.objects
+        .filter(medical_record__pet=pet, weight__isnull=False)
+        .order_by('-recorded_at', '-created_at')
+        .first()
+    )
+    if last_vital:
+        return last_vital.weight
+    last_mr = (
+        MedicalRecord.objects
+        .filter(pet=pet, weight__isnull=False)
+        .order_by('-created_at')
+        .first()
+    )
+    return last_mr.weight if last_mr else None
+
+
+def get_current_weight(record):
+    """
+    Peso a mostrar para una consulta específica (panel lateral).
+    Diferente a _get_last_weight, que busca en toda la historia del paciente.
+    """
+    last_vital = record.vital_signs.order_by('-recorded_at', '-created_at').first()
+    if last_vital and last_vital.weight is not None:
+        return last_vital.weight
+    return record.weight

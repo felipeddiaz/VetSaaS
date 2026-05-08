@@ -3,6 +3,7 @@ from django.db.models import Q
 from django.utils.timezone import now
 
 from apps.core.datetime_utils import get_context_timezone, local_date_time_to_utc
+from apps.core.sanitize import sanitize_text
 
 from .models import Appointment, AppointmentStatusChange
 
@@ -19,13 +20,13 @@ class AppointmentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Appointment
         fields = [
-            'id', 'pet', 'pet_name', 'pet_is_generic', 'owner_id', 'owner_name',
+            'id', 'public_id', 'pet', 'pet_name', 'pet_is_generic', 'owner_id', 'owner_name',
             'veterinarian', 'veterinarian_name',
             'date', 'start_time', 'end_time', 'reason', 'notes',
             'status', 'cancellation_reason',
             'medical_record_ids', 'invoice_id',
         ]
-        read_only_fields = ['id', 'pet_is_generic', 'owner_id', 'owner_name', 'medical_record_ids', 'invoice_id']
+        read_only_fields = ['id', 'public_id', 'pet_is_generic', 'owner_id', 'owner_name', 'medical_record_ids', 'invoice_id']
 
     def validate_pet(self, value):
         request = self.context.get('request')
@@ -95,6 +96,12 @@ class AppointmentSerializer(serializers.ModelSerializer):
         attrs['start_datetime'] = start_utc
         attrs['end_datetime'] = end_utc
         attrs['timezone_at_creation'] = str(get_context_timezone(org))
+
+        # Sanitizar campos de texto libre
+        for field, limit in (('reason', 255), ('notes', 5000), ('cancellation_reason', 500)):
+            if field in attrs:
+                attrs[field] = sanitize_text(attrs[field], max_length=limit)
+
         return attrs
 
 

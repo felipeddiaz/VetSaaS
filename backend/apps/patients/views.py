@@ -1,13 +1,15 @@
+from rest_framework import status
+from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
 from apps.core.permissions import HybridPermission
-from apps.core.views import TenantQueryMixin
+from apps.core.views import TenantQueryMixin, PublicIdLookupMixin
 
 from .models import Pet, Owner
 from .serializers import PetSerializer, OwnerSerializer
 
 
-class PetViewSet(TenantQueryMixin, ModelViewSet):
+class PetViewSet(PublicIdLookupMixin, TenantQueryMixin, ModelViewSet):
     """
     Pacientes (mascotas). basename='patient' → permisos patient.*
     Soporta ?search=<nombre> y ?owner=<id> (combinables). Límite 20 cuando se filtra.
@@ -27,11 +29,20 @@ class PetViewSet(TenantQueryMixin, ModelViewSet):
             qs = qs[:20]
         return qs
 
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if instance.is_generic:
+            return Response(
+                {"error": "No se puede eliminar el paciente genérico del sistema."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return super().destroy(request, *args, **kwargs)
+
     def get_serializer_context(self):
         return {'request': self.request}
 
 
-class OwnerViewSet(TenantQueryMixin, ModelViewSet):
+class OwnerViewSet(PublicIdLookupMixin, TenantQueryMixin, ModelViewSet):
     """
     Propietarios. basename='owner' → permisos owner.*
     Soporta ?search=<nombre>. Límite 20 cuando se filtra.

@@ -68,7 +68,7 @@ def _make_user(username, org, role, is_superuser=False):
 
 
 def _assign_role(user, role):
-    UserRole.objects.create(user=user, role=role)
+    UserRole.objects.get_or_create(user=user, role=role)
 
 
 # ---------------------------------------------------------------------------
@@ -277,6 +277,23 @@ class PermissionMatrixTests(SecurityTestCase):
                               [status.HTTP_200_OK, status.HTTP_204_NO_CONTENT],
                               f"ADMIN recibió {r.status_code} en GET {url}")
 
+    def test_admin_can_create_inventory_product(self):
+        self.auth(self.admin_a)
+        r = self.client.post("/api/inventory/products/", {
+            "name": "Amoxicilina 500mg",
+            "description": "Antibiotico",
+            "category": "medication",
+            "requires_prescription": True,
+            "presentation_input": {
+                "base_unit": "tablet",
+                "quantity": 1,
+                "sale_price": "25.00",
+                "stock": "10.00",
+                "min_stock": "2.00",
+            },
+        }, format="json")
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED)
+
     # ---- VET — accesos permitidos ----
 
     def test_vet_can_list_patients(self):
@@ -333,6 +350,24 @@ class PermissionMatrixTests(SecurityTestCase):
         self.assertIn(r.status_code,
                       [status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND],
                       "VET no debería poder ajustar stock")
+
+    def test_vet_cannot_create_inventory_product(self):
+        self.auth(self.vet_a)
+        r = self.client.post("/api/inventory/products/", {
+            "name": "Shampoo Clinico",
+            "description": "Uso dermatologico",
+            "category": "other",
+            "requires_prescription": False,
+            "presentation_input": {
+                "base_unit": "bottle",
+                "quantity": 1,
+                "sale_price": "15.00",
+                "stock": "5.00",
+                "min_stock": "1.00",
+            },
+        }, format="json")
+        self.assertEqual(r.status_code, status.HTTP_403_FORBIDDEN,
+                         "VET no debería poder crear productos de inventario")
 
     # ---- ASSISTANT — accesos permitidos ----
 
@@ -451,8 +486,15 @@ class RBACEventLoggingTests(SecurityTestCase):
         """
         Un usuario sin UserRole en DB emite RBAC_FALLBACK_ALLOWED (WARNING).
         Presencia de este evento en producción = gate bloqueado.
+
+        La señal post_save asigna UserRole automáticamente al crear el usuario.
+        Se elimina manualmente para simular el escenario legacy (datos previos
+        a la señal, borrado accidental, etc.) — el mecanismo de fallback
+        debe seguir funcionando como salvaguarda.
         """
         user_no_role = _make_user("no_role_user", self.org_a, "VET")
+        # Eliminar UserRole para forzar el path de fallback estático
+        UserRole.objects.filter(user=user_no_role).delete()
 
         self.auth(user_no_role)
         with self.assertLogs("rbac.events", level="INFO") as cm:

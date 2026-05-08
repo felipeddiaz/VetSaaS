@@ -16,6 +16,7 @@ import { useAuth } from "../auth/authContext";
 import { Icon } from "../components/icons";
 
 import { apiError } from "../utils/apiError";
+import handleFormError from "../utils/handleFormError";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 const DAYS_ES  = ["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
@@ -404,7 +405,14 @@ function DetailModal({ appt, petName, vetName, petId, onClose, onStatusChange, o
                     {appt.status === "in_progress" && canEdit && (
                         <div style={{display:"flex",gap:"6px",width:"100%"}}>
                             <button className="btn btn-md" style={{flex:2,background:"#22c55e",borderColor:"#22c55e",color:"#fff"}}
-                                onClick={()=>onStatusChange(appt.id,"done")}>Completar consulta</button>
+                                onClick={async ()=>{
+                                    const ok = await confirm({
+                                        title: "Finalizar atención",
+                                        message: "La cita se marcará como completada. Después podrás crear o abrir la consulta médica y continuar con el flujo clínico y de cobro.",
+                                        confirmText: "Completar consulta",
+                                    });
+                                    if (ok) onStatusChange(appt.id,"done");
+                                }}>Completar consulta</button>
                             <button className="btn btn-danger btn-md" style={{flex:1}}
                                 onClick={async ()=>{
                                     if(await confirm({ message:"¿Cancelar esta consulta en progreso?", confirmText:"Cancelar", dangerMode:true }))
@@ -471,6 +479,7 @@ function EditModal({ appt, staff, user, onClose, onSave }) {
     const [saving, setSaving] = useState(false);
 
     async function handleSave() {
+        if (saving) return;
         if (!form.veterinarian) { toast.error("Selecciona un veterinario"); return; }
         if (!form.date)         { toast.error("La fecha es obligatoria"); return; }
         if (!form.reason.trim()) { toast.error("El motivo es obligatorio"); return; }
@@ -588,6 +597,7 @@ function SidebarForm({ slot, onSave, onSaveWithPatient, onClear, staff, user, fo
     }, [user]);
 
     async function handleSave() {
+        if (saving) return;
         if (!petItem && !showQuickPatient) { toast.error("Selecciona una mascota"); return; }
         if (!vetId)         { toast.error("Selecciona un veterinario"); return; }
         if (!reason.trim()) { toast.error("Ingresa el motivo de la consulta"); return; }
@@ -772,8 +782,10 @@ function WalkInModal({ staff, user, onClose, onSave, allowAnonymousWalkIn }) {
     const [reason, setReason] = useState("");
     const [notes,  setNotes]  = useState("");
     const [saving, setSaving] = useState(false);
+    const [formErrors, setFormErrors] = useState({});
 
     async function handleSave() {
+        setFormErrors({});
         if (!petItem && !allowAnonymousWalkIn) { toast.error("Selecciona una mascota"); return; }
         if (!vetId)         { toast.error("Selecciona un veterinario"); return; }
         if (!reason.trim()) { toast.error("El motivo es obligatorio"); return; }
@@ -786,12 +798,10 @@ function WalkInModal({ staff, user, onClose, onSave, allowAnonymousWalkIn }) {
             };
             if (petItem) payload.pet = petItem.id;
 
-            await toast.promise(onSave(payload), {
-                loading: 'Registrando walk-in...',
-                success: 'Walk-in registrado — consulta en progreso',
-                error: (err) => apiError(err, "Error al registrar walk-in")
-            });
+            await onSave(payload);
+            toast.success('Walk-in registrado — consulta en progreso');
         } catch (err) {
+            handleFormError(err, setFormErrors);
         } finally {
             setSaving(false);
         }
@@ -830,7 +840,7 @@ function WalkInModal({ staff, user, onClose, onSave, allowAnonymousWalkIn }) {
                     </div>
                     <div className="form-group">
                         <label className="form-label" htmlFor="walkin-vet">VETERINARIO *</label>
-                        <select id="walkin-vet" name="walkin-vet" className="select-input" value={vetId}
+                        <select id="walkin-vet" name="walkin-vet" className={`select-input${formErrors.veterinarian ? " input-error" : ""}`} value={vetId}
                             onChange={e=>setVetId(e.target.value)}
                             disabled={user?.role === "VET"}>
                             <option value="">Seleccionar veterinario</option>
@@ -838,11 +848,21 @@ function WalkInModal({ staff, user, onClose, onSave, allowAnonymousWalkIn }) {
                                 <option key={s.id} value={s.id}>{s.first_name} {s.last_name}</option>
                             ))}
                         </select>
+                        {formErrors.veterinarian && (
+                            <p style={{ color: "var(--c-danger-text)", fontSize: "11.5px", marginTop: "4px" }}>
+                                {formErrors.veterinarian}
+                            </p>
+                        )}
                     </div>
                     <div className="form-group">
                         <label className="form-label" htmlFor="walkin-reason">MOTIVO *</label>
-                        <input id="walkin-reason" name="walkin-reason" className="input" value={reason} onChange={e=>setReason(e.target.value)}
+                        <input id="walkin-reason" name="walkin-reason" className={`input${formErrors.reason ? " input-error" : ""}`} value={reason} onChange={e=>setReason(e.target.value)}
                             placeholder="Ej: Revisión de urgencia, Vacunación"/>
+                        {formErrors.reason && (
+                            <p style={{ color: "var(--c-danger-text)", fontSize: "11.5px", marginTop: "4px" }}>
+                                {formErrors.reason}
+                            </p>
+                        )}
                     </div>
                     <div className="form-group">
                         <label className="form-label" htmlFor="walkin-notes">NOTAS</label>
@@ -896,10 +916,10 @@ const Appointments = () => {
     const loadAll = async () => {
         try {
             const [staffData, apptData] = await Promise.all([
-                getStaff(token),
+                getStaff(),
                 getAppointments(token),
             ]);
-            setStaff(staffData);
+            setStaff(staffData.filter(s => s.role === 'VET' || s.role === 'ADMIN'));
             setAppointments(Array.isArray(apptData) ? apptData : (apptData.results || []));
         } catch (err) {
             console.log(err);
@@ -1002,13 +1022,16 @@ const Appointments = () => {
     };
 
     const handleStatusChange = async (id, newStatus) => {
-        const p = updateAppointmentStatus(token, id, newStatus);
-        toast.promise(p, {
+        const p = (async () => {
+            const updated = await updateAppointmentStatus(token, id, newStatus);
+            window.dispatchEvent(new Event("dashboard:refresh"));
+            refreshAppointment(updated);
+            await loadAppointments();
+            return updated;
+        })();
+        return toast.promise(p, {
             loading: 'Actualizando estado...',
             success: () => {
-                window.dispatchEvent(new Event("dashboard:refresh"));
-                setViewAppt(null);
-                loadAppointments();
                 return STATUS_MSG[newStatus] || "Estado actualizado";
             },
             error: (err) => apiError(err, "Error al cambiar estado")

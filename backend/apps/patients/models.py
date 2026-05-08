@@ -1,11 +1,11 @@
 from django.core.exceptions import ValidationError
 from django.db import models
-from apps.core.models import OrganizationalModel
+from apps.core.models import OrganizationalModel, PublicIdMixin
 
 SPECIES_CHOICES = ['canino', 'felino', 'equino', 'ave', 'reptil', 'exótico', 'otro']
 
 
-class Owner(OrganizationalModel):
+class Owner(PublicIdMixin, OrganizationalModel):
     name = models.CharField(max_length=255)
     phone = models.CharField(max_length=20)
     is_generic = models.BooleanField(default=False)
@@ -20,7 +20,7 @@ class Owner(OrganizationalModel):
         ]
 
 
-class Pet(OrganizationalModel):
+class Pet(PublicIdMixin, OrganizationalModel):
     SEX_CHOICES = (
         ('male', 'Macho'),
         ('female', 'Hembra'),
@@ -50,4 +50,11 @@ class Pet(OrganizationalModel):
     class Meta:
         indexes = [
             models.Index(fields=["organization", "owner"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['organization'],
+                condition=models.Q(is_generic=True),
+                name='unique_generic_pet_per_organization',
+            )
         ]

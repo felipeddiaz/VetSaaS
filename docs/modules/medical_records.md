@@ -8,10 +8,12 @@ Una consulta medica puede incluir:
 - mascota
 - veterinario responsable
 - cita asociada (opcional)
+- tipo de consulta (`consultation_type`)
 - diagnostico
 - tratamiento
 - notas
-- peso
+- peso (campo heredado; historial detallado en `VitalSigns`)
+- signos vitales (modelo `VitalSigns`, append-only)
 - productos usados
 - servicios usados
 - receta medica asociada (opcional)
@@ -20,16 +22,17 @@ Una consulta medica puede incluir:
 
 ### 1. Creacion de consulta
 
-La consulta se crea en estado `open`.
+La consulta se crea en estado `open` con `consultation_type = general` por defecto.
 
-Al crear una consulta sin cita asociada, se genera automaticamente una factura en estado `draft` vinculada a ella via signal.
-Si existe cita asociada, la factura ya fue creada al marcar la cita como completada.
+**Facturación lazy**: La factura NO se crea automáticamente al crear la consulta. Se crea de forma lazy al agregar el primer cargo (servicio o producto) vía `_sync_invoice_item` → `get_or_create_invoice_for_medical_record()`.
+
+Si la consulta tiene cita asociada y la clínica activa explícitamente el toggle `auto_create_invoice_on_done`, la factura se puede crear al marcar la cita como `done` (ver `docs/modules/appointments.md`). El default actual es `False`.
 
 Reglas:
 - pertenece a una sola organizacion
-- el veterinario asignado debe pertenecer a la misma organizacion
-- la mascota debe pertenecer a la misma organizacion
-- si existe cita asociada, debe pertenecer a la misma organizacion
+- el veterinario asignado debe pertenecer a la misma organizacion (validado en serializer)
+- la mascota debe pertenecer a la misma organizacion (validado en serializer)
+- si existe cita asociada, debe pertenecer a la misma organizacion (validado en serializer)
 
 ### 2. Modificaciones mientras esta abierta
 
@@ -59,6 +62,7 @@ Flujo en cobros:
 - la factura en draft muestra los servicios e insumos de la consulta como items automaticos
 - los productos recetados aparecen como sugerencias opcionales con boton "Agregar" individual
 - recepcion agrega solo los que el cliente decide llevar
+- la receta por si sola NO descuenta stock ni crea items financieros
 
 Regla de frontend:
 - la creacion de receta se inicia desde `Historial clinico`
@@ -130,21 +134,134 @@ Endpoints:
 - `POST /api/medical-records/<id>/services/`
 - `DELETE /api/medical-records/<id>/services/<service_id>/`
 
+## Tipo de consulta
+
+El campo `consultation_type` clasifica el acto medico para facilitar el flujo clinico y las validaciones en cierre.
+
+Valores validos:
+- `general` — consulta de rutina (default)
+- `vaccine` — vacunacion
+- `surgery` — cirugia
+- `emergency` — emergencia
+
+Reglas:
+- editable mientras la consulta esta en `open`
+- `surgery` activa validacion adicional en el cierre: requiere `treatment` no vacio
+
+## Signos vitales (VitalSigns)
+
+Los signos vitales se registran como un historial append-only vinculado a la consulta.
+
+Campos:
+- `weight` — peso en kg (0.01–200)
+- `temperature` — temperatura en °C (30.0–45.0)
+- `heart_rate` — frecuencia cardiaca en bpm (20–300)
+- `respiratory_rate` — frecuencia respiratoria en rpm (5–120)
+- `recorded_by` — usuario que registro los vitales
+- `recorded_at` — momento clinico real (editable, no el de ingreso al sistema)
+
+Reglas:
+- al menos un campo debe estar presente
+- temperatura >= 42.0 °C con FC < 40 bpm es inconsistente clinicamente (error de validacion)
+- no hay PATCH ni DELETE: cada registro es inmutable
+- bloqueado si la consulta esta `closed`
+- la `organization` se asigna automaticamente desde el `medical_record` (incluso si se llama directamente a `.create()`)
+- `recorded_at` no puede ser futuro ni mayor a 10 anos en el pasado
+
+El campo `weight` de `MedicalRecord` se mantiene por compatibilidad. Los helpers centrales priorizan `VitalSigns`:
+- `_get_last_weight(pet)`: busca el ultimo peso del paciente en `VitalSigns` primero, luego en `MedicalRecord`. Usado para detectar cambios bruscos de peso.
+- `get_current_weight(record)`: peso a mostrar en el panel lateral de una consulta. Usa el ultimo vital con `weight != None`, sino cae al campo del registro.
+
+Endpoints:
+
+| Metodo | URL | Descripcion |
+|--------|-----|-------------|
+| `GET`  | `/api/medical-records/<pk>/vitals/` | Listar vitales de la consulta (paginado) |
+| `POST` | `/api/medical-records/<pk>/vitals/` | Registrar nuevos vitales |
+
+Permisos:
+- lectura: `medicalrecord.vitals.list` (VET + ASSISTANT)
+- creacion: `medicalrecord.vitals.create` (VET solo)
+
+## Panel lateral — Summary
+
+Endpoint de lectura que agrega todos los datos relevantes de una consulta para el panel lateral de la UI. Evita multiples requests independientes.
+
+Endpoint:
+- `GET /api/medical-records/<pk>/summary/`
+
+Respuesta:
+
+```json
+{
+  "patient": { "name", "species", "breed", "birth_date" },
+  "last_vitals": {
+    "weight", "temperature", "heart_rate", "respiratory_rate",
+    "recorded_at", "has_vitals"
+  },
+  "diagnosis": "...",
+  "consultation_type": "general",
+  "status": "open",
+  "totals": { "subtotal", "tax_amount", "total", "status" },
+  "next_vaccine_date": "2026-08-01"
+}
+```
+
+Notas:
+- `last_vitals.weight`: usa `get_current_weight(record)` — prioriza `VitalSigns.weight`, sino cae a `MedicalRecord.weight`
+- `totals`: `null` si no existe factura vinculada
+- `next_vaccine_date`: proxima vacuna futura de la mascota (de cualquier consulta, no solo esta)
+- el endpoint hace una sola query por entidad con `select_related`/`prefetch_related`
+
+Permiso: `medicalrecord.summary.retrieve` (VET + ASSISTANT)
+
 ## Cierre de consulta
 
-El cierre de consulta es explicito.
+El cierre de consulta es explícito.
 
 Endpoint:
 - `POST /api/medical-records/<id>/close/`
 
 Comportamiento:
-- si esta abierta, se cierra
-- si ya estaba cerrada, responde `200` sin cambios (idempotente)
+- si está abierta, se valida y se cierra
+- si ya estaba cerrada, responde `200` sin cambios (idempotente — no re-valida campos)
 
-Auditoria:
+Validaciones en cierre (solo para consultas que no están ya cerradas):
+- `diagnosis` no puede estar vacío (todos los tipos)
+- `treatment` no puede estar vacío **excepto** si `consultation_type = vaccine`
+
+**Excepción para vacunación**: Las consultas de tipo `vaccine` pueden cerrarse sin tratamiento documentado, ya que en muchos flujos reales una vacunación no requiere tratamiento adicional.
+
+Si la validación falla, retorna `400` con el campo afectado en formato estandarizado:
+
+```json
+{
+  "code": "validation_error",
+  "errors": {
+    "treatment": ["El tratamiento es obligatorio."]
+  }
+}
+```
+
+El frontend mapea estos errores a steps específicos mediante `FIELD_TO_STEP`:
+
+```javascript
+const FIELD_TO_STEP = {
+  consultation_type: 1,
+  diagnosis: 1,
+  notes: 1,
+  treatment: 2,
+  weight: 2
+};
+```
+
+Auditoría:
 - `status = closed`
 - `closed_at`
 - `closed_by`
+
+Logging:
+- `MEDICAL_RECORD_CLOSE_VALIDATION_FAILED` (WARNING) — emitido cuando falla validación de `diagnosis` o `treatment`. Incluye `record_id`, `field`, `user_id`, `organization_id` para auditoría.
 
 ## Reglas de negocio principales
 
@@ -159,6 +276,7 @@ No se permite para ningun rol, incluido `ADMIN`:
 - quitar productos
 - agregar servicios
 - quitar servicios
+- registrar nuevos signos vitales
 
 ### Consulta con factura no puede eliminarse
 
@@ -177,15 +295,58 @@ Si se necesita eliminar, primero se debe cancelar o eliminar la factura manualme
 
 El campo `weight` tiene las siguientes validaciones en el serializer:
 
-- Minimo: `0.01 kg` — no se permiten pesos negativos ni cero
-- Cambio brusco (solo en actualizaciones): si el peso nuevo difiere mas del 150% respecto al ultimo registro para esa mascota, el sistema retorna error con mensaje:
+- Minimo: `0.01 kg`, maximo: `200.00 kg`
+- Cambio brusco: si el peso nuevo difiere mas del 150% respecto al ultimo peso registrado para esa mascota, el sistema retorna error. El ultimo peso se busca con `_get_last_weight(pet)`, que prioriza `VitalSigns` sobre `MedicalRecord`.
 
   ```
-  Cambio brusco de peso: último registro 5.00 kg → nuevo 80.00 kg (1500%). Envía force_weight=true para confirmar.
+  Cambio brusco de peso: último registro 5.00 kg → nuevo 80.00 kg. Envía force_weight=true para confirmar.
   ```
 
-- Se puede forzar el cambio enviando `force_weight: true` en el body
-- La validacion de cambio brusco solo aplica en `PATCH`/`PUT` (cuando existe `self.instance`), no en `POST`
+- Se puede forzar enviando `force_weight: true` en el body (campo declarado explicitamente en el serializer — aparece en el schema OpenAPI)
+- La validacion de cambio brusco aplica tanto en actualizaciones de `MedicalRecord` como al registrar nuevos `VitalSigns`
+- La funcion `_validate_weight_change(pet, new_weight, force)` es compartida entre `MedicalRecordSerializer` y `VitalSignsSerializer`
+
+**Helper de conversion segura** (frontend): El stepper usa `toNumberOrNull(v)` para convertir valores de input:
+
+```javascript
+const toNumberOrNull = (v) => {
+    if (v === "" || v == null) return null;
+    const n = Number(v);
+    return Number.isNaN(n) ? null : n;
+};
+```
+
+Esto maneja casos edge como `" "` (espacios) → `null`, `"0"` → `0` (válido).
+
+## Captura de signos vitales en el stepper
+
+Los signos vitales viven en el sidebar derecho del stepper y pueden editarse durante todo el flujo visual. Operativamente, el frontend los intenta persistir junto con el avance del stepper cuando detecta cambios.
+
+```
+Paso 1: Diagnóstico → POST /medical-records/ → recordId creado
+Paso 2: Tratamiento + Receta
+  • Los vitales siguen visibles en el sidebar
+  • Si cambiaron respecto al ultimo snapshot enviado:
+      - PATCH /medical-records/{id}/ (sin weight — peso vive en VitalSigns)
+      - POST /medical-records/{id}/vitals/ (si hay campos llenos)
+Paso 3: Productos → ...
+Paso 4: Facturación → Cerrar
+```
+
+**Orden de escritura**:
+1. Primero se actualiza el `MedicalRecord`
+2. Luego se crean los `VitalSigns` si hay cambios y al menos un campo no-vacio
+
+Si el paso 1 falla, los vitales no se guardan (consistencia atómica por orden, no por transacción DB).
+
+El frontend usa un hash normalizado para no duplicar registros identicos de vitales al avanzar entre pasos.
+
+**Doble fuente de peso**:
+- `MedicalRecord.weight` — campo legacy, se mantiene por compatibilidad con datos históricos
+- `VitalSigns.weight` — fuente de verdad para signos vitales
+- En step 2, solo se envía `weight` a `createVitals()`, no a `updateMedicalRecord()`
+
+**Edición de consulta existente**: Al editar una consulta, el stepper precarga los vitales desde `initialRecord.latest_vitals`, con fallback a `initialRecord.weight` si no hay vitales registrados.
 
 ## Registro de vacunas
 
@@ -226,7 +387,10 @@ La policy de dominio (`apps/medical_records/policies.py`) agrega reglas no expre
 Funciones de policy:
 - `can_modify_medical_record_charges(user, medical_record)`: ADMIN siempre, VET solo si es el asignado
 - `can_close_medical_record(user, medical_record)`: ADMIN siempre, VET solo si es el asignado
-- `assert_can_modify_charges(user, medical_record, request)`: lanza `PermissionDenied` + emite log, usado en todos los endpoints de cargos
+- `assert_can_modify_charges(user, medical_record, request)`: gate **billing** — productos y servicios. Lanza `PermissionDenied` + emite log.
+- `assert_can_modify_medical_record(user, medical_record, request)`: gate **clinico** — signos vitales y datos no-factura. Valida org + estado `closed`. Semanticamente distinto del anterior.
+
+Importante: no usar `assert_can_modify_charges` para vitales. Son dominios distintos aunque comparten el bloqueo por `closed`.
 
 ## Vacunas (VaccineRecord)
 
@@ -260,6 +424,8 @@ El estado no se almacena en DB. Se calcula como propiedad:
 - `vaccine_name` no puede ser vacio o solo espacios
 - `application_date` no puede ser en el futuro
 - `next_due_date` debe ser posterior a `application_date` si se envia
+- `pet` debe pertenecer a la misma organizacion del usuario autenticado (validado en serializer)
+- `medical_record` si se envia, debe pertenecer a la misma organizacion (validado en serializer)
 
 ### Endpoints
 
@@ -276,6 +442,10 @@ El estado no se almacena en DB. Se calcula como propiedad:
 Se usa `Index(fields=['pet', 'vaccine_name'])` para optimizar queries frecuentes de historial de vacunacion por mascota.
 El ordenamiento es `-application_date, -id` para desambiguar registros con la misma fecha.
 
+## Frontend — patron de submit
+
+El formulario de nueva/editar consulta usa `saving` state para bloquear el boton durante la operacion. Ver ADR `2026-05-02-p2-frontend-ux-hardening.md` para el patron estandar.
+
 ## Observabilidad
 
 Eventos relevantes en logs (`medical_records.events`):
@@ -283,5 +453,6 @@ Eventos relevantes en logs (`medical_records.events`):
 - `MEDICAL_RECORD_CLOSE_IDEMPOTENT`
 - `MEDICAL_RECORD_OWNERSHIP_DENIED`
 - `MEDICAL_RECORD_CLOSED_DENIED`
+- `VITAL_SIGNS_CREATED` (INFO) — emitido por `VitalSignsListCreateView.perform_create`
 
-Estos eventos permiten auditar intentos de mutacion sobre consultas fuera de policy.
+Estos eventos permiten auditar intentos de mutacion sobre consultas fuera de policy y el registro de vitales.

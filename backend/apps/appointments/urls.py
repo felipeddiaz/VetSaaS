@@ -5,8 +5,8 @@ urlpatterns = [
     path("", AppointmentListCreateView.as_view()),
     path("create-with-patient/", create_with_patient),
     path("walk-in/", walk_in),
-    path("<int:pk>/", AppointmentDetailView.as_view()),
-    path("<int:pk>/status/", update_status),
-    path("<int:pk>/history/", appointment_history),
-    path("<int:pk>/assign-patient/", assign_patient),
+    path("<str:pk>/", AppointmentDetailView.as_view()),
+    path("<str:pk>/status/", update_status),
+    path("<str:pk>/history/", appointment_history),
+    path("<str:pk>/assign-patient/", assign_patient),
 ]

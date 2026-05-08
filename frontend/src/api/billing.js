@@ -8,7 +8,7 @@ export const createService = (data) =>
     api.post("billing/services/", data).then(r => r.data);
 
 export const updateService = (id, data) =>
-    api.put(`billing/services/${id}/`, data).then(r => r.data);
+    api.patch(`billing/services/${id}/`, data).then(r => r.data);
 
 export const deleteService = (id) =>
     api.delete(`billing/services/${id}/`);

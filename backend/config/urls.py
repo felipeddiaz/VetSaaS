@@ -30,11 +30,30 @@ from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
 )
-from apps.core.throttling import LoginRateThrottle
+import logging
+from apps.core.throttling import LoginRateThrottle, LoginUserRateThrottle
+from apps.core.sanitize import sanitize_text
+
+_login_logger = logging.getLogger('django')
 
 
 class ThrottledTokenObtainPairView(TokenObtainPairView):
-    throttle_classes = [LoginRateThrottle]
+    throttle_classes = [LoginRateThrottle, LoginUserRateThrottle]
+
+    def post(self, request, *args, **kwargs):
+        response = super().post(request, *args, **kwargs)
+        if response.status_code in (400, 401):
+            ip = request.META.get('HTTP_X_FORWARDED_FOR', request.META.get('REMOTE_ADDR', ''))
+            raw_username = (request.data or {}).get('username', '')
+            _login_logger.warning(
+                "LOGIN_FAILED",
+                extra={
+                    "ip": ip.split(',')[0].strip(),
+                    # sanitizar para prevenir payload injection en logs
+                    "username": sanitize_text(raw_username, max_length=100),
+                }
+            )
+        return response
 
 router = DefaultRouter()
 router.register(r'pets', PetViewSet, basename='patient')

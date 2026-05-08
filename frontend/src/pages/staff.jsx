@@ -4,6 +4,7 @@ import { useAuth } from "../auth/authContext";
 import { Icon } from "../components/icons";
 import { useConfirm } from "../components/ConfirmDialog";
 import { toast } from "sonner";
+import handleFormError from "../utils/handleFormError";
 
 const EMPTY_FORM = {
     username: "",
@@ -36,6 +37,7 @@ const Staff = () => {
 
     const [staff, setStaff] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
     const [showModal, setShowModal] = useState(false);
     const [form, setForm] = useState(EMPTY_FORM);
 
@@ -72,6 +74,7 @@ const Staff = () => {
         if (!/[A-Z]/.test(form.password)) { toast.error("La contraseña debe contener al menos una mayúscula"); return; }
         if (!/[0-9]/.test(form.password)) { toast.error("La contraseña debe contener al menos un número"); return; }
 
+        setSaving(true);
         try {
             await toast.promise(createStaff(form), {
                 loading: 'Creando usuario...',
@@ -90,6 +93,8 @@ const Staff = () => {
             fetchStaff();
         } catch (err) {
             // Modal stays open — toast already shows the error
+        } finally {
+            setSaving(false);
         }
     };
 
@@ -276,10 +281,10 @@ const Staff = () => {
                             </form>
                         </div>
                         <div className="modal-footer">
-                            <button className="btn btn-primary btn-md" style={{ flex: 1 }} onClick={handleSubmit}>
-                                Guardar
+                            <button className="btn btn-primary btn-md" style={{ flex: 1 }} onClick={handleSubmit} disabled={saving}>
+                                {saving ? "Guardando..." : "Guardar"}
                             </button>
-                            <button className="btn btn-secondary btn-md" style={{ flex: 1 }} onClick={closeModal}>
+                            <button className="btn btn-secondary btn-md" style={{ flex: 1 }} onClick={closeModal} disabled={saving}>
                                 Cancelar
                             </button>
                         </div>

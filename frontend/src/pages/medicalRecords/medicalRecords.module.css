@@ -1,0 +1,1115 @@
+/* ─── medicalRecords.module.css ─────────────────────────────── */
+/* Diseño compacto V2 */
+
+.pageHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.pageTitle {
+  font-family: var(--font-dm-serif);
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--c-text);
+  margin: 0;
+}
+
+/* ── Two-column layout ───────────────────────────────────────── */
+.pageLayout {
+  display: flex;
+  gap: 0;
+  align-items: flex-start;
+  margin: -28px; /* Offset Layout's padding */
+  background: #f7f7f4;
+  height: calc(100vh - 52px); /* Header is 52px */
+  overflow: hidden;
+}
+
+.mainContent {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ══ LEFT SIDEBAR ════════════════════════════════════════════════ */
+.petSidebar {
+  width: 280px;
+  flex-shrink: 0;
+  background: #fff;
+  border-right: 1px solid var(--c-border);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  transition: width 0.22s ease;
+  overflow: hidden;
+}
+
+/* Estado colapsado: rail estrecho */
+.petSidebarCollapsed {
+  width: 52px;
+}
+
+/* Header con botón de colapso */
+.sidebarHeaderRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 12px 8px 16px;
+}
+
+.sidebarHeader {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--c-text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* Botón colapsar (visible en sidebar expandido) */
+.sidebarCollapseBtn {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--c-border);
+  background: var(--c-subtle);
+  color: var(--c-text-3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all var(--t);
+  flex-shrink: 0;
+}
+
+.sidebarCollapseBtn:hover {
+  background: var(--c-hover);
+  color: var(--c-text);
+  border-color: var(--c-border-2);
+}
+
+/* Botón expandir (visible en rail colapsado) */
+.sidebarToggleBtn {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--c-border);
+  background: var(--c-subtle);
+  color: var(--c-text-3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all var(--t);
+  margin: 12px auto 8px;
+  flex-shrink: 0;
+}
+
+.sidebarToggleBtn:hover {
+  background: var(--c-primary);
+  color: #fff;
+  border-color: var(--c-primary);
+}
+
+/* Mascota seleccionada en el rail */
+.sidebarRailPet {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 0;
+  border-top: 1px solid var(--c-border);
+  border-bottom: 1px solid var(--c-border);
+  margin: 0 8px;
+}
+
+.sidebarRailAvatar {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-lg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sidebarRailName {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--c-text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Contador en el rail */
+.sidebarRailCount {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 0 0;
+  color: var(--c-text-3);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.sidebarSearchWrap {
+  position: relative;
+  padding: 0 16px 12px;
+}
+
+.sidebarSearchIcon {
+  position: absolute;
+  left: 26px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #ccc;
+  display: flex;
+  align-items: center;
+  pointer-events: none;
+}
+
+.sidebarSearchInput {
+  width: 100%;
+  height: 36px;
+  padding: 0 12px 0 36px;
+  font-size: 13px;
+  border: 1px solid #eee;
+  border-radius: 8px;
+  background: #f9f9f9;
+  color: #1a1a1a;
+  outline: none;
+  transition: all 0.2s;
+  box-sizing: border-box;
+}
+
+.sidebarSearchInput:focus {
+  border-color: #1a4434;
+  background: #fff;
+}
+
+.petList {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.sidebarEmpty {
+  text-align: center;
+  color: #999;
+  font-size: 12px;
+  padding: 20px 0;
+}
+
+.petListItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.2s;
+}
+
+.petListItem:hover {
+  background: #f5f5f5;
+}
+
+.petListItemActive {
+  background: #e8f5e9 !important;
+}
+
+.petListIcon {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.petListInfo {
+  flex: 1;
+  min-width: 0;
+}
+
+.petListName {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1a1a1a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.petListSub {
+  font-size: 11px;
+  color: #888;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.petListBadge {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  color: #1a4434;
+  background: #d1e7dd;
+  border-radius: 10px;
+  padding: 2px 7px;
+  min-width: 20px;
+  text-align: center;
+}
+
+/* ══ PATIENT HEADER ══════════════════════════════════════════════ */
+.patientHeader {
+  padding: 28px 32px 20px;
+  background: #f7f7f4;
+  border-bottom: 1px solid #e8e4da;
+}
+
+.patientInfo {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.patientIcon {
+  width: 56px;
+  height: 56px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.patientName {
+  font-size: 24px;
+  font-weight: 600;
+  color: #1a1a1a;
+  margin: 0;
+}
+
+.patientMeta {
+  font-size: 13px;
+  color: #888;
+}
+
+/* ══ VITALS BAR ══════════════════════════════════════════════════ */
+.vitalsBar {
+  display: flex;
+  align-items: center;
+  gap: 4px 20px;
+  padding: 14px 0 0;
+  flex-wrap: wrap;
+}
+
+.vitalsTitle {
+  font-size: 10px;
+  font-weight: 700;
+  color: #bbb;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  margin-right: 4px;
+  flex-shrink: 0;
+}
+
+.vitalItem {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.vitalLabel {
+  font-size: 11px;
+  color: #bbb;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.vitalValue {
+  font-weight: 700;
+  color: #1a1a1a;
+  font-size: 14px;
+}
+
+.vitalNullValue {
+  color: #ddd;
+  font-style: italic;
+  font-size: 14px;
+}
+
+/* ══ FILTERS BAR ═════════════════════════════════════════════════ */
+.filtersBar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 0;
+  padding: 16px 32px;
+  background: #f7f7f4;
+  border-bottom: 1px solid #e8e4da;
+  flex-wrap: wrap;
+}
+
+.pillGroup {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.filterPill {
+  height: 32px;
+  padding: 0 14px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1.5px solid #eee;
+  border-radius: 20px;
+  background: #fff;
+  color: #666;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.filterPill:hover {
+  border-color: #1a4434;
+  color: #1a4434;
+  background: #f0f9f4;
+}
+
+.filterPillActive {
+  background: #1a4434;
+  border-color: #1a4434;
+  color: #fff;
+}
+
+.historySearchWrap {
+  position: relative;
+  margin-left: auto;
+}
+
+.historySearchIcon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #ccc;
+  display: flex;
+  align-items: center;
+  pointer-events: none;
+}
+
+.historySearchInput {
+  height: 34px;
+  padding: 0 12px 0 36px;
+  font-size: 13px;
+  border: 1px solid #eee;
+  border-radius: 8px;
+  background: #fff;
+  color: #1a1a1a;
+  outline: none;
+  width: 220px;
+  transition: all 0.2s;
+}
+
+.historySearchInput:focus {
+  border-color: #1a4434;
+  width: 260px;
+}
+
+/* ══ TIMELINE ════════════════════════════════════════════════════ */
+.timeline {
+  background: #fff;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.timelineEntry {
+  position: relative;
+  margin-bottom: 14px;
+}
+
+.timelineDot {
+  position: absolute;
+  left: -26px;
+  top: 16px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  z-index: 1;
+  flex-shrink: 0;
+}
+
+.yearGroup {
+  margin-bottom: 24px;
+}
+
+.yearLabel {
+  font-size: 10px;
+  font-weight: 700;
+  color: #aaa;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 12px;
+  padding: 4px 12px;
+  background: #f7f7f4;
+  border-radius: 20px;
+  display: inline-block;
+}
+
+.monthGroup {
+  margin-bottom: 16px;
+  padding-left: 8px;
+}
+
+.monthLabel {
+  font-size: 12px;
+  font-weight: 600;
+  color: #666;
+  margin-bottom: 10px;
+}
+
+/* ══ TIMELINE CARD ═══════════════════════════════════════════════ */
+.timelineCard {
+  background: #fff;
+  border: 1px solid #e8e8e4;
+  border-left-width: 4px;
+  border-radius: 12px;
+  padding: 0;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+  transition: box-shadow 0.2s, border-color 0.2s;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.timelineCard:hover {
+  box-shadow: 0 4px 20px rgba(0,0,0,0.10);
+  border-color: #a8c4a2;
+}
+
+/* Zona meta: tipo + fecha + vet + badges */
+.cardTop {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 18px 11px;
+  background: #fafaf7;
+  border-bottom: 1px solid #f0f0ec;
+  flex-wrap: wrap;
+}
+
+.cardLeft {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.typeTag {
+  font-size: 10px;
+  font-weight: 800;
+  padding: 3px 9px;
+  border-radius: 20px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.cardDate {
+  font-size: 12px;
+  font-weight: 600;
+  color: #444;
+}
+
+.cardVet {
+  font-size: 12px;
+  color: #bbb;
+}
+
+.cardBadges {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+/* Zona contenido: diagnosis */
+.diagnosisSnippet {
+  font-size: 14px;
+  color: #1a1a1a;
+  line-height: 1.65;
+  padding: 14px 18px 4px;
+  font-weight: 400;
+}
+
+/* Zona vitales */
+.cardVitals {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 6px 18px 12px;
+  font-size: 12px;
+  color: #888;
+  font-weight: 500;
+}
+
+.cardVitals span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+/* ══ CARD ACTIONS ════════════════════════════════════════════════ */
+.cardActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 18px 14px;
+}
+
+.detailBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1.5px solid #eee;
+  border-radius: 8px;
+  background: #fff;
+  color: #666;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: inherit;
+}
+
+.detailBtn:hover,
+.detailBtnOpen {
+  border-color: #1a4434;
+  color: #1a4434;
+  background: #f0f9f4;
+}
+
+.detailBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.crudActions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* ══ EXPANDED PANEL ══════════════════════════════════════════════ */
+.expandedPanel {
+  background: #fafaf7;
+  border-top: 1px solid #efefeb;
+  padding: 18px 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.expandedSection {
+  display: flex;
+  flex-direction: column;
+}
+
+.expandedLabel {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10px;
+  font-weight: 800;
+  color: #999;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  margin-bottom: 6px;
+}
+
+.expandedLabel::before {
+  content: '';
+  width: 3px;
+  height: 11px;
+  background: #1a4434;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.expandedText {
+  font-size: 14px;
+  color: #222;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.expandedLinks {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 6px;
+}
+
+/* ══ EMPTY STATES ════════════════════════════════════════════════ */
+.emptyCenter {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 400px;
+  text-align: center;
+  gap: 16px;
+  padding: 40px 20px;
+  position: relative;
+  overflow: hidden;
+}
+
+.emptyIconWrap {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: #f5f5f5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #999;
+  position: relative;
+  z-index: 1;
+}
+
+.emptyTitle {
+  font-size: 17px;
+  font-weight: 700;
+  color: #1a1a1a;
+  position: relative;
+  z-index: 1;
+}
+
+.emptySub {
+  font-size: 13px;
+  color: #888;
+  max-width: 340px;
+  line-height: 1.55;
+  position: relative;
+  z-index: 1;
+}
+
+/* ══ PAGINATION ══════════════════════════════════════════════════ */
+.pagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 16px;
+  margin-top: 24px;
+  padding: 16px;
+}
+
+.paginationLabel {
+  font-size: 13px;
+  color: #666;
+}
+
+/* ══ HX TIMELINE — diario clínico editorial ═════════════════════ */
+
+.emptyAura {
+  width: 132px;
+  height: 132px;
+  position: absolute;
+  border-radius: 43% 57% 56% 44% / 36% 40% 60% 64%;
+  background: radial-gradient(circle at 30% 30%, rgba(36, 91, 115, 0.16), rgba(199, 225, 234, 0.28));
+  filter: blur(12px);
+  animation: emptyFloat 7s ease-in-out infinite;
+}
+
+/* ══ TX TIMELINE ─────────────────────────────────────────────── */
+
+.txList {
+  padding: 8px 0 40px;
+}
+
+.txYearSection {
+  margin-bottom: 8px;
+}
+
+.txYearHeader {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 20px 24px 12px;
+}
+
+.txYearLabel {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--c-text-2);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.txYearLine {
+  flex: 1;
+  height: 1px;
+  background: var(--c-border);
+}
+
+.txYearCount {
+  font-size: 11px;
+  color: var(--c-text-3);
+  white-space: nowrap;
+}
+
+.txMonthGroup {
+  padding: 0 24px 16px;
+}
+
+.txMonthLabel {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.10em;
+  color: var(--c-text-3);
+  margin: 0 0 10px;
+}
+
+.txCards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ── Card ── */
+.txCard {
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-left: 3px solid var(--tx-color, var(--c-primary));
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow var(--t2);
+  overflow: hidden;
+}
+
+.txCard:hover {
+  box-shadow: var(--shadow-md);
+}
+
+.txCardOpen {
+  box-shadow: var(--shadow-md);
+}
+
+/* ── Header: tipo · fecha · vet | badges · chevron ── */
+.txHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px 10px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--c-border);
+  background: var(--c-subtle);
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+}
+
+.txHeadClickable {
+  cursor: pointer;
+  transition: background var(--t);
+}
+
+.txHeadClickable:hover {
+  background: var(--c-hover);
+}
+
+.txHeadLeft {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.txHeadRight {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.txTypePill {
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  padding: 3px 9px;
+  border-radius: var(--r-full);
+}
+
+.txDate {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--c-text-2);
+}
+
+.txVet {
+  font-size: 12px;
+  color: var(--c-text-3);
+}
+
+.txBadgeOpen, .txBadgeClosed, .txBadgeGreen, .txBadgeBlue {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: var(--r-full);
+  white-space: nowrap;
+}
+
+.txBadgeOpen   { background: var(--c-info-bg);    color: var(--c-info-text);    border: 1px solid var(--c-info-border);    }
+.txBadgeClosed { background: var(--c-subtle);      color: var(--c-text-3);       border: 1px solid var(--c-border);         }
+.txBadgeGreen  { background: var(--c-success-bg);  color: var(--c-success-text); border: 1px solid var(--c-success-border); }
+.txBadgeBlue   { background: var(--c-info-bg);     color: var(--c-info-text);    border: 1px solid var(--c-info-border);    }
+
+.txToggle {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--r-full);
+  border: 1px solid var(--c-border);
+  background: var(--c-surface);
+  color: var(--c-text-3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all var(--t);
+  flex-shrink: 0;
+}
+
+.txToggle:hover {
+  border-color: var(--c-primary);
+  color: var(--c-primary);
+  background: #edf7f0;
+}
+
+/* ── Contenido: diagnóstico · tratamiento · vitales ── */
+.txContent {
+  padding: 14px 14px 12px;
+}
+
+/* Diagnóstico — contenido primario */
+.txDiagnosis {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--c-text);
+  line-height: 1.5;
+  margin: 0 0 6px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.txNone {
+  font-weight: 400;
+  color: var(--c-text-3);
+  font-style: italic;
+}
+
+/* Tratamiento — contenido secundario */
+.txTreatment {
+  font-size: 13px;
+  color: var(--c-text-2);
+  line-height: 1.5;
+  margin: 0 0 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Vitales */
+.txVitals {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.txVitals span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--c-text-3);
+  background: var(--c-subtle);
+  border: 1px solid var(--c-border);
+  padding: 2px 8px;
+  border-radius: var(--r-full);
+}
+
+/* ── Footer: acciones siempre visibles ── */
+.txFooter {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--c-border);
+}
+
+/* ── Panel expandido: notas · productos · receta ── */
+.txExpanded {
+  overflow: hidden;
+}
+
+.txExpandedInner {
+  border-top: 1px solid var(--c-border);
+  background: var(--c-subtle);
+  padding: 18px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.txSection {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.txLabel {
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--c-text-3);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.txLabel::before {
+  content: '';
+  width: 3px;
+  height: 11px;
+  background: var(--tx-color, var(--c-primary));
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.txText {
+  font-size: 14px;
+  color: var(--c-text);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  margin: 0;
+}
+
+.txChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.txChip {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: var(--r-full);
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  color: var(--c-text-2);
+}
+
+.txPrxList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.txPrxRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-md);
+}
+
+.txPrxName {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--c-text);
+}
+
+.txPrxMeta {
+  display: flex;
+  gap: 8px;
+}
+
+.txPrxMeta span {
+  font-size: 11px;
+  color: var(--c-text-3);
+  background: var(--c-subtle);
+  padding: 2px 7px;
+  border-radius: var(--r-full);
+}
+
+.txBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 11px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  border: 1.5px solid var(--c-border-2);
+  border-radius: var(--r-md);
+  background: var(--c-surface);
+  color: var(--c-text-2);
+  cursor: pointer;
+  transition: all var(--t);
+  box-shadow: var(--shadow-xs);
+}
+
+.txBtn:hover {
+  border-color: var(--c-primary);
+  color: var(--c-primary);
+  background: #edf7f0;
+}
+
+.txBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.txBtnDanger {
+  color: var(--c-danger-text);
+  border-color: var(--c-danger-border);
+  background: var(--c-danger-bg);
+}
+
+.txBtnDanger:hover {
+  background: #fee2e2;
+  border-color: #fca5a5;
+  color: #b91c1c;
+}

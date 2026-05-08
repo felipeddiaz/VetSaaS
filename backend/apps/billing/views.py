@@ -10,11 +10,12 @@ from django.utils.dateparse import parse_date
 
 from apps.core.datetime_utils import filter_by_local_day
 from apps.core.permissions import HybridPermission
-from apps.core.views import TenantQueryMixin
+from apps.core.views import TenantQueryMixin, PublicIdLookupMixin, resolve_public_id
 
 from .models import Service, Invoice, InvoiceItem
 from .serializers import ServiceSerializer, InvoiceSerializer, InvoiceItemSerializer
 from .permissions import CanConfirmInvoice, CanPayInvoice, CanCancelInvoice
+from .services import _log_status_change
 
 
 class BillingOrganizationMixin(TenantQueryMixin):
@@ -40,10 +41,11 @@ class ServiceListCreateView(BillingOrganizationMixin, generics.ListCreateAPIView
         serializer.save(organization=self.request.user.organization)
 
 
-class ServiceDetailView(BillingOrganizationMixin, generics.RetrieveUpdateDestroyAPIView):
+class ServiceDetailView(PublicIdLookupMixin, BillingOrganizationMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = ServiceSerializer
     permission_classes = [HybridPermission]
     resource_name = "service"
+    lookup_url_kwarg = 'pk'
 
     def get_queryset(self):
         return Service.objects.for_organization(self.request.user.organization)
@@ -102,19 +104,20 @@ class InvoiceListCreateView(BillingOrganizationMixin, generics.ListCreateAPIView
         )
 
 
-class InvoiceDetailView(BillingOrganizationMixin, generics.RetrieveUpdateAPIView):
+class InvoiceDetailView(PublicIdLookupMixin, BillingOrganizationMixin, generics.RetrieveUpdateAPIView):
     serializer_class = InvoiceSerializer
     permission_classes = [HybridPermission]
     resource_name = "invoice"
+    lookup_url_kwarg = 'pk'
 
     def get_queryset(self):
         return Invoice.objects.for_organization(self.request.user.organization)
 
     def update(self, request, *args, **kwargs):
         invoice = self.get_object()
-        if invoice.status == 'paid':
+        if invoice.status != 'draft':
             return Response(
-                {'error': 'No se puede editar una factura ya pagada'},
+                {'error': 'Solo se pueden editar facturas en borrador.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         return super().update(request, *args, **kwargs)
@@ -125,7 +128,9 @@ class InvoiceDetailView(BillingOrganizationMixin, generics.RetrieveUpdateAPIView
 def confirm_invoice(request, pk):
     from apps.billing.services import confirm_invoice as confirm_invoice_service
 
-    invoice = get_object_or_404(Invoice, pk=pk, organization=request.user.organization)
+    invoice = resolve_public_id(
+        Invoice.objects.for_organization(request.user.organization), pk
+    )
     try:
         confirm_invoice_service(invoice, user=request.user)
     except DjValidationError as e:
@@ -137,17 +142,6 @@ def confirm_invoice(request, pk):
 @api_view(['PATCH'])
 @permission_classes([CanPayInvoice])
 def pay_invoice(request, pk):
-    invoice = get_object_or_404(Invoice, pk=pk, organization=request.user.organization)
-    if invoice.status == 'paid':
-        return Response(
-            {'error': 'La factura ya fue pagada'},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-    if invoice.status != 'confirmed':
-        return Response(
-            {'error': 'Solo se pueden pagar facturas confirmadas. Confirma la factura primero.'},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
     payment_method = request.data.get('payment_method')
     if not payment_method:
         return Response(
@@ -160,10 +154,27 @@ def pay_invoice(request, pk):
             {'error': f'Método de pago inválido. Opciones: {valid_methods}'},
             status=status.HTTP_400_BAD_REQUEST,
         )
-    invoice.status = 'paid'
-    invoice.payment_method = payment_method
-    invoice.paid_at = timezone.now()
-    invoice.save(update_fields=['status', 'payment_method', 'paid_at', 'updated_at'])
+    with transaction.atomic():
+        invoice = resolve_public_id(
+            Invoice.objects.for_organization(request.user.organization).select_for_update(),
+            pk
+        )
+        if invoice.status == 'paid':
+            return Response(
+                {'error': 'La factura ya fue pagada'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if invoice.status != 'confirmed':
+            return Response(
+                {'error': 'Solo se pueden pagar facturas confirmadas. Confirma la factura primero.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        previous_status = invoice.status
+        invoice.status = 'paid'
+        invoice.payment_method = payment_method
+        invoice.paid_at = timezone.now()
+        invoice.save(update_fields=['status', 'payment_method', 'paid_at', 'updated_at'])
+        _log_status_change(invoice, previous=previous_status, new='paid', user=request.user)
     return Response(InvoiceSerializer(invoice).data)
 
 
@@ -174,39 +185,39 @@ class InvoiceItemCreateView(BillingOrganizationMixin, generics.CreateAPIView):
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
-        invoice = get_object_or_404(
+        invoice = resolve_public_id(
             Invoice.objects.for_organization(self.request.user.organization),
-            pk=self.kwargs['invoice_pk']
+            self.kwargs['invoice_pk']
         )
         context['invoice'] = invoice
         return context
 
     def perform_create(self, serializer):
-        from django.db import transaction
         from apps.inventory.models import Presentation as InventoryPresentation
-
-        invoice = get_object_or_404(
-            Invoice,
-            pk=self.kwargs['invoice_pk'],
-            organization=self.request.user.organization,
-        )
-        if invoice.status != 'draft':
-            raise ValidationError('Solo se pueden agregar ítems a cobros en borrador')
 
         data = serializer.validated_data
         service = data.get('service')
         presentation = data.get('presentation')
 
-        if service:
-            unit_price = service.base_price
-            description = service.name
-            serializer.save(invoice=invoice, unit_price=unit_price, description=description)
-        else:
-            # Lock presentation to prevent concurrent overselling
-            with transaction.atomic():
-                locked_pres = InventoryPresentation.objects.select_for_update().get(
-                    pk=presentation.pk
-                )
+        with transaction.atomic():
+            invoice = resolve_public_id(
+                Invoice.objects.for_organization(self.request.user.organization).select_for_update(),
+                self.kwargs['invoice_pk']
+            )
+            if invoice.status != 'draft':
+                raise ValidationError('Solo se pueden agregar ítems a cobros en borrador')
+
+            if service:
+                unit_price = service.base_price
+                description = service.name
+                serializer.save(invoice=invoice, unit_price=unit_price, description=description)
+            else:
+                locked_pres = InventoryPresentation.objects.select_for_update().filter(
+                    pk=presentation.pk,
+                    organization=self.request.user.organization,
+                ).first()
+                if locked_pres is None:
+                    raise ValidationError("Presentación no encontrada en la organización.")
                 if locked_pres.stock < data.get('quantity', 1):
                     raise ValidationError(
                         f"Stock insuficiente para '{locked_pres.product.name}': "
@@ -223,10 +234,9 @@ class InvoiceItemDetailView(BillingOrganizationMixin, generics.RetrieveUpdateDes
     resource_name = "invoice"
 
     def _get_invoice(self):
-        return get_object_or_404(
-            Invoice,
-            pk=self.kwargs['invoice_pk'],
-            organization=self.request.user.organization,
+        return resolve_public_id(
+            Invoice.objects.for_organization(self.request.user.organization),
+            self.kwargs['invoice_pk']
         )
 
     def get_object(self):
@@ -259,8 +269,11 @@ class InvoiceItemDetailView(BillingOrganizationMixin, generics.RetrieveUpdateDes
 @api_view(['PATCH'])
 @permission_classes([CanCancelInvoice])
 def cancel_invoice(request, pk):
-    invoice = get_object_or_404(Invoice, pk=pk, organization=request.user.organization)
-    notes = request.data.get('notes', '')
+    invoice = resolve_public_id(
+        Invoice.objects.for_organization(request.user.organization), pk
+    )
+    from apps.core.sanitize import sanitize_text
+    notes = sanitize_text(request.data.get('notes') or '', max_length=255)
     try:
         from .services import cancel_invoice as cancel_invoice_service
         cancel_invoice_service(invoice, user=request.user, notes=notes)

@@ -2,11 +2,11 @@ from decimal import Decimal
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
-from apps.core.models import OrganizationalModel
+from apps.core.models import OrganizationalModel, PublicIdMixin
 from apps.billing.money import discount_amount, invoice_totals, line_subtotal, money
 
 
-class Service(OrganizationalModel):
+class Service(PublicIdMixin, OrganizationalModel):
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     base_price = models.DecimalField(max_digits=10, decimal_places=2)
@@ -17,9 +17,15 @@ class Service(OrganizationalModel):
 
     class Meta:
         ordering = ['name']
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(base_price__gt=0),
+                name='service_base_price_positive',
+            ),
+        ]
 
 
-class Invoice(OrganizationalModel):
+class Invoice(PublicIdMixin, OrganizationalModel):
     STATUS_CHOICES = (
         ('draft', 'Borrador'),
         ('confirmed', 'Confirmada'),
@@ -225,6 +231,12 @@ class InvoiceItem(OrganizationalModel):
                     (Q(service__isnull=True)  & Q(presentation__isnull=False))
                 ),
                 name="invoiceitem_exactly_one_source",
+            ),
+            # Un mismo servicio no puede aparecer dos veces en la misma factura
+            models.UniqueConstraint(
+                fields=['invoice', 'service'],
+                condition=Q(service__isnull=False),
+                name='invoiceitem_unique_invoice_service',
             ),
         ]
 

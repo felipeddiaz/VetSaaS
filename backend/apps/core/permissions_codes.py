@@ -30,6 +30,9 @@ PERMISSION_CODES = [
     "medicalrecord.create",
     "medicalrecord.update",
     "medicalrecord.close",
+    "medicalrecord.vitals.create",
+    "medicalrecord.vitals.list",
+    "medicalrecord.summary.retrieve",
 
     # Facturas
     "invoice.list",
@@ -64,6 +67,7 @@ PERMISSION_CODES = [
     # Inventario
     "inventory.list",
     "inventory.retrieve",
+    "inventory.create",
     "inventory.update",
 
     # Recetas
@@ -105,6 +109,8 @@ PERMISSIONS = {
         "appointment.create_walkin",
         "medicalrecord.list", "medicalrecord.retrieve", "medicalrecord.create",
         "medicalrecord.update", "medicalrecord.close",
+        "medicalrecord.vitals.create", "medicalrecord.vitals.list",
+        "medicalrecord.summary.retrieve",
         "prescription.list", "prescription.retrieve", "prescription.create",
         "prescription.destroy",
         "patient.list", "patient.retrieve", "patient.create",
@@ -124,6 +130,7 @@ PERMISSIONS = {
         "appointment.list", "appointment.retrieve", "appointment.create",
         "appointment.update", "appointment.destroy",
         "medicalrecord.list", "medicalrecord.retrieve",
+        "medicalrecord.vitals.list", "medicalrecord.summary.retrieve",
         "prescription.list", "prescription.retrieve",
         "patient.list", "patient.retrieve", "patient.create",
         "patient.update", "patient.destroy",

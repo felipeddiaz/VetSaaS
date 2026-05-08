@@ -13,7 +13,7 @@ export const createPrescription = (data) =>
     api.post("prescriptions/", data).then(r => r.data);
 
 export const updatePrescription = (id, data) =>
-    api.put(`prescriptions/${id}/`, data).then(r => r.data);
+    api.patch(`prescriptions/${id}/`, data).then(r => r.data);
 
 export const deletePrescription = (id) =>
     api.delete(`prescriptions/${id}/`);

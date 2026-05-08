@@ -14,7 +14,7 @@ export const createPet = async (token, data) => {
 };
 
 export const updatePet = async (token, id, data) => {
-    const res = await api.put(`pets/${id}/`, data);
+    const res = await api.patch(`pets/${id}/`, data);
     return res.data;
 };
 

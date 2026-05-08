@@ -2,6 +2,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
+from rest_framework.exceptions import ValidationError
 from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404
 
@@ -10,6 +11,8 @@ from apps.organizations.models import Organization
 from apps.users.serializers import UserSerializer, CreateEmployeeSerializer
 
 User = get_user_model()
+
+VALID_ROLES = ['ADMIN', 'VET', 'ASSISTANT']
 
 
 class MeView(APIView):
@@ -50,11 +53,18 @@ class StaffListView(APIView):
     permission_classes = [make_permission("staff.list")]
 
     def get(self, request):
-        users = User.objects.filter(
+        qs = User.objects.filter(
             organization=request.user.organization,
             is_active=True
         ).exclude(role='ADMIN_SAAS')
-        serializer = UserSerializer(users, many=True)
+
+        role = request.query_params.get('role')
+        if role:
+            if role not in VALID_ROLES:
+                raise ValidationError(f"Rol inválido. Opciones válidas: {', '.join(VALID_ROLES)}")
+            qs = qs.filter(role=role)
+
+        serializer = UserSerializer(qs, many=True)
         return Response(serializer.data)
 
 

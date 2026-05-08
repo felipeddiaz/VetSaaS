@@ -18,6 +18,16 @@ src/
 ├── components/    — componentes reutilizables
 ├── hooks/         — hooks compartidos
 ├── pages/         — vistas completas por ruta
+│   └── medicalRecords/
+│       ├── index.jsx            — orquestador de la página
+│       ├── PetSidebar.jsx       — sidebar izquierdo (lista de mascotas)
+│       ├── PatientHeader.jsx    — header con datos del paciente + vitales (solo lectura)
+│       ├── VitalsEditor.jsx     — editor inline de vitales (ya no se usa en PatientHeader)
+│       ├── Timeline.jsx         — lista de consultas agrupadas por año/mes
+│       ├── TimelineCard.jsx     — card individual de consulta (expandible)
+│       ├── SidePanel.jsx        — panel derecho con summary (3 modos: live/patient/empty)
+│       ├── ConsultationStepper.jsx — stepper de 4 pasos (crear/editar consulta)
+│       └── *.module.css         — estilos modulares
 ├── routes/        — proteccion de rutas privadas
 └── utils/         — helpers (apiError, datetime)
 ```
@@ -63,6 +73,13 @@ const confirm = useConfirm();
 const ok = await confirm({ message: "¿Eliminar?", confirmText: "Eliminar", dangerMode: true });
 if (!ok) return;
 ```
+
+Tambien se usa para transiciones con peso operativo fuerte aunque no sean destructivas, por ejemplo `in_progress -> done` en citas.
+
+Patron recomendado para transiciones terminales:
+- confirmar primero con `useConfirm`
+- ejecutar la mutacion
+- mantener el contexto abierto si el siguiente paso esperado requiere un CTA inmediato
 
 ### Manejo de errores
 
@@ -116,6 +133,31 @@ Despues de crear, editar o eliminar, siempre refrescar la lista local:
 await createItem(payload);
 await loadItems();   // no asumir que el estado local refleja la DB
 ```
+
+### PATCH en lugar de PUT para actualizaciones parciales
+
+**Convención**: Todos los endpoints de actualización usan `PATCH`, no `PUT`.
+
+```javascript
+// api/medicalRecords.js
+export const updateMedicalRecord = async (token, id, data) => {
+    const res = await api.patch(`medical-records/${id}/`, data);  // ← PATCH, no PUT
+    return res.data;
+};
+```
+
+**Razones**:
+1. **Semántica HTTP**: `PUT` = reemplazo completo, `PATCH` = actualización parcial
+2. **Seguridad multi-tenant**: `organization` es `read_only` en el backend — nunca debe venir del cliente
+3. **Robustez**: Si se agrega un campo requerido al serializer, `PATCH` no se rompe (solo los campos enviados se validan)
+
+**Archivos que siguen esta convención**:
+- `api/medicalRecords.js` — `updateMedicalRecord`
+- `api/pets.js` — `updatePet`
+- `api/inventory.js` — `updateProduct`
+- `api/prescriptions.js` — `updatePrescription`
+- `api/billing.js` — `updateService`
+- `api/appointments.js` — `updateAppointment`
 
 ## Infraestructura de API
 

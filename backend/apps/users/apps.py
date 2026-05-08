@@ -8,6 +8,7 @@ class UsersConfig(AppConfig):
     def ready(self):
         from django.db.models.signals import post_migrate
         post_migrate.connect(_create_default_superuser, sender=self)
+        import apps.users.signals  # noqa: registra post_save en User
 
 
 def _create_default_superuser(sender, **kwargs):
@@ -22,7 +23,7 @@ def _create_default_superuser(sender, **kwargs):
         return
 
     User = get_user_model()
-    org, _ = Organization.objects.get_or_create(name='VetCare Internal')
+    org, _ = Organization.objects.get_or_create(name='Vet Care Internal')
 
     user, _ = User.objects.get_or_create(
         username=username,

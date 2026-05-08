@@ -1,8 +1,8 @@
 from django.db import models
-from apps.core.models import OrganizationalModel
+from apps.core.models import OrganizationalModel, PublicIdMixin
 
 
-class Product(OrganizationalModel):
+class Product(PublicIdMixin, OrganizationalModel):
     CATEGORY_CHOICES = [
         ('medication', 'Medicamento'),
         ('food', 'Alimento'),
@@ -25,7 +25,7 @@ class Product(OrganizationalModel):
         unique_together = [['organization', 'internal_code']]
 
 
-class Presentation(OrganizationalModel):
+class Presentation(PublicIdMixin, OrganizationalModel):
     UNIT_CHOICES = [
         ('tablet', 'Tableta'),
         ('capsule', 'Cápsula'),
@@ -149,17 +149,18 @@ class MedicalRecordProduct(OrganizationalModel):
         from django.db import transaction
         from .services import apply_stock_movement
         if self.pk:
-            old = MedicalRecordProduct.objects.get(pk=self.pk)
-            diff = self.quantity - old.quantity
-            if diff != 0:
-                apply_stock_movement(
-                    presentation=self.presentation,
-                    quantity=abs(diff),
-                    movement_type='out' if diff > 0 else 'in',
-                    organization=self.medical_record.organization,
-                    reason='Ajuste por edición de consulta médica',
-                    medical_record=self.medical_record,
-                )
+            with transaction.atomic():
+                old = MedicalRecordProduct.objects.select_for_update().get(pk=self.pk)
+                diff = self.quantity - old.quantity
+                if diff != 0:
+                    apply_stock_movement(
+                        presentation=self.presentation,
+                        quantity=abs(diff),
+                        movement_type='out' if diff > 0 else 'in',
+                        organization=self.medical_record.organization,
+                        reason='Ajuste por edición de consulta médica',
+                        medical_record=self.medical_record,
+                    )
         else:
             # CREATE — lock explícito antes del check de stock para evitar race condition.
             # apply_stock_movement usa refresh_from_db() + F() pero sin lock previo
@@ -178,13 +179,16 @@ class MedicalRecordProduct(OrganizationalModel):
         super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
+        from django.db import transaction
         from .services import apply_stock_movement
-        apply_stock_movement(
-            presentation=self.presentation,
-            quantity=self.quantity,
-            movement_type='in',
-            organization=self.medical_record.organization,
-            reason='Reversión por eliminación de producto en consulta',
-            medical_record=self.medical_record,
-        )
-        super().delete(*args, **kwargs)
+        with transaction.atomic():
+            fresh = Presentation.objects.select_for_update().get(pk=self.presentation_id)
+            apply_stock_movement(
+                presentation=fresh,
+                quantity=self.quantity,
+                movement_type='in',
+                organization=self.medical_record.organization,
+                reason='Reversión por eliminación de producto en consulta',
+                medical_record=self.medical_record,
+            )
+            super().delete(*args, **kwargs)

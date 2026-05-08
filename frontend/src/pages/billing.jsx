@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useConfirm } from "../components/ConfirmDialog";
 import { apiError } from "../utils/apiError";
+import handleFormError from "../utils/handleFormError";
 import {
     getInvoices, getInvoice, createInvoice, updateInvoice,
     confirmInvoice, payInvoice,
@@ -112,7 +113,7 @@ const Billing = () => {
 
     const openInvoiceDetail = async (invoice) => {
         try {
-            const detail = await getInvoice(invoice.id);
+            const detail = await getInvoice(invoice.public_id);
             setSelectedInvoice(detail);
             setShowDetailModal(true);
             setItemMode(null);
@@ -124,7 +125,7 @@ const Billing = () => {
 
     const handleConfirm = async () => {
         try {
-            const p = confirmInvoice(selectedInvoice.id).then(updated => {
+            const p = confirmInvoice(selectedInvoice.public_id).then(updated => {
                 setSelectedInvoice(updated);
                 loadInvoices();
             });
@@ -141,7 +142,7 @@ const Billing = () => {
 
     const handlePay = async () => {
         try {
-            const p = payInvoice(selectedInvoice.id, payMethod).then(updated => {
+            const p = payInvoice(selectedInvoice.public_id, payMethod).then(updated => {
                 setSelectedInvoice(updated);
                 setShowPayModal(false);
                 loadInvoices();
@@ -156,10 +157,10 @@ const Billing = () => {
 
     const handleAddPrescriptionSuggestion = async (suggestion) => {
         try {
-            const p = addInvoiceItem(selectedInvoice.id, {
+            const p = addInvoiceItem(selectedInvoice.public_id, {
                 presentation: suggestion.presentation_id,
                 quantity: suggestion.suggested_quantity,
-            }).then(() => getInvoice(selectedInvoice.id)).then(updated => {
+            }).then(() => getInvoice(selectedInvoice.public_id)).then(updated => {
                 setSelectedInvoice(updated);
                 loadInvoices();
             });
@@ -193,8 +194,8 @@ const Billing = () => {
         };
 
         try {
-            const p = addInvoiceItem(selectedInvoice.id, payload)
-                .then(() => getInvoice(selectedInvoice.id))
+            const p = addInvoiceItem(selectedInvoice.public_id, payload)
+                .then(() => getInvoice(selectedInvoice.public_id))
                 .then(updated => {
                     setSelectedInvoice(updated);
                     setItemForm(EMPTY_ITEM);
@@ -218,8 +219,8 @@ const Billing = () => {
         const ok = await confirm({ message: "¿Eliminar este ítem de la factura?", confirmText: "Eliminar", dangerMode: true });
         if (!ok) return;
         try {
-            const p = deleteInvoiceItem(selectedInvoice.id, itemId)
-                .then(() => getInvoice(selectedInvoice.id))
+            const p = deleteInvoiceItem(selectedInvoice.public_id, itemId)
+                .then(() => getInvoice(selectedInvoice.public_id))
                 .then(updated => {
                     setSelectedInvoice(updated);
                     loadInvoices();
@@ -234,8 +235,8 @@ const Billing = () => {
 
     const handleTaxRateChange = async (taxRate) => {
         try {
-            const p = updateInvoice(selectedInvoice.id, { tax_rate: taxRate })
-                .then(() => getInvoice(selectedInvoice.id))
+            const p = updateInvoice(selectedInvoice.public_id, { tax_rate: taxRate })
+                .then(() => getInvoice(selectedInvoice.public_id))
                 .then(updated => {
                     setSelectedInvoice(updated);
                     loadInvoices();

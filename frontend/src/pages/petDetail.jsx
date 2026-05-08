@@ -5,6 +5,7 @@ import { getMedicalRecords, getMedicalRecord } from "../api/medicalRecords";
 import { useAuth } from "../auth/authContext";
 import { Icon } from "../components/icons";
 import api from "../api/client";
+import handleFormError from "../utils/handleFormError";
 
 const SEX_LABELS = { male: "Macho", female: "Hembra", unknown: "Desconocido" };
 

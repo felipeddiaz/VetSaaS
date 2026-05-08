@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useConfirm } from "../components/ConfirmDialog";
 import { getServices, createService, updateService, deleteService } from "../api/billing";
 import { getOrgSettings, updateOrgSettings } from "../api/organizations";
 import { apiError } from "../utils/apiError";
@@ -38,6 +39,7 @@ const FLOW_TOGGLES = [
 
 const Config = () => {
     const { token, user, initializing } = useAuth();
+    const confirm = useConfirm();
     const [services, setServices] = useState([]);
     const [loading, setLoading] = useState(true);
     const [showModal, setShowModal] = useState(false);
@@ -46,6 +48,7 @@ const Config = () => {
 
     const [orgSettings, setOrgSettings] = useState(null);
     const [savingToggle, setSavingToggle] = useState(null);
+    const [saving, setSaving] = useState(false);
 
     useEffect(() => {
         if (token) {
@@ -81,25 +84,28 @@ const Config = () => {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        const normalizedName = form.name.trim().replace(/\b\w/g, c => c.toUpperCase());
-        if (!normalizedName) { toast.error("El nombre es obligatorio"); return; }
-        if (!form.base_price || Number(form.base_price) < 0) { toast.error("El precio es obligatorio"); return; }
-        const form_ = { ...form, name: normalizedName };
+        if (!form.name.trim()) { toast.error("El nombre es obligatorio"); return; }
+        if (!form.base_price || Number(form.base_price) <= 0) { toast.error("El precio debe ser mayor a 0"); return; }
+        setSaving(true);
         try {
-            const p = editingService ? updateService(editingService.id, form_) : createService(form_);
-            await toast.promise(p, {
-                loading: editingService ? 'Actualizando...' : 'Creando...',
-                success: editingService ? 'Servicio actualizado' : 'Servicio creado',
-                error: (err) => apiError(err, "Error al guardar"),
-            });
-            loadServices();
+            if (editingService) {
+                await updateService(editingService.id, form);
+            } else {
+                await createService(form);
+            }
+            toast.success(editingService ? 'Servicio actualizado' : 'Servicio creado');
             closeModal();
+            await loadServices();
         } catch (err) {
+            toast.error(apiError(err, "Error al guardar el servicio"));
+        } finally {
+            setSaving(false);
         }
     };
 
     const handleDelete = async (id) => {
-        if (!confirm("¿Eliminar este servicio?")) return;
+        const ok = await confirm({ message: "¿Eliminar este servicio?", confirmText: "Eliminar", dangerMode: true });
+        if (!ok) return;
         try {
             await toast.promise(deleteService(id), {
                 loading: 'Eliminando...',
@@ -310,10 +316,10 @@ const Config = () => {
                             </form>
                         </div>
                         <div className="modal-footer">
-                            <button className="btn btn-primary btn-md" style={{ flex: 1 }} onClick={handleSubmit}>
-                                {editingService ? "Guardar" : "Crear"}
+                            <button className="btn btn-primary btn-md" style={{ flex: 1 }} onClick={handleSubmit} disabled={saving}>
+                                {saving ? "Guardando..." : editingService ? "Guardar" : "Crear"}
                             </button>
-                            <button className="btn btn-secondary btn-md" style={{ flex: 1 }} onClick={closeModal}>
+                            <button className="btn btn-secondary btn-md" style={{ flex: 1 }} onClick={closeModal} disabled={saving}>
                                 Cancelar
                             </button>
                         </div>

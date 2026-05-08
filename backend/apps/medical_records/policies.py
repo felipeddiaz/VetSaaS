@@ -1,7 +1,7 @@
 import logging
 
 from apps.core.models import UserRole
-from apps.core.permissions import _is_allowed
+from apps.core.permissions import _is_allowed, _get_cached_permissions
 from apps.core.permissions_codes import PERMISSIONS
 
 
@@ -20,23 +20,7 @@ def _role_names(user) -> set[str]:
 
 
 def _permission_codes(user):
-    if hasattr(user, "_cached_permissions"):
-        return user._cached_permissions
-
-    user_roles = UserRole.objects.select_related("role").prefetch_related(
-        "role__permissions"
-    ).filter(user=user)
-
-    if not user_roles.exists():
-        user._cached_permissions = None
-        return None
-
-    perms = set()
-    for user_role in user_roles:
-        perms.update(user_role.role.permissions.values_list("code", flat=True))
-
-    user._cached_permissions = perms
-    return perms
+    return _get_cached_permissions(user)
 
 
 def _has_required_permission(user, required: str) -> bool:
@@ -83,6 +67,24 @@ def can_close_medical_record(user, medical_record) -> bool:
     return False
 
 
+def assert_can_modify_medical_record(user, medical_record, request=None) -> None:
+    """
+    Gate clínico para datos no-facturación (signos vitales, etc.).
+    Separado de assert_can_modify_charges que es específico para billing.
+    """
+    from rest_framework.exceptions import PermissionDenied
+
+    if medical_record.organization_id != user.organization_id:
+        if request:
+            log_ownership_denied(user=user, medical_record=medical_record, request=request)
+        raise PermissionDenied("No puedes modificar consultas fuera de tu organización")
+
+    if medical_record.status == medical_record.Status.CLOSED:
+        if request:
+            log_closed_denied(user=user, medical_record=medical_record, request=request)
+        raise PermissionDenied("La consulta está cerrada")
+
+
 def assert_can_modify_charges(user, medical_record, request) -> None:
     """
     Lanza PermissionDenied si el usuario no puede modificar cargos del registro.
@@ -101,6 +103,27 @@ def assert_can_modify_charges(user, medical_record, request) -> None:
     if not can_modify_medical_record_charges(user, medical_record):
         log_ownership_denied(user=user, medical_record=medical_record, request=request)
         raise PermissionDenied("No puedes modificar esta consulta")
+
+
+def medical_record_has_clinical_content(record) -> bool:
+    """
+    Predicate: True si el registro tiene cualquier evidencia clínica u operativa.
+    Usado por destroy() y can_delete para garantizar consistencia frontend/backend.
+    """
+    if (record.diagnosis or "").strip():
+        return True
+    if (record.treatment or "").strip():
+        return True
+    if (record.notes or "").strip():
+        return True
+    from apps.prescriptions.models import Prescription
+    return any([
+        record.products_used.exists(),
+        record.vaccine_records.exists(),
+        record.services_used.exists(),
+        record.vital_signs.exists(),
+        Prescription.objects.filter(medical_record=record).exists(),
+    ])
 
 
 def log_ownership_denied(*, user, medical_record, request) -> None:

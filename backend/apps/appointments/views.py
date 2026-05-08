@@ -134,18 +134,8 @@ def update_status(request, pk):
 
     # Atomic: el log de estado y el save van juntos; si uno falla, el otro se revierte
     with transaction.atomic():
-        appointment.save(update_fields=update_fields)
-
-        AppointmentStatusChange.objects.create(
-            appointment=appointment,
-            from_status=from_status,
-            to_status=new_status,
-            changed_by=request.user,
-            reason=cancellation_reason,
-            organization=appointment.organization,
-        )
-
-        # Toggle: auto_create_medical_record
+        # Toggle: auto_create_medical_record — debe ejecutarse ANTES de save()
+        # para que el signal create_draft_invoice_on_done encuentre el MR y lo linkee.
         if new_status == 'done':
             if get_org_setting(appointment.organization, SETTING_AUTO_MEDICAL_RECORD):
                 from apps.medical_records.models import MedicalRecord
@@ -159,6 +149,17 @@ def update_status(request, pk):
                         'treatment': '',
                     }
                 )
+
+        appointment.save(update_fields=update_fields)
+
+        AppointmentStatusChange.objects.create(
+            appointment=appointment,
+            from_status=from_status,
+            to_status=new_status,
+            changed_by=request.user,
+            reason=cancellation_reason,
+            organization=appointment.organization,
+        )
 
     serializer = AppointmentSerializer(appointment, context={'request': request})
     return Response(serializer.data)
@@ -346,7 +347,11 @@ def walk_in(request):
 
     # RBAC validation: assigned veterinarian must have granular permission to create walk-in appointments
     # Use singular 'appointment.create_walkin' (canonical permission code).
-    if not user_has_permission(vet, 'appointment.create_walkin'):
+    # Prefer DB-only check when validating another user's permissions (avoid legacy role fallback)
+    # Use the strict DB-only permission check for validating another user's permissions
+    from apps.core.permissions import user_has_permission_strict
+    if not user_has_permission_strict(vet, 'appointment.create_walkin'):
+        # Keep message generic for security but clear enough for tests
         raise PermissionDenied('El veterinario asignado no tiene permiso para crear citas walk-in.')
 
     now_local = org_now_local(org)

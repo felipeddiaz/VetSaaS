@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { useSearchParams } from "react-router-dom";
 import { useConfirm } from "../components/ConfirmDialog";
 import { toast } from "sonner";
@@ -17,26 +18,228 @@ import {
     updatePrescription,
 } from "../api/prescriptions";
 
+const formatDate = (ds) =>
+    new Date(ds).toLocaleDateString("es-ES", { year: "numeric", month: "long", day: "numeric" });
+
+const MONTHS_SHORT = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
+
+// ─── Detail Modal ──────────────────────────────────────────────────────────────
+const DetailModal = ({ prescription: rx, downloadingId, onDownload, onClose }) => (
+    <div className="modal-overlay">
+        <div className="modal modal-md">
+            <div className="modal-header">
+                <div>
+                    <h3 style={{ fontSize: "16px", fontWeight: "700" }}>
+                        Receta de {rx.pet_name}
+                    </h3>
+                    <p style={{ fontSize: "12px", color: "var(--c-text-3)", marginTop: "3px" }}>
+                        {formatDate(rx.created_at)}
+                    </p>
+                </div>
+                <button className="modal-close" onClick={onClose}><Icon.X s={16} /></button>
+            </div>
+
+            <div className="modal-body" style={{ paddingTop: "16px" }}>
+                {/* Meta */}
+                <div style={{
+                    display: "grid", gridTemplateColumns: "1fr 1fr 1fr",
+                    gap: "12px", marginBottom: "20px",
+                    padding: "12px 14px", background: "var(--c-subtle)",
+                    borderRadius: "var(--r-md)", border: "1px solid var(--c-border)",
+                }}>
+                    {[
+                        { label: "Mascota",      value: rx.pet_name },
+                        { label: "Veterinario",  value: `Dr. ${rx.veterinarian_name}` },
+                        { label: "Fecha",        value: formatDate(rx.created_at) },
+                    ].map(({ label, value }) => (
+                        <div key={label}>
+                            <p style={{ fontSize: "10px", fontWeight: "700", color: "var(--c-text-3)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "3px" }}>{label}</p>
+                            <p style={{ fontSize: "13px", fontWeight: "600", color: "var(--c-text)" }}>{value}</p>
+                        </div>
+                    ))}
+                </div>
+
+                {/* Medicamentos */}
+                <p style={{ fontSize: "11px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.07em", color: "var(--c-text-3)", marginBottom: "10px" }}>
+                    Medicamentos recetados
+                </p>
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "16px" }}>
+                    {rx.items.map((item, i) => (
+                        <div key={i} style={{
+                            padding: "12px 14px",
+                            background: "var(--c-surface)", border: "1px solid var(--c-border)",
+                            borderLeft: "3px solid var(--c-primary)",
+                            borderRadius: "var(--r-md)",
+                        }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "6px" }}>
+                                <p style={{ fontSize: "13.5px", fontWeight: "700", color: "var(--c-text)" }}>
+                                    {item.product_name}
+                                </p>
+                                <span className="badge badge-default">
+                                    {item.quantity} {item.product_unit}
+                                </span>
+                            </div>
+                            <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" }}>
+                                {item.dose && (
+                                    <span style={{ fontSize: "12px", color: "var(--c-text-2)" }}>
+                                        <span style={{ color: "var(--c-text-3)" }}>Dosis: </span>{item.dose}
+                                    </span>
+                                )}
+                                {item.duration && (
+                                    <span style={{ fontSize: "12px", color: "var(--c-text-2)" }}>
+                                        <span style={{ color: "var(--c-text-3)" }}>Duración: </span>{item.duration}
+                                    </span>
+                                )}
+                                {item.instructions && (
+                                    <span style={{ fontSize: "12px", color: "var(--c-text-3)", fontStyle: "italic" }}>{item.instructions}</span>
+                                )}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+
+                {/* Notas */}
+                {rx.notes && (
+                    <div style={{
+                        padding: "12px 14px", background: "var(--c-warning-bg)",
+                        border: "1px solid var(--c-warning-border)", borderRadius: "var(--r-md)",
+                        marginBottom: "4px",
+                    }}>
+                        <p style={{ fontSize: "10px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--c-warning-text)", marginBottom: "4px" }}>Notas</p>
+                        <p style={{ fontSize: "13px", color: "var(--c-warning-text)", lineHeight: "1.6" }}>{rx.notes}</p>
+                    </div>
+                )}
+            </div>
+
+            <div className="modal-footer">
+                <button
+                    className="btn btn-primary btn-md"
+                    style={{ flex: 1 }}
+                    onClick={() => onDownload(rx.id)}
+                    disabled={downloadingId === rx.id}
+                >
+                    {downloadingId === rx.id
+                        ? <><Icon.Loader s={14} /> Generando…</>
+                        : <><Icon.Download s={14} /> Descargar PDF</>}
+                </button>
+                <button className="btn btn-secondary btn-md" style={{ flex: 1 }} onClick={onClose}>
+                    Cerrar
+                </button>
+            </div>
+        </div>
+    </div>
+);
+
+// ─── Prescription Card ─────────────────────────────────────────────────────────
+const PrescriptionCard = ({ rx, downloadingId, canCreate, onView, onDownload, onDelete }) => {
+    const d = new Date(rx.created_at);
+    return (
+        <div className="card card-hover" style={{ padding: "0", overflow: "hidden" }}>
+            {/* Header de la card */}
+            <div style={{
+                display: "flex", alignItems: "flex-start", gap: "14px",
+                padding: "14px 16px 12px",
+                background: "var(--c-subtle)", borderBottom: "1px solid var(--c-border)",
+            }}>
+                {/* Bloque de fecha */}
+                <div style={{
+                    width: "44px", flexShrink: 0, textAlign: "center",
+                    background: "var(--c-surface)", border: "1px solid var(--c-border)",
+                    borderRadius: "var(--r-md)", padding: "6px 0",
+                }}>
+                    <p style={{ fontSize: "18px", fontWeight: "700", color: "var(--c-text)", lineHeight: "1" }}>{d.getDate()}</p>
+                    <p style={{ fontSize: "9px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--c-text-3)", marginTop: "2px" }}>
+                        {MONTHS_SHORT[d.getMonth()]}
+                    </p>
+                </div>
+
+                {/* Info */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ fontSize: "15px", fontWeight: "700", color: "var(--c-text)", marginBottom: "2px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {rx.pet_name}
+                    </p>
+                    <p style={{ fontSize: "12px", color: "var(--c-text-3)" }}>
+                        Dr. {rx.veterinarian_name}
+                    </p>
+                </div>
+
+                {/* Badge medicamentos */}
+                <span className="badge badge-success" style={{ flexShrink: 0 }}>
+                    <Icon.Pill s={11} />
+                    {rx.items.length} med{rx.items.length !== 1 ? "s" : ""}
+                </span>
+            </div>
+
+            {/* Chips de medicamentos */}
+            {rx.items.length > 0 && (
+                <div style={{ padding: "10px 16px 12px", display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                    {rx.items.map((item, i) => (
+                        <span key={i} style={{
+                            fontSize: "11.5px", fontWeight: "500",
+                            padding: "3px 9px", borderRadius: "var(--r-full)",
+                            background: "var(--c-surface)", border: "1px solid var(--c-border)",
+                            color: "var(--c-text-2)",
+                        }}>
+                            {item.product_name}
+                            <span style={{ color: "var(--c-text-3)" }}> · {item.quantity} {item.product_unit}</span>
+                        </span>
+                    ))}
+                </div>
+            )}
+
+            {/* Acciones */}
+            <div style={{
+                display: "flex", gap: "6px", padding: "10px 16px",
+                borderTop: "1px solid var(--c-subtle)",
+            }}>
+                <button className="btn btn-secondary btn-sm" onClick={() => onView(rx)} style={{ flex: 1 }}>
+                    <Icon.Eye s={13} /> Ver detalle
+                </button>
+                <button
+                    className="btn btn-primary btn-sm"
+                    onClick={() => onDownload(rx.id)}
+                    disabled={downloadingId === rx.id}
+                    style={{ flex: 1 }}
+                >
+                    {downloadingId === rx.id
+                        ? <><Icon.Loader s={13} /> …</>
+                        : <><Icon.Download s={13} /> PDF</>}
+                </button>
+                {canCreate && (
+                    <button
+                        className="btn btn-danger btn-sm"
+                        onClick={() => onDelete(rx.id)}
+                        title="Eliminar receta"
+                    >
+                        <Icon.Trash s={13} />
+                    </button>
+                )}
+            </div>
+        </div>
+    );
+};
+
+// ─── Main Page ─────────────────────────────────────────────────────────────────
 const Prescriptions = () => {
     const { token, user, initializing } = useAuth();
     const confirm = useConfirm();
     const [searchParams] = useSearchParams();
 
-    const [prescriptions, setPrescriptions] = useState([]);
-    const [pets, setPets] = useState([]);
-    const [products, setProducts] = useState([]);
-    const [medicalRecordsForPet, setMedicalRecordsForPet] = useState([]);
-    const [loading, setLoading] = useState(true);
+    const [prescriptions, setPrescriptions]           = useState([]);
+    const [pets, setPets]                             = useState([]);
+    const [products, setProducts]                     = useState([]);
+    const [medicalRecordsForPet, setMedicalRecords]   = useState([]);
+    const [loading, setLoading]                       = useState(true);
 
-    const [showModal, setShowModal] = useState(false);
-    const [showDetailModal, setShowDetailModal] = useState(false);
-    const [editing, setEditing] = useState(null);
-    const [viewing, setViewing] = useState(null);
-    const [selectedPet, setSelectedPet] = useState("");
-    const [lockedFromParams, setLockedFromParams] = useState(false);
-    const [formSeed, setFormSeed] = useState({ medical_record: "", pet: "", notes: "", items: [] });
-
-    const [downloadingId, setDownloadingId] = useState(null);
+    const [showModal, setShowModal]           = useState(false);
+    const [showDetail, setShowDetail]         = useState(false);
+    const [editing, setEditing]               = useState(null);
+    const [viewing, setViewing]               = useState(null);
+    const [selectedPet, setSelectedPet]       = useState("");
+    const [lockedFromParams, setLocked]       = useState(false);
+    const [formSeed, setFormSeed]             = useState({ medical_record: "", pet: "", notes: "", items: [] });
+    const [downloadingId, setDownloadingId]   = useState(null);
+    const [search, setSearch]                 = useState("");
 
     const canCreate = user?.role !== "ASSISTANT";
 
@@ -46,27 +249,20 @@ const Prescriptions = () => {
             if (selectedPet) params.pet = selectedPet;
             const data = await getPrescriptions(params);
             setPrescriptions(data);
-        } catch (err) {
-            console.log(err);
-        }
+        } catch { /* silencioso */ }
     }, [selectedPet]);
 
     const loadMedicalRecordsForPet = useCallback(async (petId) => {
-        if (!petId || !token) {
-            setMedicalRecordsForPet([]);
-            return;
-        }
+        if (!petId || !token) { setMedicalRecords([]); return; }
         try {
             const data = await getMedicalRecords(token, { pet: petId });
-            setMedicalRecordsForPet(data.results || data);
-        } catch {
-            setMedicalRecordsForPet([]);
-        }
+            setMedicalRecords(data.results || data);
+        } catch { setMedicalRecords([]); }
     }, [token]);
 
     useEffect(() => {
         if (!token) return;
-        const loadAll = async () => {
+        (async () => {
             setLoading(true);
             try {
                 const [petsData, prodsData] = await Promise.all([
@@ -76,13 +272,8 @@ const Prescriptions = () => {
                 setPets(Array.isArray(petsData) ? petsData : (petsData.results || []));
                 setProducts(Array.isArray(prodsData) ? prodsData : (prodsData.results || []));
                 await loadPrescriptions();
-            } catch (err) {
-                console.log(err);
-            } finally {
-                setLoading(false);
-            }
-        };
-        loadAll();
+            } finally { setLoading(false); }
+        })();
     }, [token, loadPrescriptions]);
 
     useEffect(() => {
@@ -93,7 +284,7 @@ const Prescriptions = () => {
         const mrParam = searchParams.get("medical_record");
         const petParam = searchParams.get("pet");
         if (mrParam && petParam && token) {
-            setLockedFromParams(true);
+            setLocked(true);
             setEditing(null);
             setFormSeed({ medical_record: mrParam, pet: petParam, notes: "", items: [] });
             setShowModal(true);
@@ -101,18 +292,9 @@ const Prescriptions = () => {
     }, [searchParams, token]);
 
     const closeModal = () => {
-        setShowModal(false);
-        setEditing(null);
-        setLockedFromParams(false);
-        setMedicalRecordsForPet([]);
+        setShowModal(false); setEditing(null);
+        setLocked(false); setMedicalRecords([]);
         setFormSeed({ medical_record: "", pet: "", notes: "", items: [] });
-    };
-
-    const handleCreate = () => {
-        setEditing(null);
-        setLockedFromParams(false);
-        setFormSeed({ medical_record: "", pet: "", notes: "", items: [] });
-        setShowModal(true);
     };
 
     const handleFormSubmit = async (payload) => {
@@ -127,43 +309,25 @@ const Prescriptions = () => {
         closeModal();
     };
 
-    const handleView = async (prescription) => {
+    const handleView = async (rx) => {
         try {
-            const data = await getPrescription(prescription.id);
-            setViewing(data);
-            setShowDetailModal(true);
-        } catch {
-            toast.error("Error al cargar la receta");
-        }
-    };
-
-    const handleEdit = async (prescription) => {
-        setEditing(prescription);
-        setLockedFromParams(false);
-        setFormSeed({
-            medical_record: prescription.medical_record || "",
-            pet: prescription.pet,
-            notes: prescription.notes || "",
-            items: prescription.items || [],
-        });
-        await loadMedicalRecordsForPet(prescription.pet);
-        setShowModal(true);
+            const data = await getPrescription(rx.id);
+            setViewing(data); setShowDetail(true);
+        } catch { toast.error("Error al cargar la receta"); }
     };
 
     const handleDelete = async (id) => {
         const ok = await confirm({
+            title: "Eliminar receta",
             message: "¿Eliminar esta receta? El registro médico asociado no se verá afectado.",
-            confirmText: "Eliminar",
-            dangerMode: true,
+            confirmText: "Eliminar", dangerMode: true,
         });
         if (!ok) return;
         try {
             await deletePrescription(id);
             toast.success("Receta eliminada");
             loadPrescriptions();
-        } catch {
-            toast.error("Error al eliminar la receta");
-        }
+        } catch { toast.error("Error al eliminar la receta"); }
     };
 
     const handleDownloadPDF = async (id) => {
@@ -172,130 +336,137 @@ const Prescriptions = () => {
             const blob = await downloadPrescriptionPDF(id);
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement("a");
-            a.href = url;
-            a.download = `receta_${id}.pdf`;
-            document.body.appendChild(a);
-            a.click();
+            a.href = url; a.download = `receta_${id}.pdf`;
+            document.body.appendChild(a); a.click();
             document.body.removeChild(a);
             window.URL.revokeObjectURL(url);
-        } catch {
-            toast.error("Error al generar el PDF");
-        } finally {
-            setDownloadingId(null);
-        }
+        } catch { toast.error("Error al generar el PDF"); }
+        finally { setDownloadingId(null); }
     };
 
-    const formatDate = (dateString) => new Date(dateString).toLocaleDateString("es-ES", { year: "numeric", month: "long", day: "numeric" });
+    const filtered = prescriptions.filter(rx => {
+        const q = search.toLowerCase();
+        return !q ||
+            rx.pet_name?.toLowerCase().includes(q) ||
+            rx.veterinarian_name?.toLowerCase().includes(q) ||
+            rx.items?.some(i => i.product_name?.toLowerCase().includes(q));
+    });
 
     if (initializing || loading) {
         return (
             <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "50vh" }}>
-                <p>Cargando...</p>
+                <p style={{ color: "var(--c-text-3)", fontSize: "13px" }}>Cargando recetas…</p>
             </div>
         );
     }
 
     return (
-        <div style={{ padding: "20px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+        <div>
+            {/* Page header */}
+            <div className="page-header">
                 <div>
-                    <h2 style={{ margin: 0 }}>Recetas Médicas</h2>
-                    <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.92rem" }}>
-                        Vista secundaria para consultar, reimprimir o editar recetas ya emitidas.
-                    </p>
+                    <h1 className="page-title">Recetas médicas</h1>
+                    <p className="page-subtitle">{prescriptions.length} receta{prescriptions.length !== 1 ? "s" : ""} registrada{prescriptions.length !== 1 ? "s" : ""}</p>
                 </div>
-                {canCreate && (
+            </div>
+
+            {/* Banner informativo */}
+            <div style={{
+                display: "flex", alignItems: "center", gap: "10px",
+                padding: "10px 14px", marginBottom: "20px",
+                background: "var(--c-info-bg)", border: "1px solid var(--c-info-border)",
+                borderRadius: "var(--r-md)", fontSize: "13px", color: "var(--c-info-text)",
+            }}>
+                <Icon.Info s={15} />
+                Las recetas se crean desde el{" "}
+                <Link to="/medical-records" style={{ color: "var(--c-primary)", fontWeight: "600", textDecoration: "underline" }}>
+                    historial clínico
+                </Link>
+                {" "}de cada consulta. Aquí puedes consultarlas y descargar el PDF.
+            </div>
+
+            {/* Filtros */}
+            <div style={{ display: "flex", gap: "10px", alignItems: "center", marginBottom: "20px", flexWrap: "wrap" }}>
+                <div style={{ position: "relative", flex: "1 1 220px", maxWidth: "280px" }}>
+                    <div style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}>
+                        <Icon.Search s={14} c="var(--c-text-3)" />
+                    </div>
+                    <input
+                        type="text"
+                        className="input"
+                        value={search}
+                        onChange={e => setSearch(e.target.value)}
+                        placeholder="Mascota, medicamento, vet…"
+                        style={{ paddingLeft: "32px" }}
+                    />
+                </div>
+                <select
+                    className="select-input"
+                    value={selectedPet}
+                    onChange={e => setSelectedPet(e.target.value)}
+                    style={{ width: "auto", height: "38px" }}
+                >
+                    <option value="">Todas las mascotas</option>
+                    {pets.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+                {(search || selectedPet) && (
                     <button
-                        onClick={handleCreate}
-                        style={{ padding: "10px 20px", backgroundColor: "#4ecca3", color: "white", border: "none", borderRadius: "5px", cursor: "pointer" }}
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => { setSearch(""); setSelectedPet(""); }}
                     >
-                        + Nueva Receta
+                        <Icon.X s={12} /> Limpiar
                     </button>
+                )}
+                <div style={{ flex: 1 }} />
+                {filtered.length !== prescriptions.length && (
+                    <p style={{ fontSize: "12px", color: "var(--c-text-3)" }}>
+                        {filtered.length} de {prescriptions.length}
+                    </p>
                 )}
             </div>
 
-            <div style={{ marginBottom: "20px" }}>
-                <select
-                    value={selectedPet}
-                    onChange={e => setSelectedPet(e.target.value)}
-                    style={{ padding: "8px", borderRadius: "5px", border: "1px solid #ddd", minWidth: "200px" }}
-                >
-                    <option value="">Todas las mascotas</option>
-                    {pets.map(pet => <option key={pet.id} value={pet.id}>{pet.name}</option>)}
-                </select>
-            </div>
-
-            {prescriptions.length === 0 ? (
-                <div style={{ textAlign: "center", padding: "40px", color: "#6b7280" }}>
-                    <p style={{ fontSize: "1.1rem" }}>No hay recetas registradas</p>
+            {/* Lista */}
+            {filtered.length === 0 ? (
+                <div className="empty-state">
+                    <p className="empty-state-title">
+                        {prescriptions.length === 0
+                            ? "Aún no hay recetas registradas"
+                            : "Ninguna receta coincide con el filtro"}
+                    </p>
+                    {prescriptions.length === 0 && (
+                        <p className="empty-state-sub">
+                            Crea la primera receta desde el{" "}
+                            <Link to="/medical-records" style={{ color: "var(--c-primary)" }}>historial clínico</Link>.
+                        </p>
+                    )}
                 </div>
             ) : (
-                <div style={{ position: "relative", paddingLeft: "30px" }}>
-                    <div style={{ position: "absolute", left: "15px", top: 0, bottom: 0, width: "2px", backgroundColor: "#e5e7eb" }}></div>
-
-                    {prescriptions.map(prescription => (
-                        <div key={prescription.id} style={{
-                            position: "relative", backgroundColor: "white", border: "1px solid #e5e7eb",
-                            borderRadius: "8px", padding: "20px", marginBottom: "20px", marginLeft: "20px",
-                        }}>
-                            <div style={{
-                                position: "absolute", left: "-38px", top: "20px",
-                                width: "16px", height: "16px", borderRadius: "50%",
-                                backgroundColor: "#7c3aed", border: "3px solid white", boxShadow: "0 0 0 2px #7c3aed",
-                            }} />
-
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start" }}>
-                                <div>
-                                    <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}>
-                                        <h3 style={{ margin: 0, color: "#1f2937" }}>{prescription.pet_name}</h3>
-                                        <span style={{ padding: "2px 8px", backgroundColor: "#ede9fe", color: "#7c3aed", borderRadius: "4px", fontSize: "0.8rem" }}>
-                                            {prescription.items.length} medicamento{prescription.items.length !== 1 ? "s" : ""}
-                                        </span>
-                                    </div>
-                                    <p style={{ margin: 0, color: "#6b7280", fontSize: "0.9rem" }}>
-                                        <Icon.CalendarDays s={13} /> {formatDate(prescription.created_at)} · Dr. {prescription.veterinarian_name}
-                                    </p>
-                                </div>
-                                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-                                    <button onClick={() => handleView(prescription)}
-                                        style={{ padding: "6px 12px", backgroundColor: "#3b82f6", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontSize: "0.85rem" }}>
-                                        Ver
-                                    </button>
-                                    <button
-                                        onClick={() => handleDownloadPDF(prescription.id)}
-                                        disabled={downloadingId === prescription.id}
-                                        style={{ padding: "6px 12px", backgroundColor: "#7c3aed", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontSize: "0.85rem", opacity: downloadingId === prescription.id ? 0.6 : 1 }}>
-                                        {downloadingId === prescription.id ? "..." : "PDF"}
-                                    </button>
-                                    {canCreate && (
-                                        <>
-                                            <button onClick={() => handleEdit(prescription)}
-                                                style={{ padding: "6px 12px", backgroundColor: "#6b7280", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontSize: "0.85rem" }}>
-                                                Editar
-                                            </button>
-                                            <button onClick={() => handleDelete(prescription.id)}
-                                                style={{ padding: "6px 12px", backgroundColor: "#ef4444", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontSize: "0.85rem" }}>
-                                                Eliminar
-                                            </button>
-                                        </>
-                                    )}
-                                </div>
-                            </div>
-
-                            {prescription.items.length > 0 && (
-                                <div style={{ marginTop: "12px", display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                                    {prescription.items.map((item, i) => (
-                                        <span key={i} style={{ padding: "4px 10px", backgroundColor: "#f5f3ff", color: "#5b21b6", borderRadius: "4px", fontSize: "0.85rem" }}>
-                                            {item.product_name} · {item.quantity} {item.product_unit}
-                                        </span>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: "14px" }}>
+                    {filtered.map(rx => (
+                        <PrescriptionCard
+                            key={rx.id}
+                            rx={rx}
+                            downloadingId={downloadingId}
+                            canCreate={canCreate}
+                            onView={handleView}
+                            onDownload={handleDownloadPDF}
+                            onDelete={handleDelete}
+                        />
                     ))}
                 </div>
             )}
 
+            {/* Modal detalle */}
+            {showDetail && viewing && (
+                <DetailModal
+                    prescription={viewing}
+                    downloadingId={downloadingId}
+                    onDownload={handleDownloadPDF}
+                    onClose={() => { setShowDetail(false); setViewing(null); }}
+                />
+            )}
+
+            {/* Modal formulario */}
             {showModal && (
                 <PrescriptionForm
                     title={editing ? "Editar Receta" : "Nueva Receta"}
@@ -310,66 +481,6 @@ const Prescriptions = () => {
                     onSubmit={handleFormSubmit}
                     onCancel={closeModal}
                 />
-            )}
-
-            {showDetailModal && viewing && (
-                <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.5)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 1000 }}>
-                    <div style={{ backgroundColor: "white", padding: "25px", borderRadius: "10px", width: "550px", maxHeight: "90vh", overflowY: "auto" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "20px" }}>
-                            <h3 style={{ margin: 0 }}>Receta #{viewing.id}</h3>
-                            <button onClick={() => { setShowDetailModal(false); setViewing(null); }} style={{ background: "none", border: "none", fontSize: "20px", cursor: "pointer" }}><Icon.X s={16} /></button>
-                        </div>
-
-                        <div style={{ display: "flex", gap: "20px", marginBottom: "16px" }}>
-                            <div style={{ flex: 1 }}>
-                                <p style={{ margin: "0 0 3px", fontSize: "0.8rem", color: "#6b7280" }}>Mascota</p>
-                                <p style={{ margin: 0, fontWeight: "bold" }}>{viewing.pet_name}</p>
-                            </div>
-                            <div style={{ flex: 1 }}>
-                                <p style={{ margin: "0 0 3px", fontSize: "0.8rem", color: "#6b7280" }}>Veterinario</p>
-                                <p style={{ margin: 0 }}>Dr. {viewing.veterinarian_name}</p>
-                            </div>
-                            <div style={{ flex: 1 }}>
-                                <p style={{ margin: "0 0 3px", fontSize: "0.8rem", color: "#6b7280" }}>Fecha</p>
-                                <p style={{ margin: 0 }}>{formatDate(viewing.created_at)}</p>
-                            </div>
-                        </div>
-
-                        <div style={{ marginBottom: "16px" }}>
-                            <p style={{ margin: "0 0 10px", fontWeight: "bold" }}>Medicamentos recetados</p>
-                            {viewing.items.map((item, i) => (
-                                <div key={i} style={{ backgroundColor: "#f5f3ff", border: "1px solid #ddd6fe", borderRadius: "6px", padding: "12px", marginBottom: "8px" }}>
-                                    <p style={{ margin: "0 0 6px", fontWeight: "bold", color: "#5b21b6" }}>
-                                        {item.product_name} — {item.quantity} {item.product_unit}
-                                    </p>
-                                    <p style={{ margin: "0 0 3px", fontSize: "0.9rem" }}><strong>Dosis:</strong> {item.dose}</p>
-                                    {item.duration && <p style={{ margin: "0 0 3px", fontSize: "0.9rem" }}><strong>Duración:</strong> {item.duration}</p>}
-                                    {item.instructions && <p style={{ margin: 0, fontSize: "0.9rem", color: "#6b7280" }}>{item.instructions}</p>}
-                                </div>
-                            ))}
-                        </div>
-
-                        {viewing.notes && (
-                            <div style={{ backgroundColor: "#fef3c7", border: "1px solid #fde68a", borderRadius: "6px", padding: "12px", marginBottom: "16px" }}>
-                                <p style={{ margin: "0 0 4px", fontWeight: "bold", fontSize: "0.85rem" }}>Notas</p>
-                                <p style={{ margin: 0, fontSize: "0.9rem" }}>{viewing.notes}</p>
-                            </div>
-                        )}
-
-                        <div style={{ display: "flex", gap: "10px" }}>
-                            <button
-                                onClick={() => handleDownloadPDF(viewing.id)}
-                                disabled={downloadingId === viewing.id}
-                                style={{ flex: 1, padding: "10px", backgroundColor: "#7c3aed", color: "white", border: "none", borderRadius: "5px", cursor: "pointer", opacity: downloadingId === viewing.id ? 0.6 : 1 }}>
-                                {downloadingId === viewing.id ? "Generando PDF..." : "Descargar PDF"}
-                            </button>
-                            <button onClick={() => { setShowDetailModal(false); setViewing(null); }}
-                                style={{ flex: 1, padding: "10px", backgroundColor: "#6b7280", color: "white", border: "none", borderRadius: "5px", cursor: "pointer" }}>
-                                Cerrar
-                            </button>
-                        </div>
-                    </div>
-                </div>
             )}
         </div>
     );

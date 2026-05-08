@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { useConfirm } from "../components/ConfirmDialog";
 import { apiError } from "../utils/apiError";
+import handleFormError from "../utils/handleFormError";
 import {
     getProducts, createProduct, updateProduct, deleteProduct,
     adjustStock, getUnitChoices,
@@ -37,9 +38,9 @@ const buildProductPayload = (formData) => ({
     description: formData.description,
     category: formData.category,
     requires_prescription: formData.requires_prescription,
-    presentation: {
+    presentation_input: {
         base_unit: formData.base_unit,
-        quantity: 1,  // factor base — no se usa en Fase 1, cambia en Fase 3
+        quantity: 1,
         sale_price: formData.sale_price,
         stock: formData.stock,
         min_stock: formData.min_stock,
@@ -150,7 +151,7 @@ const Inventory = () => {
         }
     };
 
-    const canManage = user?.role !== "ASSISTANT";
+    const canManage = user?.role === "ADMIN";
 
     // ── Metrics (R1 + R2 + R11) ───────────────────────────
     const metrics = useMemo(() => {
@@ -246,38 +247,32 @@ const Inventory = () => {
         return null;
     };
 
-    // ── Handlers ──────────────────────────────────────────
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        setFormErrors({});
-        if (!form.name.trim()) { toast.error("El nombre es obligatorio"); return; }
-        setSaving(true);
-        try {
-            const payload = buildProductPayload(form);
-            const p = editing ? updateProduct(editing.id, payload) : createProduct(payload);
-            await toast.promise(p, {
-                loading: editing ? 'Actualizando producto...' : 'Creando producto...',
-                success: editing ? 'Producto actualizado' : 'Producto creado',
-                error: (err) => {
-                    const data = err.response?.data;
-                    if (data && typeof data === "object" && !Array.isArray(data) && !data.detail) {
-                        return "Revisa los campos con errores";
-                    }
-                    return apiError(err, "Error al guardar");
-                }
-            });
-            await loadAll();
-            closeProductModal();
-        } catch (err) {
-            const data = err.response?.data;
-            if (data && typeof data === "object" && !Array.isArray(data)) {
-                setFormErrors(data);
-                toast.error("Revisa los campos con errores.");
-            }
-        } finally {
-            setSaving(false);
-        }
-    };
+     // ── Handlers ──────────────────────────────────────────
+     const handleSubmit = async (e) => {
+         e.preventDefault();
+         setFormErrors({});
+         if (!form.name.trim()) { toast.error("El nombre es obligatorio"); return; }
+         setSaving(true);
+         try {
+             const payload = buildProductPayload(form);
+             if (!payload.presentation_input.sale_price || Number(payload.presentation_input.sale_price) <= 0) {
+                 toast.error("El precio de venta debe ser mayor a 0");
+                 return;
+             }
+             if (editing) {
+                 await updateProduct(editing.public_id || editing.id, payload);
+             } else {
+                 await createProduct(payload);
+             }
+             toast.success(editing ? 'Producto actualizado' : 'Producto creado');
+             closeProductModal();
+             await loadAll();
+         } catch (err) {
+             handleFormError(err, setFormErrors);
+         } finally {
+             setSaving(false);
+         }
+     };
 
     const handleDelete = async (id) => {
         const ok = await confirm({ message: "¿Eliminar este producto del inventario?", confirmText: "Eliminar", dangerMode: true });
@@ -300,7 +295,7 @@ const Inventory = () => {
         }
         setSaving(true);
         try {
-            await toast.promise(adjustStock(adjustingProduct.id, { ...adjustForm, quantity: parseFloat(adjustForm.quantity) }), {
+            await toast.promise(adjustStock(adjustingProduct.public_id || adjustingProduct.id, { ...adjustForm, quantity: parseFloat(adjustForm.quantity) }), {
                 loading: 'Ajustando stock...',
                 success: 'Stock ajustado correctamente',
                 error: (err) => apiError(err, "Error al ajustar")
@@ -602,7 +597,7 @@ const Inventory = () => {
                                                 <div className={s.actCell}>
                                                     <button className={`${s.ab} ${s.abAj}`} onClick={e => openAdjust(product, e)}>Ajustar</button>
                                                     <button className={`${s.ab} ${s.abEd}`} onClick={e => openEdit(product, e)}>Editar</button>
-                                                    <button className={`${s.ab} ${s.abDl}`} onClick={e => { e.stopPropagation(); handleDelete(product.id); }}>Eliminar</button>
+                                                    <button className={`${s.ab} ${s.abDl}`} onClick={e => { e.stopPropagation(); handleDelete(product.public_id || product.id); }}>Eliminar</button>
                                                 </div>
                                             </td>
                                         )}
@@ -672,16 +667,21 @@ const Inventory = () => {
                             <button className="modal-close" onClick={closeProductModal}><Icon.X s={16} /></button>
                         </div>
                         <div className="modal-body">
-                            <form onSubmit={handleSubmit}>
+                            <form id="product-form" onSubmit={handleSubmit}>
                                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 14px" }}>
                                     <div className="form-group" style={{ gridColumn: "1 / -1" }}>
                                         <label className="form-label">NOMBRE *</label>
                                         <input
-                                            className="input"
+                                            className={`input${formErrors.name ? " input-error" : ""}`}
                                             value={form.name}
                                             onChange={e => setForm({ ...form, name: e.target.value })}
                                             placeholder="Ej: Amoxicilina 500mg"
                                         />
+                                        {formErrors.name && (
+                                            <p style={{ color: "var(--c-danger-text)", fontSize: "11.5px", marginTop: "4px" }}>
+                                                {formErrors.name}
+                                            </p>
+                                        )}
                                     </div>
                                     <div className="form-group">
                                         <label className="form-label">CÓDIGO INTERNO</label>
@@ -736,32 +736,65 @@ const Inventory = () => {
                                     <div className="form-group">
                                         <label className="form-label">STOCK ACTUAL</label>
                                         <input
-                                            type="number" step="1" min="0" className="input"
+                                            type="number" step="1" min="0"
+                                            className={`input${formErrors["presentation_input.stock"] ? " input-error" : ""}`}
                                             value={form.stock}
-                                            onChange={e => setForm({ ...form, stock: e.target.value })}
+                                            onChange={e => {
+                                                const val = e.target.value;
+                                                if (val.length > 12) { toast.error("Valor demasiado largo"); return; }
+                                                if (val === '') { setForm({ ...form, stock: '' }); return; }
+                                                const num = Number(val);
+                                                if (!Number.isFinite(num) || num < 0 || num > 1_000_000) return;
+                                                setForm({ ...form, stock: num });
+                                            }}
                                             placeholder="0"
                                         />
+                                        {formErrors["presentation_input.stock"] && (
+                                            <p style={{ color: "var(--c-danger-text)", fontSize: "11.5px", marginTop: "4px" }}>
+                                                {formErrors["presentation_input.stock"]}
+                                            </p>
+                                        )}
                                     </div>
                                     <div className="form-group">
                                         <label className="form-label">STOCK MÍNIMO (alerta)</label>
                                         <input
-                                            type="number" step="1" min="0" className="input"
+                                            type="number" step="1" min="0"
+                                            className={`input${formErrors["presentation_input.min_stock"] ? " input-error" : ""}`}
                                             value={form.min_stock}
-                                            onChange={e => setForm({ ...form, min_stock: e.target.value })}
+                                            onChange={e => {
+                                                const val = e.target.value;
+                                                if (val.length > 12) { toast.error("Valor demasiado largo"); return; }
+                                                if (val === '') { setForm({ ...form, min_stock: '' }); return; }
+                                                const num = Number(val);
+                                                if (!Number.isFinite(num) || num < 0 || num > 1_000_000) return;
+                                                setForm({ ...form, min_stock: num });
+                                            }}
                                             placeholder="0"
                                         />
+                                        {formErrors["presentation_input.min_stock"] && (
+                                            <p style={{ color: "var(--c-danger-text)", fontSize: "11.5px", marginTop: "4px" }}>
+                                                {formErrors["presentation_input.min_stock"]}
+                                            </p>
+                                        )}
                                     </div>
                                     <div className="form-group" style={{ gridColumn: "1 / -1" }}>
                                         <label className="form-label">PRECIO DE VENTA</label>
                                         <input
-                                            type="number" step="1" min="0" className="input"
+                                            type="number" step="0.01" min="0.01" className={`input${formErrors["presentation_input.sale_price"] ? " input-error" : ""}`}
                                             value={form.sale_price}
-                                            onChange={e => setForm({ ...form, sale_price: e.target.value })}
+                                            onChange={e => {
+                                                const val = e.target.value;
+                                                if (val.length > 12) { toast.error("Valor demasiado largo"); return; }
+                                                if (val === '') { setForm({ ...form, sale_price: '' }); return; }
+                                                const num = Number(val);
+                                                if (!Number.isFinite(num) || num < 0 || num > 1_000_000) return;
+                                                setForm({ ...form, sale_price: num });
+                                            }}
                                             placeholder="0"
                                         />
-                                        {formErrors.presentation?.sale_price && (
+                                        {formErrors["presentation_input.sale_price"] && (
                                             <p style={{ color: "var(--c-danger-text)", fontSize: "11.5px", marginTop: "4px" }}>
-                                                {formErrors.presentation.sale_price}
+                                                {formErrors["presentation_input.sale_price"]}
                                             </p>
                                         )}
                                     </div>
@@ -788,14 +821,14 @@ const Inventory = () => {
                                 </div>
                             </form>
                         </div>
-                        <div className="modal-footer">
-                            <button className="btn btn-primary btn-md" style={{ flex: 1 }} onClick={handleSubmit} disabled={saving}>
-                                {saving ? "Guardando..." : editing ? "Guardar cambios" : "Crear producto"}
-                            </button>
-                            <button className="btn btn-secondary btn-md" style={{ flex: 1 }} onClick={closeProductModal}>
-                                Cancelar
-                            </button>
-                        </div>
+                         <div className="modal-footer">
+                             <button type="submit" form="product-form" className="btn btn-primary btn-md" style={{ flex: 1 }} disabled={saving}>
+                                  {saving ? "Guardando..." : editing ? "Guardar cambios" : "Crear producto"}
+                              </button>
+                              <button type="button" className="btn btn-secondary btn-md" style={{ flex: 1 }} onClick={closeProductModal}>
+                                  Cancelar
+                              </button>
+                         </div>
                     </div>
                 </div>
             )}

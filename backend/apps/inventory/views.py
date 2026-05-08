@@ -9,7 +9,7 @@ from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 
 from apps.core.permissions import HybridPermission, make_permission
-from apps.core.views import TenantQueryMixin
+from apps.core.views import TenantQueryMixin, PublicIdLookupMixin, resolve_public_id
 from apps.medical_records.models import MedicalRecord
 from apps.medical_records.policies import (
     assert_can_modify_charges,
@@ -63,10 +63,11 @@ class ProductListCreateView(TenantQueryMixin, generics.ListCreateAPIView):
         serializer.save(organization=self.request.user.organization)
 
 
-class ProductDetailView(TenantQueryMixin, generics.RetrieveUpdateDestroyAPIView):
+class ProductDetailView(PublicIdLookupMixin, TenantQueryMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = ProductSerializer
     permission_classes = [HybridPermission]
     resource_name = "inventory"
+    lookup_url_kwarg = 'pk'
 
     def get_queryset(self):
         return (
@@ -100,10 +101,9 @@ def adjust_stock(request, pk):
     from django.core.exceptions import ValidationError as DjValidationError
     from .services import apply_stock_movement
 
-    product = get_object_or_404(
-        Product.objects.prefetch_related('presentations'),
-        pk=pk,
-        organization=request.user.organization,
+    product = resolve_public_id(
+        Product.objects.for_organization(request.user.organization).prefetch_related('presentations'),
+        pk,
     )
 
     presentation = product.presentations.first()
@@ -123,14 +123,16 @@ def adjust_stock(request, pk):
         reason = f'Ajuste manual a {quantity}'
 
     try:
-        apply_stock_movement(
-            presentation=presentation,
-            quantity=quantity,
-            movement_type=movement_type,
-            organization=request.user.organization,
-            reason=reason,
-            created_by=request.user,
-        )
+        with transaction.atomic():
+            locked_pres = Presentation.objects.select_for_update().get(pk=presentation.pk)
+            apply_stock_movement(
+                presentation=locked_pres,
+                quantity=quantity,
+                movement_type=movement_type,
+                organization=request.user.organization,
+                reason=reason,
+                created_by=request.user,
+            )
     except DjValidationError as e:
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -145,10 +147,9 @@ def adjust_presentation_stock(request, pk):
     from django.core.exceptions import ValidationError as DjValidationError
     from .services import apply_stock_movement
 
-    presentation = get_object_or_404(
-        Presentation.objects.select_related('product'),
-        pk=pk,
-        organization=request.user.organization,
+    presentation = resolve_public_id(
+        Presentation.objects.for_organization(request.user.organization).select_related('product'),
+        pk,
     )
 
     serializer = StockAdjustmentSerializer(data=request.data)
@@ -161,14 +162,16 @@ def adjust_presentation_stock(request, pk):
         reason = f'Ajuste manual a {quantity}'
 
     try:
-        apply_stock_movement(
-            presentation=presentation,
-            quantity=quantity,
-            movement_type=movement_type,
-            organization=request.user.organization,
-            reason=reason,
-            created_by=request.user,
-        )
+        with transaction.atomic():
+            locked_pres = Presentation.objects.select_for_update().get(pk=presentation.pk)
+            apply_stock_movement(
+                presentation=locked_pres,
+                quantity=quantity,
+                movement_type=movement_type,
+                organization=request.user.organization,
+                reason=reason,
+                created_by=request.user,
+            )
     except DjValidationError as e:
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -236,10 +239,9 @@ class PresentationCreateView(TenantQueryMixin, generics.CreateAPIView):
     resource_name = "inventory"
 
     def perform_create(self, serializer):
-        product = get_object_or_404(
-            Product,
-            pk=self.kwargs['product_pk'],
-            organization=self.request.user.organization,
+        product = resolve_public_id(
+            Product.objects.for_organization(self.request.user.organization),
+            self.kwargs['product_pk'],
         )
         serializer.save(
             product=product,
@@ -247,12 +249,13 @@ class PresentationCreateView(TenantQueryMixin, generics.CreateAPIView):
         )
 
 
-class PresentationDetailView(TenantQueryMixin, generics.RetrieveUpdateDestroyAPIView):
+class PresentationDetailView(PublicIdLookupMixin, TenantQueryMixin, generics.RetrieveUpdateDestroyAPIView):
     """Update or delete a specific presentation variant."""
     serializer_class = PresentationCreateSerializer
     permission_classes = [HybridPermission]
     resource_name = "inventory"
     http_method_names = ['get', 'patch', 'delete']
+    lookup_url_kwarg = 'pk'
 
     def get_queryset(self):
         return Presentation.objects.for_organization(
@@ -293,10 +296,9 @@ class MedicalRecordProductListCreateView(TenantQueryMixin, generics.ListCreateAP
         return super().initial(request, *args, **kwargs)
 
     def _get_medical_record(self):
-        return get_object_or_404(
-            MedicalRecord,
-            pk=self.kwargs['medical_record_pk'],
-            organization=self.request.user.organization,
+        return resolve_public_id(
+            MedicalRecord.objects.for_organization(self.request.user.organization),
+            self.kwargs['medical_record_pk'],
         )
 
     def _assert_can_modify(self, medical_record):
@@ -319,10 +321,9 @@ class MedicalRecordProductListCreateView(TenantQueryMixin, generics.ListCreateAP
 
     def perform_create(self, serializer):
         with transaction.atomic():
-            medical_record = get_object_or_404(
-                MedicalRecord.objects.select_for_update(),
-                pk=self.kwargs['medical_record_pk'],
-                organization=self.request.user.organization,
+            medical_record = resolve_public_id(
+                MedicalRecord.objects.for_organization(self.request.user.organization).select_for_update(),
+                self.kwargs['medical_record_pk'],
             )
             self._assert_can_modify(medical_record)
             presentation = serializer.validated_data['presentation']
@@ -370,25 +371,23 @@ class MedicalRecordProductDeleteView(generics.DestroyAPIView):
     required_permission = 'medicalrecord.update'
 
     def get_object(self):
-        medical_record = get_object_or_404(
-            MedicalRecord,
-            pk=self.kwargs['medical_record_pk'],
-            organization=self.request.user.organization,
+        mr = resolve_public_id(
+            MedicalRecord.objects.for_organization(self.request.user.organization),
+            self.kwargs['medical_record_pk'],
         )
         return get_object_or_404(
             MedicalRecordProduct,
             pk=self.kwargs['pk'],
-            medical_record=medical_record,
+            medical_record=mr,
         )
 
     def perform_destroy(self, instance):
         with transaction.atomic():
-            medical_record = get_object_or_404(
-                MedicalRecord.objects.select_for_update(),
-                pk=instance.medical_record_id,
-                organization=self.request.user.organization,
+            mr = resolve_public_id(
+                MedicalRecord.objects.for_organization(self.request.user.organization).select_for_update(),
+                self.kwargs['medical_record_pk'],
             )
-            assert_can_modify_charges(self.request.user, medical_record, self.request)
+            assert_can_modify_charges(self.request.user, mr, self.request)
             self._sync_invoice_item_delete(instance)
             instance.delete()
 

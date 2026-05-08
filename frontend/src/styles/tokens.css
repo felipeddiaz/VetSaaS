@@ -100,4 +100,42 @@
   /* ── Transiciones ────────────────────────────────────────── */
   --t:  150ms ease;
   --t2: 200ms ease;
+
+  /* === LOGIN REDESIGN TOKENS (Surgical addition) === */
+  --bg-canvas:    #fafaf7;
+  --bg-card:      #ffffff;
+  --text-primary: #0c1612;
+  --text-body:    #2a3530;
+  --text-muted:   #4a5651;
+  --text-soft:    #6e7a73;
+  --text-faint:   #8a948f;
+  --text-ghost:   #a1aaa5;
+
+  --border:       #d9d9cf;
+  --border-soft:  #ebebe4;
+  --border-hover: #c2c8c4;
+
+  --accent:       #047857;
+  --accent-soft:  rgba(4, 120, 87, 0.10);
+
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-dm-sans: "DM Sans", sans-serif;
+  --font-dm-serif: "DM Serif Display", serif;
+
+  --bg-dark: #1a2e2b;
+  --text-on-dark: #fbf8f1;
+
+  --radius-sm: 3px;
+  --radius-md: 6px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 36px;
+  --space-10: 56px;
+
+  --control-h: 44px;
 }

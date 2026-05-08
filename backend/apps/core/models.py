@@ -1,5 +1,5 @@
 """
-core/models.py — Infraestructura multitenant de VetCare SaaS
+core/models.py — Infraestructura multitenant de Vet Care SaaS
 =============================================================
 
 MANAGERS DISPONIBLES
@@ -40,6 +40,7 @@ ANTI-PATTERNS (NO HACER)
 """
 import logging
 import threading
+from uuid import uuid4
 
 from django.db import models
 
@@ -192,6 +193,36 @@ class OrganizationalModel(models.Model):
         indexes = [
             models.Index(fields=['organization', 'created_at']),
         ]
+
+
+# ---------------------------------------------------------------------------
+# PublicIdMixin — IDs no predecibles para modelos expuestos públicamente
+# ---------------------------------------------------------------------------
+class PublicIdMixin(models.Model):
+    """
+    Agrega un UUID público a modelos cuyas URLs son accesibles por el cliente.
+
+    Usar SOLO en modelos expuestos en la API pública:
+      Pet, Owner, Appointment, MedicalRecord, Invoice,
+      Prescription, Product, Presentation, Service.
+
+    NO usar en modelos internos (InvoiceItem, StockMovement, MedicalRecordProduct,
+    MedicalRecordService, InvoiceAuditLog, Permission, Role, UserRole):
+    exponer public_id en modelos internos sin URLconf propio no aporta seguridad
+    y puede incluirse accidentalmente via serializers con fields='__all__'.
+
+    Los ViewSets usan lookup_field = 'public_id'. El PK entero sigue siendo
+    la FK interna — no hay ruptura de relaciones en migraciones.
+    """
+    public_id = models.UUIDField(
+        default=uuid4,
+        editable=False,
+        unique=True,
+        db_index=True,
+    )
+
+    class Meta:
+        abstract = True
 
 
 # ---------------------------------------------------------------------------

@@ -143,7 +143,16 @@ const Dashboard = () => {
                                         {stats.recent_records.map(record => (
                                             <tr key={record.id}>
                                                 <td style={{ fontWeight: "600" }}>{record.pet_name}</td>
-                                                <td style={{ color: "var(--c-text-2)", maxWidth: "280px" }}>
+                                                <td
+                                                    style={{
+                                                        color: "var(--c-text-2)",
+                                                        maxWidth: "280px",
+                                                        overflow: "hidden",
+                                                        textOverflow: "ellipsis",
+                                                        whiteSpace: "nowrap",
+                                                    }}
+                                                    title={record.diagnosis}
+                                                >
                                                     {record.diagnosis.length > 70 ? record.diagnosis.slice(0, 70) + "…" : record.diagnosis}
                                                 </td>
                                                 <td style={{ color: "var(--c-text-2)" }}>
