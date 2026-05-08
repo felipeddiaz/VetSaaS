@@ -35,13 +35,17 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = config('SECRET_KEY')
 DEBUG = config('DEBUG', default=False, cast=bool)
+ENVIRONMENT = config('ENVIRONMENT', default='dev')  # dev | staging | production
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=lambda v: [s.strip() for s in v.split(',')])
 CSRF_TRUSTED_ORIGINS = config('CSRF_TRUSTED_ORIGINS', default='http://localhost:5173', cast=lambda v: [s.strip() for s in v.split(',')])
 
 # ---------------------------------------------------------------------------
-# Security hardening (activar en producción via env vars)
+# Security hardening
+# En producción Railway: ENVIRONMENT=production + SECURE_SSL_REDIRECT=True
+# En desarrollo local:   ENVIRONMENT=dev (sin SSL redirect)
 # ---------------------------------------------------------------------------
 SECURE_SSL_REDIRECT = config('SECURE_SSL_REDIRECT', default=False, cast=bool)
+# HSTS: activar en Railway con SECURE_HSTS_SECONDS=31536000
 SECURE_HSTS_SECONDS = config('SECURE_HSTS_SECONDS', default=0, cast=int)
 SECURE_HSTS_INCLUDE_SUBDOMAINS = config('SECURE_HSTS_INCLUDE_SUBDOMAINS', default=False, cast=bool)
 SECURE_HSTS_PRELOAD = config('SECURE_HSTS_PRELOAD', default=False, cast=bool)
@@ -49,6 +53,7 @@ SESSION_COOKIE_SECURE = config('SESSION_COOKIE_SECURE', default=False, cast=bool
 CSRF_COOKIE_SECURE = config('CSRF_COOKIE_SECURE', default=False, cast=bool)
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = 'DENY'
+# SECURE_BROWSER_XSS_FILTER está deprecado — no incluir
 
 
 #Auth users
@@ -66,7 +71,7 @@ INSTALLED_APPS = [
     'corsheaders',
     'rest_framework',
     'apps.core',
-    'apps.organizations',
+    'apps.organizations.apps.OrganizationsConfig',
     'apps.users.apps.UsersConfig',
     'apps.patients',
     'apps.appointments',
@@ -100,14 +105,22 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {
         'anon': '100/hour',
         'user': '500/hour',
-        'login': '10/min',
+        'login': '5/15min',
+        'login_by_user': '5/15min',
+        'vitals': '60/hour',
     },
+    'EXCEPTION_HANDLER': 'apps.core.exceptions.custom_exception_handler',
 }
 
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=30),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
 }
+
+# IDs públicos — apagar cuando el frontend esté actualizado a public_id:
+#   ALLOW_LEGACY_ID_LOOKUP=False en Railway (sin deploy de código)
+# True mientras dure la transición frontend → public_id
+ALLOW_LEGACY_ID_LOOKUP = config('ALLOW_LEGACY_ID_LOOKUP', default=True, cast=bool)
 
 ROOT_URLCONF = 'config.urls'
 
@@ -170,7 +183,7 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/6.0/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+LANGUAGE_CODE = 'es-mx'
 
 TIME_ZONE = 'UTC'
 
@@ -187,8 +200,23 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 # CORS - permite requests desde el frontend React (Vite)
+# NUNCA usar wildcard en producción. En Railway: CORS_ALLOWED_ORIGINS=https://tu-frontend.railway.app
 _cors_origins = config('CORS_ALLOWED_ORIGINS', default='http://localhost:5173,http://127.0.0.1:5173')
-CORS_ALLOWED_ORIGINS = [o.strip() for o in _cors_origins.split(',')]
+CORS_ALLOWED_ORIGINS = [o.strip() for o in _cors_origins.split(',') if o.strip()]
+CORS_ALLOW_CREDENTIALS = False  # JWT no necesita cookies/credentials en CORS
+# baggage y sentry-trace los inyecta el SDK de Sentry para distributed tracing
+CORS_ALLOW_HEADERS = [
+    'accept', 'accept-encoding', 'authorization', 'content-type',
+    'dnt', 'origin', 'user-agent', 'x-csrftoken', 'x-requested-with',
+    'baggage', 'sentry-trace',
+]
+
+# Fail-fast solo en producción — previene deploys silenciosos con CORS vacío
+if ENVIRONMENT == 'production' and not CORS_ALLOWED_ORIGINS:
+    raise RuntimeError(
+        "CORS_ALLOWED_ORIGINS no configurado. "
+        "Define la variable de entorno en Railway antes de arrancar en producción."
+    )
 
 LOGGING = {
     'version': 1,
@@ -243,5 +271,22 @@ LOGGING = {
             'level': 'INFO',
             'propagate': False,
         },
+        # Ciclo de vida consultas (cerrar, idempotencia) — mismo destino que consola
+        'medical_records.events': {
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
     },
 }
+
+# -----------------------------------------------------------------------------
+# Runserver (solo desarrollo): el logger padre `django` está en ERROR arriba, así que
+# los mensajes INFO de `django.server` ("GET /api/...") se perdían al propagar.
+# -----------------------------------------------------------------------------
+if DEBUG:
+    LOGGING["loggers"]["django.server"] = {
+        "handlers": ["console"],
+        "level": "INFO",
+        "propagate": False,
+    }

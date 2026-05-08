@@ -17,6 +17,7 @@ import {
     RefreshCw, Loader2,
     Printer, Download, Upload,
     Frown,
+    Link, Heart, Activity,
 } from "lucide-react";
 
 export const Icon = {
@@ -79,4 +80,7 @@ export const Icon = {
     Paw: ({ s = 20, c = "currentColor" }) => <PawPrint size={s} color={c} strokeWidth={2} />,
     Box: ({ s = 20, c = "currentColor" }) => <Box size={s} color={c} strokeWidth={2} />,
     Frown: ({ s = 20, c = "currentColor" }) => <Frown size={s} color={c} strokeWidth={2} />,
+    Link: ({ s = 20, c = "currentColor" }) => <Link size={s} color={c} strokeWidth={2} />,
+    Heart: ({ s = 20, c = "currentColor" }) => <Heart size={s} color={c} strokeWidth={2} />,
+    Activity: ({ s = 20, c = "currentColor" }) => <Activity size={s} color={c} strokeWidth={2} />,
 };

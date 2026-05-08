@@ -19,6 +19,8 @@ PERMISSION_CODES = [
     "appointment.list",
     "appointment.retrieve",
     "appointment.create",
+    # Granular permiso para walk-ins (creacion de citas en modo walk-in)
+    "appointment.create_walkin",
     "appointment.update",
     "appointment.destroy",
 
@@ -27,11 +29,16 @@ PERMISSION_CODES = [
     "medicalrecord.retrieve",
     "medicalrecord.create",
     "medicalrecord.update",
+    "medicalrecord.close",
+    "medicalrecord.vitals.create",
+    "medicalrecord.vitals.list",
+    "medicalrecord.summary.retrieve",
 
     # Facturas
     "invoice.list",
     "invoice.retrieve",
     "invoice.create",
+    "invoice.destroy",
     "invoice.confirm",
     "invoice.pay",
     "invoice.cancel",
@@ -60,6 +67,7 @@ PERMISSION_CODES = [
     # Inventario
     "inventory.list",
     "inventory.retrieve",
+    "inventory.create",
     "inventory.update",
 
     # Recetas
@@ -72,6 +80,12 @@ PERMISSION_CODES = [
     "staff.list",
     "staff.create",
     "staff.destroy",
+
+    # Organización
+    "organization.list",
+    "organization.retrieve",
+    "organization.update",
+    "organization.create",
 
     # Dashboard
     "dashboard.view",
@@ -91,8 +105,12 @@ PERMISSIONS = {
     "VET": [
         "appointment.list", "appointment.retrieve", "appointment.create",
         "appointment.update", "appointment.destroy",
+        # walk-in granular
+        "appointment.create_walkin",
         "medicalrecord.list", "medicalrecord.retrieve", "medicalrecord.create",
-        "medicalrecord.update",
+        "medicalrecord.update", "medicalrecord.close",
+        "medicalrecord.vitals.create", "medicalrecord.vitals.list",
+        "medicalrecord.summary.retrieve",
         "prescription.list", "prescription.retrieve", "prescription.create",
         "prescription.destroy",
         "patient.list", "patient.retrieve", "patient.create",
@@ -101,7 +119,7 @@ PERMISSIONS = {
         "owner.update", "owner.destroy",
         "inventory.list", "inventory.retrieve",
         "invoice.list", "invoice.retrieve", "invoice.create",
-        "invoice.confirm", "invoice.pay", "invoice.cancel",
+        "invoice.destroy", "invoice.confirm", "invoice.pay", "invoice.cancel",
         "service.list", "service.retrieve",
         "staff.list",
         "dashboard.view",
@@ -112,6 +130,7 @@ PERMISSIONS = {
         "appointment.list", "appointment.retrieve", "appointment.create",
         "appointment.update", "appointment.destroy",
         "medicalrecord.list", "medicalrecord.retrieve",
+        "medicalrecord.vitals.list", "medicalrecord.summary.retrieve",
         "prescription.list", "prescription.retrieve",
         "patient.list", "patient.retrieve", "patient.create",
         "patient.update", "patient.destroy",
@@ -119,7 +138,7 @@ PERMISSIONS = {
         "owner.update", "owner.destroy",
         "inventory.list", "inventory.retrieve",
         "invoice.list", "invoice.retrieve", "invoice.create",
-        "invoice.confirm", "invoice.pay", "invoice.cancel",
+        "invoice.destroy", "invoice.confirm", "invoice.pay", "invoice.cancel",
         "service.list", "service.retrieve",
         "staff.list",
         "dashboard.view",

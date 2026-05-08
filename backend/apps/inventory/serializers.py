@@ -1,10 +1,37 @@
+import re
+from decimal import Decimal, InvalidOperation
 from uuid import uuid4
 from django.db import transaction
 from rest_framework import serializers
 from .models import Product, Presentation, StockMovement, MedicalRecordProduct
 
+PRODUCT_NAME_REGEX = re.compile(r"^[A-Za-z0-9ÁÉÍÓÚáéíóúñÑ\s\.\-\(\)\/\%\+]+$")
+
+
+def _validate_price(value, field_name='sale_price'):
+    if value is None:
+        raise serializers.ValidationError({field_name: "El precio es obligatorio."})
+    try:
+        d = Decimal(str(value))
+    except (InvalidOperation, TypeError):
+        raise serializers.ValidationError({field_name: "Valor inválido."})
+    if d <= Decimal('0.00'):
+        raise serializers.ValidationError({field_name: "El precio debe ser mayor a 0."})
+
+
+def _validate_non_negative(value, field_name, label):
+    if value is None:
+        raise serializers.ValidationError({field_name: f"{label} es obligatorio."})
+    try:
+        d = Decimal(str(value))
+    except (InvalidOperation, TypeError):
+        raise serializers.ValidationError({field_name: "Valor inválido."})
+    if d < Decimal('0'):
+        raise serializers.ValidationError({field_name: f"{label} no puede ser negativo."})
+
 
 class PresentationSerializer(serializers.ModelSerializer):
+    product = serializers.IntegerField(source='product_id', read_only=True)
     is_low_stock = serializers.BooleanField(read_only=True)
     base_unit_display = serializers.CharField(source='get_base_unit_display', read_only=True)
     product_name = serializers.CharField(source='product.name', read_only=True)
@@ -12,10 +39,10 @@ class PresentationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Presentation
         fields = [
-            'id', 'name', 'product_name', 'base_unit', 'base_unit_display', 'quantity',
+            'id', 'public_id', 'product', 'name', 'product_name', 'base_unit', 'base_unit_display', 'quantity',
             'sale_price', 'stock', 'min_stock', 'is_low_stock',
         ]
-        read_only_fields = ['id', 'name', 'product_name']  # name lo controla el backend
+        read_only_fields = ['id', 'public_id', 'product', 'product_name']
 
     def validate_sale_price(self, value):
         if value <= 0:
@@ -33,9 +60,43 @@ class PresentationSerializer(serializers.ModelSerializer):
         return value
 
 
+class PresentationCreateSerializer(serializers.ModelSerializer):
+    """Serializer for adding a new presentation variant to an existing product."""
+
+    name = serializers.CharField(required=False, allow_blank=True, default='')
+    stock = serializers.DecimalField(
+        max_digits=10, decimal_places=2, required=True, allow_null=False
+    )
+    sale_price = serializers.DecimalField(
+        max_digits=10, decimal_places=2, required=True, allow_null=False
+    )
+
+    class Meta:
+        model = Presentation
+        fields = ['id', 'name', 'base_unit', 'quantity', 'sale_price', 'stock', 'min_stock']
+        read_only_fields = ['id']
+
+    def validate_sale_price(self, value):
+        _validate_price(value)
+        return value
+
+    def validate_stock(self, value):
+        _validate_non_negative(value, 'stock', 'El stock')
+        return value
+
+    def validate_min_stock(self, value):
+        _validate_non_negative(value, 'min_stock', 'El stock mínimo')
+        return value
+
+
 class ProductSerializer(serializers.ModelSerializer):
-    presentation = PresentationSerializer()
-    # internal_code es opcional: si no viene, el backend genera uno automáticamente
+    presentations = PresentationSerializer(many=True, read_only=True)
+    # Backward-compat: first presentation for existing frontend code
+    presentation = serializers.SerializerMethodField()
+    # Write-only input for product creation
+    presentation_input = PresentationCreateSerializer(
+        write_only=True, required=True, allow_null=False
+    )
     internal_code = serializers.CharField(
         max_length=100,
         required=False,
@@ -46,15 +107,38 @@ class ProductSerializer(serializers.ModelSerializer):
     class Meta:
         model = Product
         fields = [
-            'id', 'name', 'internal_code', 'description',
+            'id', 'public_id', 'name', 'internal_code', 'description',
             'category', 'requires_prescription', 'is_active',
-            'presentation', 'created_at', 'updated_at',
+            'presentations', 'presentation', 'presentation_input',
+            'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'public_id', 'created_at', 'updated_at']
+
+    def get_presentation(self, obj):
+        first = obj.presentations.first() if hasattr(obj, '_prefetched_objects_cache') else obj.presentations.first()
+        if first is None:
+            return None
+        return PresentationSerializer(first).data
+
+    def validate_name(self, value):
+        if not value or not value.strip():
+            raise serializers.ValidationError("El nombre del producto es requerido.")
+        if not PRODUCT_NAME_REGEX.match(value.strip()):
+            raise serializers.ValidationError(
+                "El nombre del producto contiene caracteres no permitidos. "
+                "Use letras, números, espacios y los símbolos: . - ( ) / % +"
+            )
+        return value.strip()
+
+    def validate(self, data):
+        pres = data.get('presentation_input')
+        if not pres:
+            raise serializers.ValidationError("Se requiere al menos una presentación.")
+        return data
 
     def validate_internal_code(self, value):
         if not value:
-            return value  # se generará automáticamente en create()
+            return value
         request = self.context.get('request')
         if request:
             qs = Product.objects.filter(
@@ -71,15 +155,14 @@ class ProductSerializer(serializers.ModelSerializer):
 
     @transaction.atomic
     def create(self, validated_data):
-        presentation_data = validated_data.pop('presentation')
-        # Organization siempre desde contexto — nunca del payload (seguridad multitenant)
+        pres_data = validated_data.pop('presentation_input', None)
+
         organization = self.context['request'].user.organization
         validated_data.pop('organization', None)
 
         internal_code = validated_data.pop('internal_code', '').strip()
 
         if not internal_code:
-            # UUID temporal evita colisiones bajo requests concurrentes
             product = Product.objects.create(
                 **validated_data,
                 organization=organization,
@@ -94,40 +177,55 @@ class ProductSerializer(serializers.ModelSerializer):
                 internal_code=internal_code,
             )
 
-        # Backend controla presentation.name — siempre igual al nombre del producto
-        presentation_data['name'] = product.name
-        Presentation.objects.create(
-            product=product,
-            organization=organization,
-            **presentation_data,
-        )
+        if pres_data:
+            pres_serializer = PresentationCreateSerializer(
+                data=pres_data,
+                context=self.context
+            )
+            pres_serializer.is_valid(raise_exception=True)
+
+            data = dict(pres_serializer.validated_data)
+            if not data.get('name'):
+                data['name'] = product.name
+
+            pres = Presentation(product=product, organization=organization, **data)
+            pres.full_clean()
+            Presentation.objects.bulk_create([pres])
+
         return product
 
     @transaction.atomic
     def update(self, instance, validated_data):
-        presentation_data = validated_data.pop('presentation', None)
+        pres_data = validated_data.pop('presentation_input', None)
         validated_data.pop('organization', None)
 
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
 
-        if presentation_data is not None:
-            if (
-                'stock' in presentation_data
-                and presentation_data['stock'] != instance.presentation.stock
-            ):
+        if pres_data is not None:
+            first_pres = instance.presentations.first()
+            if first_pres is None:
+                raise serializers.ValidationError({
+                    'presentation': 'Este producto no tiene presentaciones. Agrega una primero.'
+                })
+
+            # pres_data viene como lista de dicts (many=True)
+            if isinstance(pres_data, list):
+                update_data = pres_data[0] if pres_data else {}
+            else:
+                update_data = pres_data
+
+            if 'stock' in update_data and update_data['stock'] != first_pres.stock:
                 raise serializers.ValidationError({
                     'presentation': {
                         'stock': 'Usa el endpoint de ajuste de stock para modificar existencias.'
                     }
                 })
-            # Si el nombre del producto cambió, la presentación lo refleja
-            presentation_data['name'] = validated_data.get('name') or instance.name
-            pres = instance.presentation
-            for attr, value in presentation_data.items():
-                setattr(pres, attr, value)
-            pres.save()
+            update_data.pop('name', None)  # name is immutable via this endpoint
+            for attr, value in update_data.items():
+                setattr(first_pres, attr, value)
+            first_pres.save()
         return instance
 
 
@@ -153,7 +251,7 @@ class StockMovementSerializer(serializers.ModelSerializer):
 
 class StockAdjustmentSerializer(serializers.Serializer):
     movement_type = serializers.ChoiceField(choices=['in', 'out', 'adjustment'])
-    quantity = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=0)
+    quantity = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=Decimal('0.01'))
     reason = serializers.CharField(max_length=255, required=False, allow_blank=True, default='')
 
 
@@ -171,3 +269,32 @@ class MedicalRecordProductSerializer(serializers.ModelSerializer):
             'id', 'presentation', 'product_name', 'presentation_name',
             'base_unit', 'base_unit_display', 'quantity',
         ]
+        validators = []
+
+    def validate_presentation(self, presentation):
+        if presentation and presentation.organization != self.context['request'].user.organization:
+            raise serializers.ValidationError('Acceso inválido.')
+        return presentation
+
+    def validate(self, attrs):
+        presentation = attrs.get('presentation')
+        if not presentation:
+            return attrs
+        product = presentation.product
+        if not product.requires_prescription:
+            return attrs
+        medical_record = self.context.get('medical_record')
+        if not medical_record:
+            return attrs
+        from apps.prescriptions.models import PrescriptionItem
+        has_active_rx = PrescriptionItem.objects.filter(
+            prescription__medical_record=medical_record,
+            prescription__is_active=True,
+            product=product,
+        ).exists()
+        if not has_active_rx:
+            raise serializers.ValidationError(
+                f"{product.name} requiere receta médica activa. "
+                "Crea la receta antes de agregar este producto a la consulta."
+            )
+        return attrs

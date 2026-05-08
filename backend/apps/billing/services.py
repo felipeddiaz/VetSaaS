@@ -13,8 +13,10 @@ from .models import Invoice, InvoiceAuditLog, InvoiceItem
 def confirm_invoice(invoice, user):
     """
     Confirma una factura. Solo direct_sale descuenta stock.
-    Orden estricto: validar → lock → validar stock → descontar → cambiar estado.
+    Orden estricto: lock → validar → validar stock → descontar → cambiar estado.
     """
+    # Re-fetch con lock para prevenir confirmaciones concurrentes (doble-submit)
+    invoice = Invoice.objects.select_for_update().get(pk=invoice.pk)
     if invoice.status != 'draft':
         raise ValidationError("Solo se pueden confirmar facturas en borrador.")
 
@@ -126,3 +128,44 @@ def _log_status_change(invoice, previous, new, user, notes=''):
         changed_by=user,
         notes=notes,
     )
+
+
+def get_or_create_invoice_for_medical_record(medical_record):
+    """
+    Fuente única de verdad para obtener o crear la Invoice de una consulta.
+    
+    Reglas:
+    1) Si la consulta tiene cita, busca la factura vinculada a la cita primero
+       (con filtro multi-tenant explícito: misma organización)
+    2) Si la factura de cita existe, la linkea al medical_record
+    3) Fallback: crea factura nueva vinculada al medical_record
+    
+    Usado por _sync_invoice_item en medical_records/views.py e inventory/views.py.
+    """
+    org = medical_record.organization
+
+    # 1) Si hay cita, buscar factura vinculada a la cita
+    if medical_record.appointment_id:
+        invoice = Invoice.objects.filter(
+            appointment=medical_record.appointment,
+            organization=org,
+        ).first()
+        if invoice:
+            # Linkear si no estaba vinculada al medical_record
+            if invoice.medical_record_id is None:
+                invoice.medical_record = medical_record
+                invoice.save(update_fields=['medical_record'])
+            return invoice
+
+    # 2) Fallback: factura nueva vinculada al medical_record
+    invoice, _ = Invoice.objects.get_or_create(
+        medical_record=medical_record,
+        defaults={
+            'owner': medical_record.pet.owner,
+            'pet': medical_record.pet,
+            'organization': org,
+            'status': 'draft',
+            'invoice_type': 'consultation',
+        }
+    )
+    return invoice

@@ -1,10 +1,15 @@
 from rest_framework import serializers
 from .models import Prescription, PrescriptionItem
+from apps.core.sanitize import sanitize_text
 
 
 class PrescriptionItemSerializer(serializers.ModelSerializer):
     product_name = serializers.CharField(source='product.name', read_only=True)
-    product_unit = serializers.CharField(source='product.presentation.base_unit', read_only=True)
+    product_unit = serializers.SerializerMethodField()
+
+    def get_product_unit(self, obj):
+        pres = obj.product.presentations.first()
+        return pres.base_unit if pres else None
 
     class Meta:
         model = PrescriptionItem
@@ -12,6 +17,23 @@ class PrescriptionItemSerializer(serializers.ModelSerializer):
             'id', 'product', 'product_name', 'product_unit',
             'dose', 'duration', 'quantity', 'instructions',
         ]
+
+    def validate_dose(self, value):
+        clean = sanitize_text(value or '', max_length=255)
+        if not clean.strip():
+            raise serializers.ValidationError("La dosis es obligatoria.")
+        return clean
+
+    def validate_duration(self, value):
+        return sanitize_text(value or '', max_length=255)
+
+    def validate_instructions(self, value):
+        return sanitize_text(value or '', max_length=5000)
+
+    def validate_quantity(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("La cantidad debe ser mayor a 0.")
+        return value
 
 
 class PrescriptionSerializer(serializers.ModelSerializer):
@@ -22,14 +44,43 @@ class PrescriptionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Prescription
         fields = [
-            'id', 'medical_record', 'veterinarian', 'veterinarian_name',
+            'id', 'public_id', 'medical_record', 'veterinarian', 'veterinarian_name',
             'pet', 'pet_name', 'notes', 'items',
             'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'veterinarian', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'public_id', 'veterinarian', 'created_at', 'updated_at']
 
     def get_veterinarian_name(self, obj):
         return f"{obj.veterinarian.first_name} {obj.veterinarian.last_name}".strip()
+
+    def validate_notes(self, value):
+        return sanitize_text(value or '', max_length=5000)
+
+    def validate_items(self, items):
+        if not items:
+            raise serializers.ValidationError(
+                "La receta debe tener al menos un medicamento."
+            )
+        return items
+
+    def validate_medical_record(self, mr):
+        if mr and mr.organization != self.context['request'].user.organization:
+            raise serializers.ValidationError('Acceso inválido.')
+        return mr
+
+    def validate_pet(self, pet):
+        if pet and pet.organization != self.context['request'].user.organization:
+            raise serializers.ValidationError('Acceso inválido.')
+        return pet
+
+    def validate(self, attrs):
+        medical_record = attrs.get('medical_record')
+        if medical_record and not self.instance:
+            if hasattr(medical_record, 'prescription'):
+                raise serializers.ValidationError(
+                    "Esta consulta ya tiene una receta. Editá la existente."
+                )
+        return attrs
 
     def create(self, validated_data):
         items_data = validated_data.pop('items', [])
@@ -45,7 +96,7 @@ class PrescriptionSerializer(serializers.ModelSerializer):
         instance.save()
 
         if items_data is not None:
-            instance.items.all().delete()
+            PrescriptionItem.all_objects.filter(prescription=instance).delete()
             for item_data in items_data:
                 PrescriptionItem.objects.create(prescription=instance, **item_data)
 
@@ -56,3 +107,22 @@ class PrescriptionItemWriteSerializer(serializers.ModelSerializer):
     class Meta:
         model = PrescriptionItem
         fields = ['id', 'product', 'dose', 'duration', 'quantity', 'instructions']
+
+    def validate_dose(self, value):
+        clean = sanitize_text(value or '', max_length=255)
+        if not clean.strip():
+            raise serializers.ValidationError("La dosis es obligatoria.")
+        return clean
+
+    def validate_duration(self, value):
+        return sanitize_text(value or '', max_length=255)
+
+    def validate_instructions(self, value):
+        return sanitize_text(value or '', max_length=5000)
+
+    def validate_product(self, product):
+        if not product.requires_prescription:
+            raise serializers.ValidationError(
+                "Este producto no requiere receta. Puede dispensarse directamente desde inventario."
+            )
+        return product

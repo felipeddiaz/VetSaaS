@@ -6,7 +6,7 @@ from zoneinfo import available_timezones
 
 class Organization(models.Model):
     name = models.CharField(max_length=255)
-    timezone = models.CharField(max_length=64, default='UTC')
+    timezone = models.CharField(max_length=64, default='America/Mexico_City')
     timezone_updated_at = models.DateTimeField(null=True, blank=True)
     tax_rate = models.DecimalField(
         max_digits=5,
@@ -26,6 +26,20 @@ class Organization(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class OrganizationSettings(models.Model):
+    organization = models.OneToOneField(
+        Organization, on_delete=models.CASCADE, related_name='settings'
+    )
+    auto_create_medical_record = models.BooleanField(default=True)
+    auto_create_invoice_on_done = models.BooleanField(default=True)
+    require_confirmation_before_start = models.BooleanField(default=False)
+    allow_anonymous_walkin = models.BooleanField(default=False)
+    show_status_change_history = models.BooleanField(default=True)
+
+    def __str__(self):
+        return f"Settings — {self.organization.name}"
 
 
 class OrganizationTimezoneAudit(models.Model):

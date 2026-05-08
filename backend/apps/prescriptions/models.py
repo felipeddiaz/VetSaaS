@@ -1,8 +1,8 @@
 from django.db import models
-from apps.core.models import OrganizationalModel
+from apps.core.models import OrganizationalModel, PublicIdMixin
 
 
-class Prescription(OrganizationalModel):
+class Prescription(PublicIdMixin, OrganizationalModel):
     medical_record = models.OneToOneField(
         'medical_records.MedicalRecord',
         on_delete=models.CASCADE,

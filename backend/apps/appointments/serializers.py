@@ -1,13 +1,18 @@
 from rest_framework import serializers
 from django.db.models import Q
+from django.utils.timezone import now
 
 from apps.core.datetime_utils import get_context_timezone, local_date_time_to_utc
+from apps.core.sanitize import sanitize_text
 
-from .models import Appointment
+from .models import Appointment, AppointmentStatusChange
 
 
 class AppointmentSerializer(serializers.ModelSerializer):
     pet_name = serializers.CharField(source='pet.name', read_only=True)
+    pet_is_generic = serializers.BooleanField(source='pet.is_generic', read_only=True)
+    owner_id = serializers.IntegerField(source='pet.owner_id', read_only=True)
+    owner_name = serializers.CharField(source='pet.owner.name', read_only=True)
     veterinarian_name = serializers.CharField(source='veterinarian.get_full_name', read_only=True)
     medical_record_ids = serializers.ReadOnlyField()
     invoice_id = serializers.ReadOnlyField()
@@ -15,11 +20,13 @@ class AppointmentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Appointment
         fields = [
-            'id', 'pet', 'pet_name', 'veterinarian', 'veterinarian_name',
-            'date', 'start_time', 'end_time', 'reason', 'notes', 'status',
+            'id', 'public_id', 'pet', 'pet_name', 'pet_is_generic', 'owner_id', 'owner_name',
+            'veterinarian', 'veterinarian_name',
+            'date', 'start_time', 'end_time', 'reason', 'notes',
+            'status', 'cancellation_reason',
             'medical_record_ids', 'invoice_id',
         ]
-        read_only_fields = ['id', 'medical_record_ids', 'invoice_id']
+        read_only_fields = ['id', 'public_id', 'pet_is_generic', 'owner_id', 'owner_name', 'medical_record_ids', 'invoice_id']
 
     def validate_pet(self, value):
         request = self.context.get('request')
@@ -56,11 +63,14 @@ class AppointmentSerializer(serializers.ModelSerializer):
         start_utc = local_date_time_to_utc(org, local_date, start_time)
         end_utc = local_date_time_to_utc(org, local_date, end_time)
 
+        if not instance and start_utc < now():
+            raise serializers.ValidationError({"date": "No se pueden crear citas en el pasado."})
+
         vet_pk = veterinarian_id.pk if hasattr(veterinarian_id, 'pk') else veterinarian_id
         conflicts = Appointment.objects.filter(
             organization=org,
             veterinarian_id=vet_pk,
-            status='scheduled',
+            status__in=['scheduled', 'confirmed', 'in_progress'],
         )
 
         if instance:
@@ -70,12 +80,57 @@ class AppointmentSerializer(serializers.ModelSerializer):
             Q(start_datetime__lt=end_utc, end_datetime__gt=start_utc)
         )
 
-        if target_status == 'scheduled' and conflicts.exists():
+        if target_status in ('scheduled', 'confirmed', 'in_progress') and conflicts.exists():
             raise serializers.ValidationError(
                 {'error': 'Ya existe una cita para este veterinario en ese horario'}
             )
 
+        pet = attrs.get('pet', instance.pet if instance else None)
+        raw_owner = self.context['request'].data.get('owner_id')
+        if pet and raw_owner:
+            if str(pet.owner_id) != str(raw_owner):
+                raise serializers.ValidationError(
+                    {'pet': 'La mascota no pertenece al propietario seleccionado'}
+                )
+
         attrs['start_datetime'] = start_utc
         attrs['end_datetime'] = end_utc
         attrs['timezone_at_creation'] = str(get_context_timezone(org))
+
+        # Sanitizar campos de texto libre
+        for field, limit in (('reason', 255), ('notes', 5000), ('cancellation_reason', 500)):
+            if field in attrs:
+                attrs[field] = sanitize_text(attrs[field], max_length=limit)
+
         return attrs
+
+
+class AppointmentStatusChangeSerializer(serializers.ModelSerializer):
+    changed_by_name = serializers.SerializerMethodField()
+    from_status_display = serializers.SerializerMethodField()
+    to_status_display = serializers.SerializerMethodField()
+
+    STATUS_LABELS = {
+        'scheduled': 'Programada', 'confirmed': 'Confirmada',
+        'in_progress': 'En consulta', 'done': 'Completada',
+        'canceled': 'Cancelada', 'no_show': 'No se presentó',
+    }
+
+    class Meta:
+        model = AppointmentStatusChange
+        fields = [
+            'id', 'from_status', 'from_status_display',
+            'to_status', 'to_status_display',
+            'changed_by', 'changed_by_name', 'reason', 'created_at',
+        ]
+
+    def get_changed_by_name(self, obj):
+        if obj.changed_by:
+            return f"{obj.changed_by.first_name} {obj.changed_by.last_name}".strip() or obj.changed_by.username
+        return None
+
+    def get_from_status_display(self, obj):
+        return self.STATUS_LABELS.get(obj.from_status, obj.from_status)
+
+    def get_to_status_display(self, obj):
+        return self.STATUS_LABELS.get(obj.to_status, obj.to_status)

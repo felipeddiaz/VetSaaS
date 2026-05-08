@@ -13,12 +13,12 @@ from .views import (
 
 urlpatterns = [
     path('billing/services/', ServiceListCreateView.as_view()),
-    path('billing/services/<int:pk>/', ServiceDetailView.as_view()),
+    path('billing/services/<str:pk>/', ServiceDetailView.as_view()),
     path('billing/invoices/', InvoiceListCreateView.as_view()),
-    path('billing/invoices/<int:pk>/', InvoiceDetailView.as_view()),
-    path('billing/invoices/<int:pk>/confirm/', confirm_invoice),
-    path('billing/invoices/<int:pk>/pay/', pay_invoice),
-    path('billing/invoices/<int:pk>/cancel/', cancel_invoice),
-    path('billing/invoices/<int:invoice_pk>/items/', InvoiceItemCreateView.as_view()),
-    path('billing/invoices/<int:invoice_pk>/items/<int:pk>/', InvoiceItemDetailView.as_view()),
+    path('billing/invoices/<str:pk>/', InvoiceDetailView.as_view()),
+    path('billing/invoices/<str:pk>/confirm/', confirm_invoice),
+    path('billing/invoices/<str:pk>/pay/', pay_invoice),
+    path('billing/invoices/<str:pk>/cancel/', cancel_invoice),
+    path('billing/invoices/<str:invoice_pk>/items/', InvoiceItemCreateView.as_view()),
+    path('billing/invoices/<str:invoice_pk>/items/<str:pk>/', InvoiceItemDetailView.as_view()),
 ]

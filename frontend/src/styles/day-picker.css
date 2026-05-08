@@ -1,0 +1,88 @@
+/* react-day-picker v9 overrides — design system tokens */
+.rdp-root {
+  --rdp-accent-color: var(--c-primary);
+  --rdp-accent-background-color: var(--c-primary-ring);
+  --rdp-today-color: var(--c-primary);
+  --rdp-day-height: 36px;
+  --rdp-day-width: 36px;
+  --rdp-day_button-height: 34px;
+  --rdp-day_button-width: 34px;
+  --rdp-day_button-border-radius: var(--r-md);
+  --rdp-nav_button-height: 2rem;
+  --rdp-nav_button-width: 2rem;
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  color: var(--c-text);
+}
+
+/* Calendar container */
+.rdp-root .rdp-months {
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-md);
+  padding: 10px 12px 12px;
+}
+
+/* Month caption */
+.rdp-root .rdp-month_caption {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--c-text);
+}
+
+/* Nav buttons */
+.rdp-root .rdp-nav {
+  color: var(--c-text-3);
+}
+.rdp-root .rdp-button_previous,
+.rdp-root .rdp-button_next {
+  color: var(--c-text-3);
+  border-radius: var(--r-md);
+  transition: background var(--t), color var(--t);
+}
+.rdp-root .rdp-button_previous:hover,
+.rdp-root .rdp-button_next:hover {
+  background: var(--c-hover);
+  color: var(--c-text);
+}
+
+/* Weekday headers */
+.rdp-root .rdp-weekday {
+  color: var(--c-text-3);
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 1;
+}
+
+/* Day cells */
+.rdp-root .rdp-day_button {
+  font-size: 12.5px;
+  transition: background var(--t);
+}
+.rdp-root .rdp-day_button:hover:not([disabled]) {
+  background: var(--c-hover);
+}
+
+/* Selected day */
+.rdp-root .rdp-selected .rdp-day_button {
+  background: var(--c-primary);
+  color: #fff;
+  border-color: var(--c-primary);
+}
+
+/* Today (unselected) */
+.rdp-root .rdp-today:not(.rdp-selected) .rdp-day_button {
+  font-weight: 700;
+  color: var(--c-primary);
+}
+
+/* Disabled (future) days */
+.rdp-root .rdp-disabled {
+  opacity: 0.28;
+}
+
+/* Outside month */
+.rdp-root .rdp-outside {
+  opacity: 0.4;
+}

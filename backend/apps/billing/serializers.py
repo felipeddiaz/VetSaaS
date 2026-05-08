@@ -1,14 +1,36 @@
+import re
 from rest_framework import serializers
 from decimal import Decimal
 from .models import Service, Invoice, InvoiceItem
 from .money import discount_amount, money
+from apps.core.sanitize import sanitize_text
+
+SERVICE_NAME_REGEX = re.compile(r'^[A-Za-z0-9ÁÉÍÓÚáéíóúñÑ\s\-\(\)\/\%\+]+$')
 
 
 class ServiceSerializer(serializers.ModelSerializer):
     class Meta:
         model = Service
-        fields = ['id', 'name', 'description', 'base_price', 'is_active', 'created_at', 'updated_at']
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        fields = ['id', 'public_id', 'name', 'description', 'base_price', 'is_active', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'public_id', 'created_at', 'updated_at']
+
+    def validate_name(self, value):
+        clean = sanitize_text(value or '', max_length=255)
+        if not clean.strip():
+            raise serializers.ValidationError("El nombre del servicio es obligatorio.")
+        if not SERVICE_NAME_REGEX.match(clean):
+            raise serializers.ValidationError(
+                "El nombre contiene caracteres no permitidos."
+            )
+        return clean
+
+    def validate_description(self, value):
+        return sanitize_text(value or '', max_length=5000)
+
+    def validate_base_price(self, value):
+        if value is None or value <= 0:
+            raise serializers.ValidationError("El precio debe ser mayor a 0.")
+        return value
 
 
 class InvoiceItemSerializer(serializers.ModelSerializer):
@@ -70,6 +92,10 @@ class InvoiceItemSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     "El servicio no pertenece a la organización de la factura."
                 )
+            if not self.instance and InvoiceItem.objects.filter(invoice=invoice, service=service).exists():
+                raise serializers.ValidationError(
+                    "Este servicio ya está incluido en la factura."
+                )
 
         # Validación de organización (presentation — ya existía)
         if presentation:
@@ -85,6 +111,10 @@ class InvoiceItemSerializer(serializers.ModelSerializer):
             if presentation.stock <= 0:
                 raise serializers.ValidationError(
                     f"'{presentation.product.name}' no tiene stock disponible."
+                )
+            if presentation.product.requires_prescription and invoice.invoice_type == 'direct_sale':
+                raise serializers.ValidationError(
+                    f"'{presentation.product.name}' requiere receta médica y no puede venderse directamente."
                 )
 
         # Validación de descuento (NUEVO)
@@ -112,25 +142,67 @@ class InvoiceSerializer(serializers.ModelSerializer):
     pet_name = serializers.CharField(source='pet.name', read_only=True)
     owner_name = serializers.CharField(source='owner.name', read_only=True)
     created_by_name = serializers.SerializerMethodField()
+    prescription_suggestions = serializers.SerializerMethodField()
 
     class Meta:
         model = Invoice
         fields = [
-            'id', 'invoice_type', 'appointment', 'medical_record',
+            'id', 'public_id', 'invoice_type', 'appointment', 'medical_record',
             'owner', 'owner_name', 'pet', 'pet_name',
             'status', 'payment_method', 'tax_rate',
             'subtotal', 'tax_amount', 'total',
             'notes', 'created_by', 'created_by_name',
             'paid_at', 'created_at', 'updated_at',
-            'items',
+            'items', 'prescription_suggestions',
         ]
         read_only_fields = [
-            'id', 'subtotal', 'tax_amount', 'total',
+            'id', 'public_id', 'subtotal', 'tax_amount', 'total',
             'created_by', 'paid_at', 'created_at', 'updated_at',
-            'tax_rate',   # NUEVO: se hereda de org, no editable por cliente
+            'tax_rate',
         ]
 
     def get_created_by_name(self, obj):
         if obj.created_by:
             return f"{obj.created_by.first_name} {obj.created_by.last_name}".strip()
         return ''
+
+    def validate_notes(self, value):
+        from apps.core.sanitize import sanitize_text
+        return sanitize_text(value or '', max_length=5000)
+
+    def validate(self, data):
+        owner = data.get('owner')
+        pet = data.get('pet')
+        if owner and getattr(owner, 'is_generic', False):
+            # Generic owner: force direct_sale, pet is optional
+            data['invoice_type'] = 'direct_sale'
+        elif pet is None and not (owner and getattr(owner, 'is_generic', False)):
+            raise serializers.ValidationError({'pet': 'La mascota es requerida para ventas con cliente registrado.'})
+        return data
+
+    def get_prescription_suggestions(self, obj):
+        """
+        Productos recetados disponibles para agregar a la factura.
+        Solo se expone cuando la factura está en borrador y tiene una consulta con receta.
+        """
+        if obj.status != 'draft' or not obj.medical_record_id:
+            return []
+        try:
+            rx = obj.medical_record.prescription
+        except Exception:
+            return []
+        suggestions = []
+        for item in rx.items.select_related('product').prefetch_related('product__presentations').all():
+            pres = item.product.presentations.first()
+            if not pres:
+                continue
+            suggestions.append({
+                'prescription_item_id': item.id,
+                'product_name': item.product.name,
+                'presentation_id': pres.id,
+                'presentation_name': str(pres),
+                'dose': item.dose,
+                'suggested_quantity': str(item.quantity),
+                'unit_price': str(pres.sale_price),
+            })
+        return suggestions

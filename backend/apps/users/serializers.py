@@ -1,3 +1,4 @@
+import re
 import logging
 
 from rest_framework import serializers
@@ -8,20 +9,23 @@ logger = logging.getLogger(__name__)
 
 User = get_user_model()
 
+USERNAME_REGEX = re.compile(r"^[A-Za-z0-9_.\-]+$")
+NAME_REGEX = re.compile(r"^[A-Za-zÁÉÍÓÚáéíóúñÑ ]+$")
+
 
 class UserSerializer(serializers.ModelSerializer):
     organization_name = serializers.CharField(source='organization.name', read_only=True)
 
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'first_name', 'last_name', 
+        fields = ['id', 'username', 'email', 'first_name', 'last_name',
                   'role', 'specialty', 'is_active', 'organization', 'organization_name']
 
 
 class CreateEmployeeSerializer(serializers.ModelSerializer):
     username = serializers.CharField()
     email = serializers.EmailField()
-    password = serializers.CharField(write_only=True, min_length=6)
+    password = serializers.CharField(write_only=True, min_length=8)
     first_name = serializers.CharField(required=False, allow_blank=True, default='')
     last_name = serializers.CharField(required=False, allow_blank=True, default='')
     role = serializers.ChoiceField(
@@ -33,8 +37,42 @@ class CreateEmployeeSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['username', 'email', 'password', 'first_name', 'last_name', 
+        fields = ['username', 'email', 'password', 'first_name', 'last_name',
                   'role', 'specialty', 'organization_id']
+
+    def validate_username(self, value):
+        if not USERNAME_REGEX.match(value):
+            raise serializers.ValidationError(
+                "El nombre de usuario solo puede contener letras, números, puntos, guiones y guiones bajos."
+            )
+        return value
+
+    def validate_first_name(self, value):
+        if not value:
+            return value
+        if not NAME_REGEX.match(value.strip()):
+            raise serializers.ValidationError(
+                "El nombre solo puede contener letras y espacios."
+            )
+        return value.strip().title()
+
+    def validate_last_name(self, value):
+        if not value:
+            return value
+        if not NAME_REGEX.match(value.strip()):
+            raise serializers.ValidationError(
+                "El apellido solo puede contener letras y espacios."
+            )
+        return value.strip().title()
+
+    def validate_password(self, value):
+        if len(value) < 8:
+            raise serializers.ValidationError("La contraseña debe tener al menos 8 caracteres.")
+        if not any(c.isupper() for c in value):
+            raise serializers.ValidationError("La contraseña debe contener al menos una letra mayúscula.")
+        if not any(c.isdigit() for c in value):
+            raise serializers.ValidationError("La contraseña debe contener al menos un número.")
+        return value
 
     def validate_organization_id(self, value):
         if value and not Organization.objects.filter(id=value).exists():

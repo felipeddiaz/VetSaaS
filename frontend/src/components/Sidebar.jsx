@@ -3,17 +3,18 @@ import { useAuth } from "../auth/authContext";
 import { Icon } from "./icons";
 
 const NAV_ITEMS = [
-    { path: "/",               label: "Dashboard",         icon: Icon.LayoutDashboard },
-    { path: "/pets",           label: "Mascotas",          icon: Icon.PawPrint },
-    { path: "/appointments",   label: "Citas",             icon: Icon.CalendarClock },
+    { path: "/", label: "Dashboard", icon: Icon.LayoutDashboard },
+    { path: "/pets", label: "Mascotas", icon: Icon.PawPrint },
+    { path: "/appointments", label: "Citas", icon: Icon.CalendarClock },
     { path: "/medical-records", label: "Historial Clínico", icon: Icon.FileHeart },
-    { path: "/inventory",      label: "Inventario",        icon: Icon.Package },
-    { path: "/billing",       label: "Cobros",            icon: Icon.Receipt },
+    { path: "/prescriptions", label: "Recetas", icon: Icon.Pill },
+    { path: "/inventory", label: "Inventario", icon: Icon.Package },
+    { path: "/billing", label: "Cobros", icon: Icon.Receipt },
 ];
 
 const ADMIN_ITEMS = [
-    { path: "/staff",  label: "Equipo",         icon: Icon.Users },
-    { path: "/config",  label: "Configuración",  icon: Icon.Settings },
+    { path: "/staff", label: "Equipo", icon: Icon.Users },
+    { path: "/config", label: "Configuración", icon: Icon.Settings },
 ];
 
 const ROLE_LABELS = {
@@ -92,7 +93,7 @@ const Sidebar = ({ onLogout }) => {
                     </div>
                     <div>
                         <div style={{ fontSize: "13px", fontWeight: "700", color: "#f1f5f9", letterSpacing: "0.02em" }}>
-                            VetCare
+                            Vet Care
                         </div>
                         <div style={{ fontSize: "11px", color: "var(--sidebar-text)", marginTop: "1px", maxWidth: "130px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                             {user?.organization_name || "Sistema"}

@@ -1,7 +1,9 @@
 import api from "./client";
 
-export const getStaff = async () => {
-    const res = await api.get("staff/");
+export const getStaff = async (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    const url = qs ? `staff/?${qs}` : "staff/";
+    const res = await api.get(url);
     return res.data;
 };
 

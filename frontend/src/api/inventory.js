@@ -10,7 +10,7 @@ export const createProduct = (data) =>
     api.post("inventory/products/", data).then(r => r.data);
 
 export const updateProduct = (id, data) =>
-    api.put(`inventory/products/${id}/`, data).then(r => r.data);
+    api.patch(`inventory/products/${id}/`, data).then(r => r.data);
 
 export const deleteProduct = (id) =>
     api.delete(`inventory/products/${id}/`);

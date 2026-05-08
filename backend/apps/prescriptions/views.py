@@ -7,7 +7,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
 from apps.core.permissions import HybridPermission, make_permission
-from apps.core.views import TenantQueryMixin
+from apps.core.views import TenantQueryMixin, PublicIdLookupMixin, resolve_public_id
 
 from .models import Prescription, PrescriptionItem
 from .serializers import PrescriptionSerializer, PrescriptionItemWriteSerializer
@@ -34,10 +34,11 @@ class PrescriptionListCreateView(TenantQueryMixin, generics.ListCreateAPIView):
         )
 
 
-class PrescriptionDetailView(TenantQueryMixin, generics.RetrieveUpdateDestroyAPIView):
+class PrescriptionDetailView(PublicIdLookupMixin, TenantQueryMixin, generics.RetrieveUpdateDestroyAPIView):
     serializer_class = PrescriptionSerializer
     permission_classes = [HybridPermission]
     resource_name = "prescription"
+    lookup_url_kwarg = 'pk'
 
     def get_queryset(self):
         return Prescription.objects.for_organization(self.request.user.organization)
@@ -99,10 +100,8 @@ def prescription_pdf(request, pk):
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
-    prescription = get_object_or_404(
-        Prescription,
-        pk=pk,
-        organization=request.user.organization,
+    prescription = resolve_public_id(
+        Prescription.objects.for_organization(request.user.organization), pk
     )
 
     buffer = BytesIO()
