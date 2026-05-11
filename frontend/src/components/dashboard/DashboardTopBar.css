@@ -1,15 +1,18 @@
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=DM+Sans:opsz,wght@9..40,300;400;500;600&display=swap');
+
+/* ── Dashboard Top Bar ─────────────────────────────────────── */
 .dtop {
   height: 56px;
   background: var(--c-surface);
   border-bottom: 1px solid var(--c-border);
   display: flex;
   align-items: center;
-  padding: 0 20px;
+  padding: 0 24px;
   gap: 12px;
   position: sticky;
   top: 0;
   z-index: 50;
-  box-shadow: 0 1px 3px rgba(15, 42, 31, 0.04);
+  box-shadow: 0 1px 0 var(--c-border), 0 2px 8px rgba(15,42,31,0.04);
 }
 
 .dtop-left {
@@ -18,7 +21,8 @@
 }
 
 .dtop-qa {
-  width: 32px; height: 32px;
+  width: 32px;
+  height: 32px;
   border-radius: 8px;
   border: 1px solid var(--c-border);
   background: var(--c-surface);
@@ -29,7 +33,12 @@
   color: var(--c-text-2);
   transition: all 0.15s ease;
 }
-.dtop-qa:hover { background: var(--c-hover); color: var(--c-primary); border-color: var(--c-primary-light); }
+.dtop-qa:hover {
+  background: var(--c-hover);
+  color: var(--c-primary);
+  border-color: var(--sage-400);
+  box-shadow: 0 2px 6px rgba(15,42,31,0.08);
+}
 
 .dtop-center {
   position: absolute;
@@ -38,11 +47,12 @@
 }
 
 .dtop-date {
-  font-family: var(--font-display);
-  font-size: 13px;
+  font-family: 'DM Sans', var(--font-display);
+  font-size: 12.5px;
   font-weight: 600;
-  color: var(--c-text);
-  letter-spacing: 0.02em;
+  color: var(--c-text-2);
+  letter-spacing: 0.03em;
+  text-transform: capitalize;
 }
 
 .dtop-right {
@@ -57,41 +67,141 @@
   align-items: center;
   gap: 5px;
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--c-warning-text);
   background: var(--c-warning-bg);
-  padding: 3px 10px;
-  border-radius: 20px;
+  border: 1px solid var(--c-warning-border);
+  padding: 4px 10px;
+  border-radius: 999px;
   max-width: 260px;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+  letter-spacing: 0.01em;
 }
 .dtop-alerts-more {
   font-weight: 700;
   flex-shrink: 0;
+  background: rgba(146,64,14,0.12);
+  padding: 0 5px;
+  border-radius: 999px;
 }
 
 .dtop-tz {
-  font-family: var(--font-display);
-  font-size: 11px;
+  font-family: 'DM Sans', var(--font-display);
+  font-size: 10.5px;
   font-weight: 600;
   color: var(--c-text-3);
-  padding: 2px 8px;
-  border-radius: 4px;
+  padding: 3px 9px;
+  border-radius: 6px;
   background: var(--c-subtle);
+  border: 1px solid var(--c-border);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .dtop-avatar {
-  width: 30px; height: 30px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--c-primary-light), #99f6e4);
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, var(--forest-700), var(--sage-500));
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 12px;
-  font-weight: 700;
-  color: var(--c-primary-dark);
-  border: 1.5px solid #99f6e4;
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: 0.04em;
+  box-shadow: 0 2px 6px rgba(15,42,31,0.18);
   flex-shrink: 0;
+  cursor: default;
+}
+
+/* ── Hero Greeting (dentro del dashboard, no del topbar) ─── */
+.dash-hero {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  padding: 28px 32px;
+  background: linear-gradient(135deg, var(--forest-900) 0%, var(--forest-700) 60%, #1a5c3a 100%);
+  border-radius: 16px;
+  position: relative;
+  overflow: hidden;
+  box-shadow:
+    0 4px 24px rgba(15,42,31,0.22),
+    0 1px 4px rgba(15,42,31,0.12),
+    inset 0 1px 0 rgba(255,255,255,0.06);
+  margin-bottom: 4px;
+}
+.dash-hero::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    radial-gradient(ellipse 60% 50% at 80% 50%, rgba(168,196,162,0.10) 0%, transparent 60%),
+    radial-gradient(circle at 20% 80%, rgba(214,123,92,0.08) 0%, transparent 50%);
+  pointer-events: none;
+}
+.dash-hero::after {
+  content: '';
+  position: absolute;
+  top: -50px;
+  right: -50px;
+  width: 220px;
+  height: 220px;
+  border-radius: 50%;
+  border: 1px solid rgba(168,196,162,0.10);
+  pointer-events: none;
+}
+
+.dash-hero-left { position: relative; z-index: 1; }
+
+.dash-hero-eyebrow {
+  font-family: 'DM Sans', var(--font-display);
+  font-size: 10.5px;
+  font-weight: 600;
+  color: rgba(198,217,192,0.7);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.dash-hero-name {
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-size: 2.5rem;
+  font-weight: 600;
+  color: var(--cream-50);
+  line-height: 1.1;
+  margin-bottom: 8px;
+  letter-spacing: -0.01em;
+}
+
+.dash-hero-date {
+  font-family: 'DM Sans', var(--font-display);
+  font-size: 12px;
+  color: rgba(198,217,192,0.58);
+  font-weight: 400;
+  text-transform: capitalize;
+}
+
+.dash-hero-right { position: relative; z-index: 1; flex-shrink: 0; }
+
+.dash-hero-org {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 16px;
+  background: rgba(255,255,255,0.07);
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 999px;
+  font-family: 'DM Sans', var(--font-display);
+  font-size: 11.5px;
+  font-weight: 500;
+  color: rgba(245,241,232,0.75);
+  letter-spacing: 0.04em;
+  backdrop-filter: blur(8px);
+}
+
+@media (max-width: 640px) {
+  .dash-hero { flex-direction: column; align-items: flex-start; gap: 14px; padding: 22px 22px; }
+  .dash-hero-name { font-size: 2rem; }
 }

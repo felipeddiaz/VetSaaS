@@ -14,39 +14,46 @@ const Dashboard = () => {
   const { data, loading, error, refetch } = useDashboardSummary();
 
   const renderSkeleton = () => (
-    <div className="dash-grid">
-      <div className="dash-main">
-        <div className="kpiStrip-v2">
-          {[1, 2, 3, 4, 5].map((i) => (
-            <div key={i} className="skeleton-block sk-kpi" />
-          ))}
+    <>
+      {/* skeleton hero */}
+      <div className="skeleton-block" style={{ height: 120, borderRadius: 16, marginBottom: 16 }} />
+      <div className="dash-grid">
+        <div className="dash-main">
+          <div className="kpiStrip-v2">
+            {[1, 2, 3, 4, 5].map((i) => (
+              <div key={i} className="skeleton-block sk-kpi" />
+            ))}
+          </div>
+          <div className="dashboard-card">
+            <div className="skeleton-block sk-timeline" />
+          </div>
+          <div className="dashboard-card">
+            <div className="skeleton-block sk-chart" />
+          </div>
         </div>
-        <div className="dashboard-card">
-          <div className="skeleton-block sk-timeline" />
-        </div>
-        <div className="dashboard-card">
-          <div className="skeleton-block sk-chart" />
+        <div className="dash-side">
+          <div className="dashboard-card"><div className="skeleton-block sk-side" /></div>
+          <div className="dashboard-card"><div className="skeleton-block sk-side" /></div>
+          <div className="dashboard-card"><div className="skeleton-block sk-side" /></div>
         </div>
       </div>
-      <div className="dash-side">
-        <div className="dashboard-card"><div className="skeleton-block sk-side" /></div>
-        <div className="dashboard-card"><div className="skeleton-block sk-side" /></div>
-        <div className="dashboard-card"><div className="skeleton-block sk-side" /></div>
-      </div>
-    </div>
+    </>
   );
 
   if (loading && !data) return renderSkeleton();
 
   return (
     <>
+      {/* TopBar slim + Hero greeting */}
       <DashboardTopBar summary={data} />
+
       {error && (
         <div className="dash-error-banner">
           <span>No se pudieron cargar los datos del dashboard.</span>
           <button className="btn btn-ghost btn-xs" onClick={refetch}>Reintentar</button>
         </div>
       )}
+
       <div className="dash-grid">
         <div className="dash-main">
           <KpiStrip kpis={data?.kpis} user={user} />
