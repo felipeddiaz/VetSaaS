@@ -5,40 +5,52 @@ export default function ClinicalBacklog({ backlog }) {
 
   if (!backlog) return null;
 
-  const hasIssues = (backlog.stale_24h ?? 0) > 0 || (backlog.without_diagnosis ?? 0) > 0;
+  const stale    = backlog.stale_24h ?? 0;
+  const noDiag   = backlog.without_diagnosis ?? 0;
+  const hasIssues = stale > 0 || noDiag > 0;
 
   return (
     <div className="side-panel">
       <div className="side-title">Backlog clínico</div>
+
       {!hasIssues ? (
         <div className="side-empty-ok">Sin consultas pendientes</div>
       ) : (
         <>
+          {/* Counter pills */}
           <div className="bl-counters">
-            {(backlog.stale_24h ?? 0) > 0 && (
+            {stale > 0 && (
               <div className="bl-counter bl-counter-danger">
-                {backlog.stale_24h} {backlog.stale_24h === 1 ? "abierta" : "abiertas"} &gt;24h
+                {stale} abierta{stale > 1 ? "s" : ""} &gt;24h
               </div>
             )}
-            {(backlog.without_diagnosis ?? 0) > 0 && (
+            {noDiag > 0 && (
               <div className="bl-counter bl-counter-warning">
-                {backlog.without_diagnosis} sin diagnóstico
+                {noDiag} sin diagnóstico
               </div>
             )}
           </div>
+
+          {/* Top stale record */}
           {backlog.top_stale && (
             <div className="bl-top">
-              <span className="bl-top-pet">{backlog.top_stale.pet_name || "Sin mascota"}</span>
+              <span className="bl-top-pet">
+                {backlog.top_stale.pet_name || "Sin mascota"}
+              </span>
               <span className="bl-top-meta">
-                {backlog.top_stale.veterinarian_name}
-                {backlog.top_stale.hours_open != null &&
-                  ` · ${Math.round(backlog.top_stale.hours_open)}h abierta`}
+                {[
+                  backlog.top_stale.veterinarian_name,
+                  backlog.top_stale.hours_open != null
+                    ? `${Math.round(backlog.top_stale.hours_open)}h abierta`
+                    : null,
+                ].filter(Boolean).join(" · ")}
               </span>
               {!backlog.top_stale.has_diagnosis && (
-                <span className="bl-top-warn">Sin diagnóstico</span>
+                <span className="bl-top-warn">Sin diagnóstico registrado</span>
               )}
             </div>
           )}
+
           <button
             className="side-link-btn"
             onClick={() => navigate("/medical-records")}
