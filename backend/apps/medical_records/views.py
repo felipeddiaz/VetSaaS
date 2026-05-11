@@ -418,8 +418,11 @@ def close_medical_record(request, pk):
 
         medical_record.status = MedicalRecord.Status.CLOSED
         medical_record.closed_at = timezone.now()
+        medical_record.closed_at_source = 'service'
         medical_record.closed_by = request.user
-        medical_record.save(update_fields=['status', 'closed_at', 'closed_by'])
+        medical_record.save(update_fields=[
+            'status', 'closed_at', 'closed_at_source', 'closed_by',
+        ])
 
         events_logger.info(
             "MEDICAL_RECORD_CLOSED",

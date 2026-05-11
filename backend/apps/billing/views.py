@@ -5,17 +5,18 @@ from rest_framework.response import Response
 from django.core.exceptions import ValidationError as DjValidationError
 from django.db import transaction
 from django.shortcuts import get_object_or_404
-from django.utils import timezone
 from django.utils.dateparse import parse_date
 
-from apps.core.datetime_utils import filter_by_local_day
+from apps.core.datetime_utils import filter_by_local_day, filter_by_local_range
 from apps.core.permissions import HybridPermission
 from apps.core.views import TenantQueryMixin, PublicIdLookupMixin, resolve_public_id
 
 from .models import Service, Invoice, InvoiceItem
 from .serializers import ServiceSerializer, InvoiceSerializer, InvoiceItemSerializer
 from .permissions import CanConfirmInvoice, CanPayInvoice, CanCancelInvoice
-from .services import _log_status_change
+
+VALID_INVOICE_TYPES = {choice[0] for choice in Invoice.INVOICE_TYPE_CHOICES}
+VALID_INVOICE_STATUSES = {choice[0] for choice in Invoice.STATUS_CHOICES}
 
 
 class BillingOrganizationMixin(TenantQueryMixin):
@@ -57,41 +58,44 @@ class InvoiceListCreateView(BillingOrganizationMixin, generics.ListCreateAPIView
     resource_name = "invoice"
 
     def get_queryset(self):
+        org = self.request.user.organization
         queryset = Invoice.objects.for_organization(
-            self.request.user.organization
+            org
         ).select_related('owner', 'pet', 'appointment')
 
         owner_id = self.request.query_params.get('owner')
-        pet_id = self.request.query_params.get('pet')
-        invoice_status = self.request.query_params.get('status')
-        paid_on = self.request.query_params.get('paid_on')
-        created_on = self.request.query_params.get('created_on')
+
+        invoice_status = self.request.query_params.get('status', '').strip()
+        invoice_type = self.request.query_params.get('invoice_type', '').strip()
+
+        created_from = parse_date(self.request.query_params.get('created_from', ''))
+        created_to = parse_date(self.request.query_params.get('created_to', ''))
+        paid_from = parse_date(self.request.query_params.get('paid_from', ''))
+        paid_to = parse_date(self.request.query_params.get('paid_to', ''))
 
         if owner_id:
             queryset = queryset.filter(owner_id=owner_id)
-        if pet_id:
-            queryset = queryset.filter(pet_id=pet_id)
+        # pet_id removed — no longer exposed as standalone param
         if invoice_status:
+            if invoice_status not in VALID_INVOICE_STATUSES:
+                raise ValidationError({'status': ['Estado inválido.']})
             queryset = queryset.filter(status=invoice_status)
+        if invoice_type:
+            if invoice_type not in VALID_INVOICE_TYPES:
+                raise ValidationError({'invoice_type': ['Tipo inválido.']})
+            queryset = queryset.filter(invoice_type=invoice_type)
 
-        if paid_on:
-            parsed_paid_on = parse_date(paid_on)
-            if parsed_paid_on:
-                queryset = filter_by_local_day(
-                    queryset,
-                    'paid_at',
-                    self.request.user.organization,
-                    parsed_paid_on,
-                )
-        if created_on:
-            parsed_created_on = parse_date(created_on)
-            if parsed_created_on:
-                queryset = filter_by_local_day(
-                    queryset,
-                    'created_at',
-                    self.request.user.organization,
-                    parsed_created_on,
-                )
+        if created_from and created_to and created_from > created_to:
+            raise ValidationError({
+                'created_to': ['La fecha final debe ser posterior a la inicial.']
+            })
+        if paid_from and paid_to and paid_from > paid_to:
+            raise ValidationError({
+                'paid_to': ['La fecha final debe ser posterior a la inicial.']
+            })
+
+        queryset = filter_by_local_range(queryset, 'created_at', org, created_from, created_to)
+        queryset = filter_by_local_range(queryset, 'paid_at', org, paid_from, paid_to)
 
         return queryset
 
@@ -142,39 +146,22 @@ def confirm_invoice(request, pk):
 @api_view(['PATCH'])
 @permission_classes([CanPayInvoice])
 def pay_invoice(request, pk):
+    from apps.billing.services import pay_invoice as pay_invoice_service
+
     payment_method = request.data.get('payment_method')
     if not payment_method:
         return Response(
             {'error': 'Se requiere el campo payment_method'},
             status=status.HTTP_400_BAD_REQUEST,
         )
-    valid_methods = [m[0] for m in Invoice.PAYMENT_METHOD_CHOICES]
-    if payment_method not in valid_methods:
-        return Response(
-            {'error': f'Método de pago inválido. Opciones: {valid_methods}'},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-    with transaction.atomic():
-        invoice = resolve_public_id(
-            Invoice.objects.for_organization(request.user.organization).select_for_update(),
-            pk
-        )
-        if invoice.status == 'paid':
-            return Response(
-                {'error': 'La factura ya fue pagada'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if invoice.status != 'confirmed':
-            return Response(
-                {'error': 'Solo se pueden pagar facturas confirmadas. Confirma la factura primero.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        previous_status = invoice.status
-        invoice.status = 'paid'
-        invoice.payment_method = payment_method
-        invoice.paid_at = timezone.now()
-        invoice.save(update_fields=['status', 'payment_method', 'paid_at', 'updated_at'])
-        _log_status_change(invoice, previous=previous_status, new='paid', user=request.user)
+
+    invoice = resolve_public_id(
+        Invoice.objects.for_organization(request.user.organization), pk
+    )
+    try:
+        invoice = pay_invoice_service(invoice, user=request.user, payment_method=payment_method)
+    except DjValidationError as e:
+        return Response({'detail': e.messages}, status=status.HTTP_400_BAD_REQUEST)
     return Response(InvoiceSerializer(invoice).data)
 
 

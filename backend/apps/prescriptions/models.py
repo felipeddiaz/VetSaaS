@@ -25,6 +25,11 @@ class Prescription(PublicIdMixin, OrganizationalModel):
 
     class Meta:
         ordering = ['-created_at']
+        indexes = [
+            # Capa 3 — analytics. prescriptions_issued snapshot por org/día.
+            models.Index(fields=['organization', '-created_at'],
+                         name='idx_presc_org_created'),
+        ]
 
 
 class PrescriptionItem(OrganizationalModel):

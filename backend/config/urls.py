@@ -16,7 +16,10 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include
-from apps.dashboard.views import dashboard_stats
+from apps.dashboard.views import (
+    dashboard_stats, analytics_health, operations_series, financial_series,
+    dashboard_summary,
+)
 from apps.users.views import (
     MeView,
     StaffListView,
@@ -77,4 +80,8 @@ urlpatterns = [
     path('api/', include('apps.billing.urls')),
     path('api/', include('apps.prescriptions.urls')),
     path('api/dashboard/stats/', dashboard_stats),
+    path('api/internal/analytics-health/', analytics_health),
+    path('api/v1/dashboard/operations/series/', operations_series),
+    path('api/v1/dashboard/financial/series/', financial_series),
+    path('api/v1/dashboard/summary/', dashboard_summary),
 ]

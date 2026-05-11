@@ -22,6 +22,12 @@ from apps.users.models import User
 from .models import Appointment, AppointmentStatusChange
 from .serializers import AppointmentSerializer, AppointmentStatusChangeSerializer
 
+# Orden de display en dashboard — constante explícita, no derivada de
+# ALLOWED_TRANSITIONS (que modela reglas de negocio, no orden visual).
+DASHBOARD_STATUS_ORDER = [
+    "scheduled", "confirmed", "in_progress", "done", "canceled", "no_show"
+]
+
 ALLOWED_TRANSITIONS = {
     'scheduled':   {'confirmed', 'in_progress', 'canceled', 'no_show'},
     'confirmed':   {'in_progress', 'canceled', 'no_show'},
@@ -76,8 +82,23 @@ class AppointmentDetailView(PublicIdLookupMixin, TenantQueryMixin, generics.Retr
                 {'error': 'Solo se pueden cancelar citas programadas o confirmadas'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        instance.status = 'canceled'
-        instance.save()
+        # Authoritative event lineage: la cancelación vía DELETE debe quedar
+        # registrada en AppointmentStatusChange igual que la cancelación vía
+        # PATCH /update-status. Sin esto las cancelaciones por DELETE quedan
+        # invisibles a cualquier métrica analítica derivada del audit log.
+        # Ver docs/analytics-schema-audit.md §2.1.
+        previous_status = instance.status
+        with transaction.atomic():
+            instance.status = 'canceled'
+            instance.save(update_fields=['status'])
+            AppointmentStatusChange.objects.create(
+                appointment=instance,
+                from_status=previous_status,
+                to_status='canceled',
+                changed_by=request.user,
+                reason='Cancelación por DELETE /appointments/<id>/',
+                organization=instance.organization,
+            )
         return Response(status=status.HTTP_200_OK)
 
 
@@ -389,8 +410,99 @@ def walk_in(request):
             reason=reason,
             notes=notes,
             status='in_progress',
+            walk_in=True,
             created_by=request.user,
         )
 
     serializer = AppointmentSerializer(appointment, context={'request': request})
     return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+# ── Dashboard status-breakdown ──────────────────────────────────────────────
+# Endpoint que alimenta el PieChart + Breakdown table del Dashboard v2.
+# Un solo queryset con start_datetime__date__range — sin iterar días en Python.
+# Agrupa en memoria. Límite de 3 items por status + flag has_more.
+# status_order es constante explícita (DASHBOARD_STATUS_ORDER), no deriva
+# de ALLOWED_TRANSITIONS.
+
+STATUS_BREAKDOWN_LIMIT = 3
+
+
+@api_view(['GET'])
+@permission_classes([make_permission("appointment.list")])
+def status_breakdown(request):
+    org = request.user.organization
+    if not org:
+        raise PermissionDenied("User has no organization assigned")
+
+    raw_from = request.query_params.get('from', '')
+    raw_to = request.query_params.get('to', '')
+    from_date = parse_date(raw_from)
+    to_date = parse_date(raw_to)
+    if not from_date or not to_date:
+        return Response(
+            {'error': 'Parámetros from y to requeridos (YYYY-MM-DD).'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if from_date > to_date:
+        return Response(
+            {'error': 'from debe ser <= to.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # Un solo queryset con range lookup. .only() mantiene la serialización
+    # contenida — no acceder a campos fuera de esta lista en el loop.
+    qs = (
+        Appointment.objects
+        .for_organization(org)
+        .filter(start_datetime__date__range=(from_date, to_date))
+        .select_related('pet', 'veterinarian')
+        .only(
+            'id', 'public_id', 'status', 'date', 'start_time', 'reason',
+            'pet__name',
+            'veterinarian__first_name', 'veterinarian__last_name',
+        )
+        .order_by('start_datetime', 'id')
+    )
+
+    by_status = {s: [] for s in DASHBOARD_STATUS_ORDER}
+    totals = {s: 0 for s in DASHBOARD_STATUS_ORDER}
+
+    for appt in qs:
+        s = appt.status
+        if s not in by_status:
+            continue
+        totals[s] += 1
+        if len(by_status[s]) < STATUS_BREAKDOWN_LIMIT:
+            # Serialización plana — sin objetos anidados.
+            # Solo accedemos a campos incluidos en .only().
+            by_status[s].append({
+                'public_id': str(appt.public_id),
+                'pet_name': appt.pet.name,
+                'veterinarian_name': (
+                    f"{appt.veterinarian.first_name or ''} "
+                    f"{appt.veterinarian.last_name or ''}"
+                ).strip(),
+                'date': appt.date.isoformat(),
+                'start_time': appt.start_time.strftime('%H:%M') if appt.start_time else '',
+                'reason': appt.reason or '',
+            })
+
+    result_by_status = {}
+    for s in DASHBOARD_STATUS_ORDER:
+        items = by_status[s]
+        total = totals[s]
+        remaining = total - len(items)
+        result_by_status[s] = {
+            'items': items,
+            'has_more': remaining > 0,
+            'remaining': remaining,
+        }
+
+    return Response({
+        'from': from_date.isoformat(),
+        'to': to_date.isoformat(),
+        'totals': totals,
+        'by_status': result_by_status,
+        'status_order': DASHBOARD_STATUS_ORDER,
+    })

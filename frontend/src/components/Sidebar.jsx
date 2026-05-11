@@ -4,6 +4,7 @@ import { Icon } from "./icons";
 
 const NAV_ITEMS = [
     { path: "/", label: "Dashboard", icon: Icon.LayoutDashboard },
+    { path: "/analytics", label: "Analítica", icon: Icon.TrendUp },
     { path: "/pets", label: "Mascotas", icon: Icon.PawPrint },
     { path: "/appointments", label: "Citas", icon: Icon.CalendarClock },
     { path: "/medical-records", label: "Historial Clínico", icon: Icon.FileHeart },

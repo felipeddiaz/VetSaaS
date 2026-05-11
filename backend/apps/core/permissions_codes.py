@@ -89,6 +89,8 @@ PERMISSION_CODES = [
 
     # Dashboard
     "dashboard.view",
+    "dashboard.financial.view",
+    "dashboard.summary",
 ]
 
 # ---------------------------------------------------------------------------
@@ -123,6 +125,7 @@ PERMISSIONS = {
         "service.list", "service.retrieve",
         "staff.list",
         "dashboard.view",
+        "dashboard.summary",
     ],
 
     # Asistente / Recepcionista
@@ -142,5 +145,6 @@ PERMISSIONS = {
         "service.list", "service.retrieve",
         "staff.list",
         "dashboard.view",
+        "dashboard.summary",
     ],
 }

@@ -114,8 +114,8 @@ Toggles disponibles:
 
 | Campo                              | Default | Descripcion                                                   |
 |------------------------------------|---------|---------------------------------------------------------------|
-| `auto_create_medical_record`       | `true`  | Crea consulta automaticamente al iniciar una cita             |
-| `auto_create_invoice_on_done`      | `true`  | Crea factura draft al marcar cita como completada             |
+| `auto_create_medical_record`       | `false` | Crea consulta automaticamente al completar una cita           |
+| `auto_create_invoice_on_done`      | `false` | Crea factura draft al marcar cita como completada             |
 | `require_confirmation_before_start`| `false` | La cita debe confirmarse antes de iniciar                     |
 | `allow_anonymous_walkin`           | `false` | Permite walk-in sin mascota registrada                        |
 | `show_status_change_history`       | `true`  | Muestra historial de cambios de estado en citas               |

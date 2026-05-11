@@ -15,16 +15,16 @@ def get_context_timezone(entity):
     return _tzinfo(tz_name)
 
 
-def org_now_utc(org):
-    return timezone.now().astimezone(ZoneInfo('UTC'))
+def org_now_utc(org, *, now=None):
+    return (now or timezone.now()).astimezone(ZoneInfo('UTC'))
 
 
-def org_now_local(org):
-    return org_now_utc(org).astimezone(get_context_timezone(org))
+def org_now_local(org, *, now=None):
+    return org_now_utc(org, now=now).astimezone(get_context_timezone(org))
 
 
-def org_today_local(org):
-    return org_now_local(org).date()
+def org_today_local(org, *, now=None):
+    return org_now_local(org, now=now).date()
 
 
 def local_day_bounds_utc(org, local_date):
@@ -41,6 +41,23 @@ def local_day_bounds_utc(org, local_date):
 def filter_by_local_day(qs, field, org, local_date):
     start_utc, end_utc_exclusive = local_day_bounds_utc(org, local_date)
     return qs.filter(**{f'{field}__gte': start_utc, f'{field}__lt': end_utc_exclusive})
+
+
+def filter_by_local_range(qs, field, org, date_from=None, date_to=None):
+    """Filtra queryset por rango local inclusivo.
+
+    date_from -> >= inicio del día local
+    date_to   -> <  inicio del día siguiente local
+
+    Si ambos son None, devuelve qs intacto.
+    """
+    if date_from:
+        start_utc, _ = local_day_bounds_utc(org, date_from)
+        qs = qs.filter(**{f'{field}__gte': start_utc})
+    if date_to:
+        _, end_utc = local_day_bounds_utc(org, date_to)
+        qs = qs.filter(**{f'{field}__lt': end_utc})
+    return qs
 
 
 def local_date_time_to_utc(org, local_date, local_time):

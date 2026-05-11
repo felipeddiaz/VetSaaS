@@ -18,7 +18,7 @@ def initialize_organization(sender, instance, created, **kwargs):
         generic_owner, _ = Owner.objects.get_or_create(
             organization=instance,
             is_generic=True,
-            defaults={'name': 'Público General', 'phone': ''},
+            defaults={'name': 'Público General', 'phone': '0000000000'},
         )
         Pet.objects.get_or_create(
             owner=generic_owner,

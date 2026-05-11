@@ -47,6 +47,25 @@ Reglas de acceso:
 - `VET`: solo si es el veterinario asignado a la consulta
 - siempre se valida tenant explicito
 
+### Cierre y analytics anchor (`closed_at`)
+
+Al cerrar via `close_medical_record` view (POST `/api/medical-records/<uuid>/close/`):
+- `status` pasa a `closed`
+- `closed_at` se setea con `timezone.now()` en el mismo `transaction.atomic()`
+- `closed_at_source = 'service'` (provenance — ver ADR `2026-05-09-p9`)
+- `closed_by` registra al user
+
+`closed_at` es `editable=False`. Defenses:
+1. **Model `save()` guard**: si `status='closed' AND closed_at is None` →
+   raise `ValidationError`. Bloquea bypasses tipo `mr.status='closed'; mr.save()`.
+2. **CHECK constraint DB** `medicalrecord_closed_status_requires_closed_at`:
+   bloquea `queryset.update()`, `bulk_update`, raw SQL.
+
+`closed_at_source` choices:
+- `service` — escrito por close view (default para nuevos)
+- `fallback` — backfilled desde `updated_at` (migration 0014)
+- `legacy` — preexistente al provenance tracking (mark via migration 0015)
+
 ## Recetas medicas
 
 La receta medica es un documento clinico independiente de la factura.

@@ -119,6 +119,13 @@ class StockMovement(OrganizationalModel):
 
     class Meta:
         ordering = ['-created_at']
+        indexes = [
+            # Capa 3 — analytics. ProductDailyConsumption + "días de stock
+            # restantes" calculan consumo medio sobre ventana móvil de
+            # movements por presentation.
+            models.Index(fields=['organization', 'presentation', '-created_at'],
+                         name='idx_stockmov_org_pres_created'),
+        ]
 
 
 class MedicalRecordProduct(OrganizationalModel):

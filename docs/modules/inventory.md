@@ -116,7 +116,7 @@ El filtro `stock__gt=0` es UX, no seguridad. El backend valida stock al crear `I
 | `POST`   | `/api/inventory/products/`                      | Crear producto (con presentacion inicial) |
 | `GET`    | `/api/inventory/products/low-stock/`            | Productos con stock bajo            |
 | `GET`    | `/api/inventory/products/<id>/`                 | Detalle de producto                 |
-| `PUT`    | `/api/inventory/products/<id>/`                 | Editar producto                     |
+| `PATCH`  | `/api/inventory/products/<id>/`                 | Editar producto                     |
 | `DELETE` | `/api/inventory/products/<id>/`                 | Desactivar producto (soft delete)   |
 | `POST`   | `/api/inventory/products/<id>/adjust/`          | Ajustar stock de primera presentacion (compat) |
 | `POST`   | `/api/inventory/products/<id>/presentations/`   | Agregar presentacion variante       |

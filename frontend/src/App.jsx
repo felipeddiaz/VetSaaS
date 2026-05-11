@@ -13,6 +13,7 @@ import MedicalRecords from "./pages/medicalRecords/index";
 import Inventory from "./pages/inventory";
 import Billing from "./pages/billing";
 import Prescriptions from "./pages/prescriptions";
+import Analytics from "./pages/analytics";
 import Config from "./pages/config";
 import NotFound from "./pages/notFound";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -62,6 +63,7 @@ function AppContent() {
         <Route path="/inventory" element={wrap(Inventory)} />
         <Route path="/billing" element={wrap(Billing)} />
         <Route path="/prescriptions" element={wrap(Prescriptions)} />
+        <Route path="/analytics" element={wrap(Analytics)} />
         <Route path="/config" element={wrap(Config)} />
         <Route path="*" element={<NotFound />} />
       </Routes>

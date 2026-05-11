@@ -137,11 +137,12 @@ class LazyInvoiceCreationTests(APITestCase):
         from apps.organizations.models import OrganizationSettings
 
         cls.org = Organization.objects.create(name="Org Lazy Test", timezone="UTC")
-        # Asegurar toggle ON por defecto
-        OrganizationSettings.objects.get_or_create(
-            organization=cls.org,
-            defaults={'auto_create_invoice_on_done': True}
-        )
+        # Asegurar toggles ON — update_or_create para que sea idempotente
+        # incluso si la data migration ya creó la fila con default=False
+        settings, _ = OrganizationSettings.objects.get_or_create(organization=cls.org)
+        settings.auto_create_invoice_on_done = True
+        settings.auto_create_medical_record = True
+        settings.save(update_fields=['auto_create_invoice_on_done', 'auto_create_medical_record'])
 
         cls.vet = _make_user("vet_lazy", cls.org, "VET")
         cls.owner = Owner.objects.create(name="Cliente Lazy", phone="5552222222", organization=cls.org)

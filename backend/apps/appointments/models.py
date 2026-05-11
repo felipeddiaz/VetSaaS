@@ -31,6 +31,11 @@ class Appointment(PublicIdMixin, OrganizationalModel):
 
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="scheduled")
 
+    # Authoritative walk-in flag. Hasta migración 0010 esto se inferia desde
+    # AppointmentStatusChange history (frágil). Ahora se setea explícito en
+    # walk_in() view. Ver docs/analytics-schema-audit.md §2.9.
+    walk_in = models.BooleanField(default=False, editable=False, db_index=True)
+
     def clean(self):
         org = self.organization_id
         if org and self.pet_id and self.pet.organization_id != org:
@@ -53,6 +58,12 @@ class Appointment(PublicIdMixin, OrganizationalModel):
         ordering = ["date", "start_time"]
         indexes = [
             models.Index(fields=["organization", "date", "status"]),
+            # Capa 3 — analytics. start_datetime es el anchor canónico de
+            # bucketing diario operativo (ver dashboard contract §3.2.2).
+            # El index existente sobre 'date' (DateField) cubre queries
+            # legacy; este compuesto cubre rollups por start_datetime.
+            models.Index(fields=["organization", "start_datetime", "status"],
+                         name="idx_appt_org_start_status"),
         ]
         constraints = [
             models.CheckConstraint(

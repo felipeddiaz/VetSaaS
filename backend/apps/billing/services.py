@@ -1,5 +1,6 @@
 from django.db import transaction
 from django.core.exceptions import ValidationError
+from django.utils import timezone
 import logging
 
 logger = logging.getLogger(__name__)
@@ -7,6 +8,9 @@ logger = logging.getLogger(__name__)
 from apps.inventory.services import apply_stock_movement
 from apps.inventory.models import Presentation
 from .models import Invoice, InvoiceAuditLog, InvoiceItem
+
+
+VALID_PAYMENT_METHODS = {'cash', 'card', 'transfer', 'other'}
 
 
 @transaction.atomic
@@ -78,7 +82,11 @@ def confirm_invoice(invoice, user):
 
     # 4. Cambiar estado AL FINAL (si cualquier cosa falló arriba, esto no se ejecuta)
     invoice.status = 'confirmed'
-    invoice.save(update_fields=['status', 'updated_at'])
+    invoice.confirmed_at = timezone.now()
+    invoice.confirmed_at_source = 'service'
+    invoice.save(update_fields=[
+        'status', 'confirmed_at', 'confirmed_at_source', 'updated_at',
+    ])
     _log_status_change(invoice, previous='draft', new='confirmed', user=user)
 
 
@@ -116,8 +124,45 @@ def cancel_invoice(invoice, user, notes=''):
                     raise
 
     invoice.status = 'cancelled'
-    invoice.save(update_fields=['status', 'updated_at'])
+    invoice.cancelled_at = timezone.now()
+    invoice.cancelled_at_source = 'service'
+    invoice.save(update_fields=[
+        'status', 'cancelled_at', 'cancelled_at_source', 'updated_at',
+    ])
     _log_status_change(invoice, previous=previous_status, new='cancelled', user=user, notes=notes)
+
+
+@transaction.atomic
+def pay_invoice(invoice, user, payment_method):
+    """
+    Marca una factura como pagada. Authoritative writer del anchor `paid_at`.
+
+    Llamado por billing/views.py::pay_invoice y por cualquier flujo futuro
+    (webhook de pasarela de pagos, conciliación batch, mgmt commands).
+    No editar `paid_at` desde otro lugar — el contrato analítico depende de
+    que este sea el único writer.
+    """
+    if payment_method not in VALID_PAYMENT_METHODS:
+        raise ValidationError(
+            f'Método de pago inválido. Opciones: {sorted(VALID_PAYMENT_METHODS)}'
+        )
+    invoice = Invoice.objects.select_for_update().get(pk=invoice.pk)
+    if invoice.status == 'paid':
+        raise ValidationError('La factura ya fue pagada.')
+    if invoice.status != 'confirmed':
+        raise ValidationError(
+            'Solo se pueden pagar facturas confirmadas. Confirma la factura primero.'
+        )
+    previous_status = invoice.status
+    invoice.status = 'paid'
+    invoice.payment_method = payment_method
+    invoice.paid_at = timezone.now()
+    invoice.paid_at_source = 'service'
+    invoice.save(update_fields=[
+        'status', 'payment_method', 'paid_at', 'paid_at_source', 'updated_at',
+    ])
+    _log_status_change(invoice, previous=previous_status, new='paid', user=user)
+    return invoice
 
 
 def _log_status_change(invoice, previous, new, user, notes=''):

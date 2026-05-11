@@ -81,11 +81,20 @@ const MedicalRecords = () => {
   useEffect(() => {
     const petParam = searchParams.get("pet");
     const appointmentParam = searchParams.get("appointment");
+    const recordParam = searchParams.get("record");
     if (petParam) {
       setSelectedPet(petParam);
       if (appointmentParam) {
         setShowStepper(true);
       }
+    }
+    if (recordParam && token) {
+      getMedicalRecord(token, recordParam).then((r) => {
+        if (r?.public_id) {
+          setExpandedId(r.public_id);
+          if (r.pet) setSelectedPet(String(r.pet));
+        }
+      }).catch(() => {});
     }
   }, [searchParams, token]);
 

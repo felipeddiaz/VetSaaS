@@ -96,7 +96,37 @@ class Invoice(PublicIdMixin, OrganizationalModel):
     total = models.DecimalField(max_digits=10, decimal_places=2, default=0)
 
     notes = models.TextField(blank=True)
-    paid_at = models.DateTimeField(null=True, blank=True)
+
+    # ------------------------------------------------------------------
+    # Analytics anchors (editable=False; solo escritos por billing/services.py).
+    # Cualquier mutación fuera de los services rompe el contrato analítico
+    # (ver docs/dashboard-metrics-contract.md §2.7).
+    # ------------------------------------------------------------------
+    paid_at = models.DateTimeField(null=True, blank=True, editable=False)
+    confirmed_at = models.DateTimeField(null=True, blank=True, editable=False)
+    cancelled_at = models.DateTimeField(null=True, blank=True, editable=False)
+
+    # Provenance del anchor: permite excluir / auditar / recomputar rows
+    # con anchor backfilled. Nuevos writes via service registran 'service'.
+    ANCHOR_SOURCE_CHOICES = (
+        ('service', 'Service writer'),
+        ('audit_log', 'Backfilled from InvoiceAuditLog timestamp'),
+        ('fallback', 'Backfilled from updated_at / created_at fallback'),
+        ('unresolved', 'No reliable source — anchor left NULL'),
+        ('legacy', 'Existed before provenance tracking was introduced'),
+    )
+    paid_at_source = models.CharField(
+        max_length=24, choices=ANCHOR_SOURCE_CHOICES,
+        default='service', editable=False,
+    )
+    confirmed_at_source = models.CharField(
+        max_length=24, choices=ANCHOR_SOURCE_CHOICES,
+        default='service', editable=False,
+    )
+    cancelled_at_source = models.CharField(
+        max_length=24, choices=ANCHOR_SOURCE_CHOICES,
+        default='service', editable=False,
+    )
     # created_at, updated_at heredados de OrganizationalModel
 
     def clean(self):
@@ -129,6 +159,15 @@ class Invoice(PublicIdMixin, OrganizationalModel):
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=["organization", "status", "created_at"]),
+            # Capa 3 — analytics anchors. Soportan cash-basis snapshot,
+            # accrual snapshot, AR aging, cancellation count.
+            # Ver docs/analytics-schema-audit.md §2.6.
+            models.Index(fields=["organization", "status", "paid_at"],
+                         name="idx_inv_org_status_paid"),
+            models.Index(fields=["organization", "status", "confirmed_at"],
+                         name="idx_inv_org_status_conf"),
+            models.Index(fields=["organization", "status", "cancelled_at"],
+                         name="idx_inv_org_status_canc"),
         ]
         constraints = [
             models.CheckConstraint(
@@ -142,6 +181,22 @@ class Invoice(PublicIdMixin, OrganizationalModel):
             models.CheckConstraint(
                 condition=models.Q(total__gte=models.F('subtotal')),
                 name="invoice_total_gte_subtotal",
+            ),
+            # Event-authority invariants (analytics). Bloquean writes vía
+            # queryset.update() / bulk_update / admin / raw SQL que dejarían
+            # anchors NULL para estados que requieren timestamp explícito.
+            # Ver docs/analytics-schema-audit.md §2.15 + §2.3 + §2.4.
+            models.CheckConstraint(
+                condition=~models.Q(status='paid') | models.Q(paid_at__isnull=False),
+                name="invoice_paid_status_requires_paid_at",
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(status__in=['confirmed', 'paid']) | models.Q(confirmed_at__isnull=False),
+                name="invoice_confirmed_status_requires_confirmed_at",
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(status='cancelled') | models.Q(cancelled_at__isnull=False),
+                name="invoice_cancelled_status_requires_cancelled_at",
             ),
         ]
 

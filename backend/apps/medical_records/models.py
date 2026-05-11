@@ -32,7 +32,19 @@ class MedicalRecord(PublicIdMixin, OrganizationalModel):
         db_index=True,
     )
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.OPEN, db_index=True)
-    closed_at = models.DateTimeField(null=True, blank=True)
+
+    # Analytics anchor (editable=False, solo escrito por close_medical_record view).
+    # Ver docs/dashboard-metrics-contract.md §2.7.
+    closed_at = models.DateTimeField(null=True, blank=True, editable=False)
+    CLOSED_AT_SOURCE_CHOICES = (
+        ('service', 'View writer (close_medical_record)'),
+        ('fallback', 'Backfilled from updated_at'),
+        ('legacy', 'Existed before provenance tracking'),
+    )
+    closed_at_source = models.CharField(
+        max_length=24, choices=CLOSED_AT_SOURCE_CHOICES,
+        default='service', editable=False,
+    )
     closed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='closed_medical_records')
     # created_at, updated_at heredados de OrganizationalModel
 
@@ -44,6 +56,19 @@ class MedicalRecord(PublicIdMixin, OrganizationalModel):
             raise ValidationError("El veterinario no pertenece a la misma organizacion que el registro medico.")
         if org and self.appointment_id and self.appointment.organization_id != org:
             raise ValidationError("La cita no pertenece a la misma organizacion que el registro medico.")
+
+    def save(self, *args, **kwargs):
+        # Invariante de event-authority: si el registro queda en estado CLOSED,
+        # closed_at NO puede ser NULL. Defensa en profundidad sobre el
+        # CHECK constraint a nivel DB (migración 0014). Bloquea bypasses
+        # tipo `mr.status='closed'; mr.save()` desde shell o código nuevo
+        # que no use close_medical_record(). Ver docs/analytics-schema-audit.md §2.5.
+        if self.status == self.Status.CLOSED and self.closed_at is None:
+            raise ValidationError(
+                "MedicalRecord no puede quedar 'closed' sin closed_at. "
+                "Usa medical_records/views.py::close_medical_record."
+            )
+        super().save(*args, **kwargs)
 
     @property
     def prescription_id(self):
@@ -71,6 +96,25 @@ class MedicalRecord(PublicIdMixin, OrganizationalModel):
         ordering = ["-created_at"]
         indexes = [
             models.Index(fields=["organization", "pet", "-created_at"]),
+            # Capa 3 — analytics. Soportan medical_records_closed,
+            # appointments_done_without_medical_record (conversion join),
+            # medical_records_open* (clinical backlog).
+            models.Index(fields=["organization", "status", "-closed_at"],
+                         name="idx_mr_org_status_closed_at"),
+            models.Index(fields=["organization", "appointment"],
+                         name="idx_mr_org_appointment"),
+            models.Index(fields=["organization", "status", "-created_at"],
+                         name="idx_mr_org_status_created"),
+        ]
+        constraints = [
+            # Event-authority invariant (analytics): si status='closed',
+            # closed_at NO puede ser NULL. Bloquea bypasses tipo
+            # `mr.status='closed'; mr.save()` desde shell o queryset.update().
+            # Ver docs/analytics-schema-audit.md §2.5.
+            models.CheckConstraint(
+                condition=~models.Q(status='closed') | models.Q(closed_at__isnull=False),
+                name="medicalrecord_closed_status_requires_closed_at",
+            ),
         ]
 
 
@@ -102,6 +146,11 @@ class VaccineRecord(OrganizationalModel):
         ordering = ['-application_date', '-id']
         indexes = [
             models.Index(fields=['pet', 'vaccine_name']),
+            # Capa 3 — analytics. vaccines_applied + vaccines_due_window.
+            models.Index(fields=['organization', 'application_date'],
+                         name='idx_vacc_org_app_date'),
+            models.Index(fields=['organization', 'next_due_date'],
+                         name='idx_vacc_org_next_due'),
         ]
 
 

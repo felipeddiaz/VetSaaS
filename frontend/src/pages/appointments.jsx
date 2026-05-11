@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useConfirm } from "../components/ConfirmDialog";
 import { toast } from "sonner";
 import {
@@ -14,6 +14,7 @@ import SearchSelect from "../components/SearchSelect";
 import QuickPatientForm from "../components/QuickPatientForm";
 import { useAuth } from "../auth/authContext";
 import { Icon } from "../components/icons";
+import api from "../api/client";
 
 import { apiError } from "../utils/apiError";
 import handleFormError from "../utils/handleFormError";
@@ -888,6 +889,7 @@ function WalkInModal({ staff, user, onClose, onSave, allowAnonymousWalkIn }) {
 const Appointments = () => {
     const { token, initializing, user } = useAuth();
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
     const formRef  = useRef(null);
 
     const today = new Date();
@@ -912,6 +914,16 @@ const Appointments = () => {
             getOrgSettings().then(setOrgSettings).catch(() => {});
         }
     }, [token]);
+
+    // Deep-link: ?appointment=<public_id> → abrir modal de esa cita
+    useEffect(() => {
+        const apptId = searchParams.get("appointment");
+        if (apptId && token) {
+            api.get(`appointments/${apptId}/`).then(r => {
+                setViewAppt(r.data);
+            }).catch(() => {});
+        }
+    }, [searchParams, token]);
 
     const loadAll = async () => {
         try {

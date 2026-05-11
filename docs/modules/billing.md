@@ -20,6 +20,31 @@ Campos clave:
 - `payment_method` — `cash`, `card`, `transfer`, `other`
 - `subtotal`, `tax_amount`, `total` — calculados automaticamente en backend; `read_only` en el serializer; el cliente nunca puede sobreescribirlos
 
+### Analytics anchors (event authority)
+
+Tres timestamps `editable=False` cuyo unico writer autoritativo vive en
+`billing/services.py` (ver ADR `2026-05-09-p9`):
+
+- `paid_at` — set por `pay_invoice()`
+- `confirmed_at` — set por `confirm_invoice()`
+- `cancelled_at` — set por `cancel_invoice()`
+
+Cada uno tiene su `*_source` (CharField con choices `service|audit_log|fallback|unresolved|legacy`) para auditar provenance.
+
+CHECK constraints DB:
+- `invoice_paid_status_requires_paid_at`
+- `invoice_confirmed_status_requires_confirmed_at`
+- `invoice_cancelled_status_requires_cancelled_at`
+
+Los CHECK bloquean `queryset.update()`, `bulk_update()`, raw SQL y admin
+que dejarian status='X' con anchor NULL (corromperia analytics).
+
+Reglas duras:
+- NUNCA setear `status` directamente fuera de `services.py`.
+- `InvoiceAdmin.readonly_fields` incluye `status`, `payment_method`, todos
+  los anchors, totales y `created_at/updated_at`. Admin no puede mutar
+  estado — debe usar la API.
+
 ### InvoiceItem
 
 Un item es un servicio o una presentacion de inventario (nunca ambos — constraint XOR en DB).
@@ -114,7 +139,11 @@ El `unit_price` se copia en este mismo momento desde `locked_pres.sale_price`.
 
 Al agregar un item de servicio, tambien corre dentro de `transaction.atomic()` para garantizar que `recalculate_totals()` no quede desincronizado si falla.
 
-`pay_invoice` usa `select_for_update()` + `transaction.atomic()` para evitar doble pago bajo concurrencia.
+`pay_invoice`, `confirm_invoice` y `cancel_invoice` viven en
+`billing/services.py` y usan `select_for_update()` + `@transaction.atomic`
+para evitar transiciones concurrentes. La view `pay_invoice` es solo un
+wrapper delgado al service (single authoritative writer del anchor `paid_at`,
+ver ADR p9).
 
 ## Validacion de stock en serializer
 

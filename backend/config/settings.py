@@ -79,6 +79,8 @@ INSTALLED_APPS = [
     'apps.inventory.apps.InventoryConfig',
     'apps.billing.apps.BillingConfig',
     'apps.prescriptions.apps.PrescriptionsConfig',
+    'apps.analytics.apps.AnalyticsConfig',
+    'apps.dashboard.apps.DashboardConfig',
 ]
 
 MIDDLEWARE = [

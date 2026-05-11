@@ -10,11 +10,17 @@ from apps.medical_records.models import MedicalRecord
 def create_draft_invoice_on_done(sender, instance, **kwargs):
     """
     Al marcar cita como done, crea factura draft vinculada a cita y consulta.
-    
+
     Maneja race conditions via IntegrityError catch (dos procesos concurrentes).
     Si la invoice ya existía sin medical_record, la linkea correctamente.
     """
     if instance.status != 'done':
+        return
+    update_fields = kwargs.get('update_fields')
+    if update_fields is not None and 'status' not in update_fields:
+        # Edits que no tocan el estado (notes, etc.) no deben re-disparar la
+        # creación de factura. La invoice ya existe si la transición a done
+        # ocurrió antes; el get_or_create igual sería seguro pero genera ruido.
         return
     if not get_org_setting(instance.organization, SETTING_AUTO_INVOICE_ON_DONE):
         return

@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useConfirm } from "../components/ConfirmDialog";
 import { apiError } from "../utils/apiError";
 import handleFormError from "../utils/handleFormError";
@@ -15,8 +16,66 @@ import { Icon } from "../components/icons";
 import { toast } from "sonner";
 import SearchSelect from "../components/SearchSelect";
 
-const STATUS_BADGE = { draft: "badge-default", confirmed: "badge-info", paid: "badge-success" };
-const STATUS_LABELS = { draft: "Borrador", confirmed: "Confirmada", paid: "Pagada" };
+const FILTER_KEYS = [
+    "status",
+    "invoice_type",
+    "created_from",
+    "created_to",
+    "paid_from",
+    "paid_to",
+];
+
+const STATUS_BADGE = {
+    draft: "badge-default",
+    confirmed: "badge-info",
+    paid: "badge-success",
+    cancelled: "badge-danger",
+};
+const STATUS_LABELS = {
+    draft: "Borrador",
+    confirmed: "Confirmada",
+    paid: "Pagada",
+    cancelled: "Cancelada",
+};
+const TYPE_LABELS = {
+    consultation: "Consulta",
+    direct_sale: "Venta directa",
+};
+
+const SegmentedDateInput = ({ iso, onChange }) => {
+    const display = iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : "";
+    const [value, setValue] = useState(display);
+
+    useEffect(() => {
+        const d = iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : "";
+        setValue(d);
+    }, [iso]);
+
+    const handleChange = (e) => {
+        const digits = e.target.value.replace(/\D/g, "").slice(0, 8);
+        let fmt = "";
+        if (digits.length > 0) fmt += digits.slice(0, 2);
+        if (digits.length > 2) fmt += "/" + digits.slice(2, 4);
+        if (digits.length > 4) fmt += "/" + digits.slice(4, 8);
+
+        setValue(fmt);
+
+        if (digits.length === 8) {
+            const dd = digits.slice(0, 2);
+            const mm = digits.slice(2, 4);
+            const yyyy = digits.slice(4, 8);
+            onChange(`${yyyy}-${mm}-${dd}`);
+        } else {
+            onChange("");
+        }
+    };
+
+    return (
+        <input type="text" inputMode="numeric" value={value} onChange={handleChange}
+            placeholder="DD/MM/AAAA"
+            style={{ width: "110px", background: "none", border: "none", outline: "none", fontSize: "13px", color: "var(--c-text)", fontFamily: "inherit", textAlign: "center" }} />
+    );
+};
 
 const PAYMENT_METHODS = [
     { value: "cash", label: "Efectivo" },
@@ -37,14 +96,23 @@ const EMPTY_ITEM = {
 const Billing = () => {
     const { token, user, initializing } = useAuth();
     const confirm = useConfirm();
+    const [searchParams, setSearchParams] = useSearchParams();
     const [loading, setLoading] = useState(true);
+    const requestIdRef = useRef(0);
 
     const [invoices, setInvoices] = useState([]);
     const [services, setServices] = useState([]);
     const [products, setProducts] = useState([]);
     const [presentations, setPresentations] = useState([]);
 
-    const [filterStatus, setFilterStatus] = useState("");
+    const [filters, setFilters] = useState(() => {
+        const initial = {};
+        for (const key of FILTER_KEYS) {
+            initial[key] = searchParams.get(key) || "";
+        }
+        return initial;
+    });
+
     const [selectedInvoice, setSelectedInvoice] = useState(null);
     const [showDetailModal, setShowDetailModal] = useState(false);
     const [showPayModal, setShowPayModal] = useState(false);
@@ -68,8 +136,19 @@ const Billing = () => {
     }, [token]);
 
     useEffect(() => {
-        loadInvoices();
-    }, [filterStatus]);
+        const nextFilters = { ...filters };
+        const timer = setTimeout(() => {
+            loadInvoices(nextFilters);
+        }, 300);
+        return () => clearTimeout(timer);
+    }, [
+        filters.status,
+        filters.invoice_type,
+        filters.created_from,
+        filters.created_to,
+        filters.paid_from,
+        filters.paid_to,
+    ]);
 
     useEffect(() => {
         getPresentations({ active: "true" }).then(r => setPresentations(r));
@@ -92,7 +171,7 @@ const Billing = () => {
             ]);
             setServices(srvs);
             setProducts(prods);
-            await loadInvoices();
+            await loadInvoices(filters);
         } catch (err) {
             console.log(err);
         } finally {
@@ -100,15 +179,37 @@ const Billing = () => {
         }
     };
 
-    const loadInvoices = async () => {
+    const loadInvoices = async (currentFilters) => {
+        const requestId = ++requestIdRef.current;
         try {
             const params = {};
-            if (filterStatus) params.status = filterStatus;
+            for (const key of FILTER_KEYS) {
+                if (currentFilters[key]) params[key] = currentFilters[key];
+            }
             const data = await getInvoices(params);
+            if (requestId !== requestIdRef.current) return;
             setInvoices(data);
         } catch (err) {
+            if (requestId !== requestIdRef.current) return;
             console.log(err);
         }
+    };
+
+    const updateFilter = (key, value) => {
+        const next = { ...filters, [key]: value };
+        setFilters(next);
+        const params = new URLSearchParams();
+        for (const k of FILTER_KEYS) {
+            if (next[k]) params.set(k, next[k]);
+        }
+        setSearchParams(params, { replace: true });
+    };
+
+    const clearFilters = () => {
+        const empty = {};
+        for (const key of FILTER_KEYS) empty[key] = "";
+        setFilters(empty);
+        setSearchParams({}, { replace: true });
     };
 
     const openInvoiceDetail = async (invoice) => {
@@ -125,33 +226,35 @@ const Billing = () => {
 
     const handleConfirm = async () => {
         try {
-            const p = confirmInvoice(selectedInvoice.public_id).then(updated => {
-                setSelectedInvoice(updated);
-                loadInvoices();
-            });
-            await toast.promise(p, {
-                loading: 'Confirmando...',
-                success: 'Factura confirmada',
-                error: (err) => {
-                    const errors = err.response?.data?.detail;
-                    return Array.isArray(errors) ? errors.join("; ") : apiError(err, "Error al confirmar");
+            const updated = await toast.promise(
+                confirmInvoice(selectedInvoice.public_id),
+                {
+                    loading: 'Confirmando...',
+                    success: 'Factura confirmada',
+                    error: (err) => {
+                        const errors = err.response?.data?.detail;
+                        return Array.isArray(errors) ? errors.join("; ") : apiError(err, "Error al confirmar");
+                    }
                 }
-            });
+            );
+            setSelectedInvoice(updated);
+            await loadInvoices(filters);
         } catch (err) {}
     };
 
     const handlePay = async () => {
         try {
-            const p = payInvoice(selectedInvoice.public_id, payMethod).then(updated => {
-                setSelectedInvoice(updated);
-                setShowPayModal(false);
-                loadInvoices();
-            });
-            await toast.promise(p, {
-                loading: 'Registrando pago...',
-                success: 'Pago registrado',
-                error: (err) => apiError(err, "Error al registrar pago")
-            });
+            const updated = await toast.promise(
+                payInvoice(selectedInvoice.public_id, payMethod),
+                {
+                    loading: 'Registrando pago...',
+                    success: 'Pago registrado',
+                    error: (err) => apiError(err, "Error al registrar pago")
+                }
+            );
+            setSelectedInvoice(updated);
+            setShowPayModal(false);
+            await loadInvoices(filters);
         } catch (err) {}
     };
 
@@ -162,7 +265,7 @@ const Billing = () => {
                 quantity: suggestion.suggested_quantity,
             }).then(() => getInvoice(selectedInvoice.public_id)).then(updated => {
                 setSelectedInvoice(updated);
-                loadInvoices();
+                loadInvoices(filters);
             });
             await toast.promise(p, {
                 loading: 'Agregando producto...',
@@ -322,31 +425,85 @@ const Billing = () => {
                 <h1 className="page-title">Cobros</h1>
             </div>
 
-            {/* Header with filter and new invoice button */}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px", gap: "20px", flexWrap: "wrap" }}>
-                <div>
-                    <select
-                        className="select-input"
-                        value={filterStatus}
-                        onChange={e => setFilterStatus(e.target.value)}
-                        style={{ maxWidth: "200px" }}
-                    >
+            {/* ── Filter toolbar ── */}
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px", marginBottom: "20px" }}>
+
+                {/* ── Quick selects ── */}
+                <div style={{
+                    display: "flex", alignItems: "center", gap: "7px",
+                    background: "var(--c-surface)", border: "1.5px solid var(--c-border)",
+                    borderRadius: "var(--r-lg)", padding: "0 13px", height: "38px",
+                    boxShadow: "var(--shadow-xs)",
+                }}>
+                    <Icon.Filter s={13} c="var(--c-text-3)" />
+                    <select value={filters.status} onChange={e => updateFilter("status", e.target.value)}
+                        style={{ background: "none", border: "none", outline: "none", fontSize: "13px", color: "var(--c-text)", cursor: "pointer", fontFamily: "inherit" }}>
                         <option value="">Todos los estados</option>
-                        {Object.entries(STATUS_LABELS).map(([v, l]) => (
-                            <option key={v} value={v}>{l}</option>
-                        ))}
+                        {Object.entries(STATUS_LABELS).map(([v, l]) => (<option key={v} value={v}>{l}</option>))}
                     </select>
                 </div>
+
+                <div style={{
+                    display: "flex", alignItems: "center", gap: "7px",
+                    background: "var(--c-surface)", border: "1.5px solid var(--c-border)",
+                    borderRadius: "var(--r-lg)", padding: "0 13px", height: "38px",
+                    boxShadow: "var(--shadow-xs)",
+                }}>
+                    <Icon.Receipt s={13} c="var(--c-text-3)" />
+                    <select value={filters.invoice_type} onChange={e => updateFilter("invoice_type", e.target.value)}
+                        style={{ background: "none", border: "none", outline: "none", fontSize: "13px", color: "var(--c-text)", cursor: "pointer", fontFamily: "inherit" }}>
+                        <option value="">Todos los tipos</option>
+                        {Object.entries(TYPE_LABELS).map(([v, l]) => (<option key={v} value={v}>{l}</option>))}
+                    </select>
+                </div>
+
+                <div style={{ width: "1px", height: "24px", background: "var(--c-border)", margin: "0 4px" }} />
+
+                {/* ── Date range: Created ── */}
+                <div style={{
+                    display: "flex", alignItems: "center", gap: "6px",
+                    background: "var(--c-surface)", border: "1.5px solid var(--c-border)",
+                    borderRadius: "var(--r-lg)", padding: "0 10px 0 13px", height: "38px",
+                    boxShadow: "var(--shadow-xs)",
+                }}>
+                    <Icon.Calendar s={13} c="var(--c-text-3)" />
+                    <span style={{ fontSize: "12px", color: "var(--c-text-3)", fontWeight: "500", whiteSpace: "nowrap" }}>Creado</span>
+                    <SegmentedDateInput iso={filters.created_from} onChange={v => updateFilter("created_from", v)} />
+                    <span style={{ color: "var(--c-text-4)", fontSize: "12px" }}>—</span>
+                    <SegmentedDateInput iso={filters.created_to} onChange={v => updateFilter("created_to", v)} />
+                </div>
+
+                <div style={{ width: "1px", height: "24px", background: "var(--c-border)", margin: "0 4px" }} />
+
+                {/* ── Date range: Paid ── */}
+                <div style={{
+                    display: "flex", alignItems: "center", gap: "6px",
+                    background: "var(--c-surface)", border: "1.5px solid var(--c-border)",
+                    borderRadius: "var(--r-lg)", padding: "0 10px 0 13px", height: "38px",
+                    boxShadow: "var(--shadow-xs)",
+                }}>
+                    <Icon.CalendarDays s={13} c="var(--c-text-3)" />
+                    <span style={{ fontSize: "12px", color: "var(--c-text-3)", fontWeight: "500", whiteSpace: "nowrap" }}>Pagado</span>
+                    <SegmentedDateInput iso={filters.paid_from} onChange={v => updateFilter("paid_from", v)} />
+                    <span style={{ color: "var(--c-text-4)", fontSize: "12px" }}>—</span>
+                    <SegmentedDateInput iso={filters.paid_to} onChange={v => updateFilter("paid_to", v)} />
+                </div>
+
+                {/* ── Actions ── */}
+                <button className="btn btn-ghost btn-sm" onClick={clearFilters}
+                    style={{ display: "flex", alignItems: "center", gap: "4px", whiteSpace: "nowrap" }}>
+                    <Icon.X s={14} />
+                    Limpiar
+                </button>
+
                 {canManage && (
-                    <button
-                        className="btn btn-primary"
+                    <button className="btn btn-primary" style={{ marginLeft: "auto" }}
                         onClick={() => {
                             setNewInvoiceOwner(null);
                             setNewInvoicePet(null);
                             setNewInvoiceType("direct_sale");
                             setShowNewInvoiceModal(true);
-                        }}
-                    >
+                        }}>
                         + Nuevo Cobro
                     </button>
                 )}
@@ -1019,7 +1176,7 @@ const Billing = () => {
                                             invoice_type: newInvoiceType,
                                         }).then(async (newInv) => {
                                             setShowNewInvoiceModal(false);
-                                            await loadInvoices();
+                                            await loadInvoices(filters);
                                             await openInvoiceDetail(newInv);
                                         });
 

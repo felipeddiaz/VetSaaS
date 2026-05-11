@@ -8,7 +8,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('medical_records', '0012_add_consultation_type'),
-        ('organizations', '__latest__'),
+        ('organizations', '0005_organizationsettings'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 

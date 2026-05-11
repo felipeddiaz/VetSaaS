@@ -18,7 +18,18 @@ class InvoiceItemInline(admin.TabularInline):
 
 @admin.register(Invoice)
 class InvoiceAdmin(TenantAwareAdmin):
+    """
+    Status y payment_method son read-only intencionalmente. Cualquier transición
+    de estado debe pasar por billing/services.py (confirm_invoice, pay_invoice,
+    cancel_invoice) para preservar el contrato de event-authority documentado en
+    docs/dashboard-metrics-contract.md §2.7. Editar status desde el admin dejaría
+    paid_at NULL y rompería los snapshots de revenue silenciosamente.
+    """
     list_display = ['id', 'pet', 'owner', 'status', 'total', 'created_at', 'organization']
     list_filter = ['status', 'organization']
-    readonly_fields = ['subtotal', 'tax_amount', 'total', 'paid_at', 'created_at', 'updated_at']
+    readonly_fields = [
+        'status', 'payment_method',
+        'subtotal', 'tax_amount', 'total',
+        'paid_at', 'created_at', 'updated_at',
+    ]
     inlines = [InvoiceItemInline]

@@ -5,6 +5,7 @@ import { Icon } from "./icons";
 
 const PAGE_TITLES = {
     "/":               "Dashboard",
+    "/dashboard":      "Dashboard",
     "/pets":           "Mascotas",
     "/appointments":   "Citas",
     "/medical-records":"Historial Clínico",
@@ -37,42 +38,44 @@ const Layout = ({ children }) => {
     const pageTitle = PAGE_TITLES[location.pathname] ||
         (location.pathname.startsWith("/pets/") ? "Ficha de Mascota" : "");
 
+    const isDashboard = location.pathname === "/" || location.pathname === "/dashboard";
+
     return (
         <div style={{ minHeight: "100vh", backgroundColor: "var(--c-bg)" }}>
             <Sidebar onLogout={handleLogout} />
 
             <main style={{ marginLeft: "var(--sidebar-width)", minHeight: "100vh", display: "flex", flexDirection: "column" }}>
-                {/* Top bar */}
-                <header style={{
-                    height: "52px",
-                    backgroundColor: "var(--c-surface)",
-                    borderBottom: "1px solid var(--c-border)",
-                    display: "flex",
-                    alignItems: "center",
-                    padding: "0 28px",
-                    gap: "8px",
-                    position: "sticky", top: 0, zIndex: 50,
-                    boxShadow: "var(--shadow-xs)",
-                }}>
-                    <span style={{ fontSize: "14px", fontWeight: "600", color: "var(--c-text)" }}>
-                        {pageTitle}
-                    </span>
-                    <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "10px" }}>
-                        <div style={{
-                            width: "30px", height: "30px",
-                            borderRadius: "50%",
-                            background: "linear-gradient(135deg, var(--c-primary-light), #99f6e4)",
-                            display: "flex", alignItems: "center", justifyContent: "center",
-                            fontSize: "12px", fontWeight: "700", color: "var(--c-primary-dark)",
-                            border: "1.5px solid #99f6e4",
-                        }}>
-                            {(user?.first_name?.[0] || user?.username?.[0] || "U").toUpperCase()}
+                {!isDashboard && (
+                    <header style={{
+                        height: "52px",
+                        backgroundColor: "var(--c-surface)",
+                        borderBottom: "1px solid var(--c-border)",
+                        display: "flex",
+                        alignItems: "center",
+                        padding: "0 28px",
+                        gap: "8px",
+                        position: "sticky", top: 0, zIndex: 50,
+                        boxShadow: "var(--shadow-xs)",
+                    }}>
+                        <span style={{ fontSize: "14px", fontWeight: "600", color: "var(--c-text)" }}>
+                            {pageTitle}
+                        </span>
+                        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "10px" }}>
+                            <div style={{
+                                width: "30px", height: "30px",
+                                borderRadius: "50%",
+                                background: "linear-gradient(135deg, var(--c-primary-light), #99f6e4)",
+                                display: "flex", alignItems: "center", justifyContent: "center",
+                                fontSize: "12px", fontWeight: "700", color: "var(--c-primary-dark)",
+                                border: "1.5px solid #99f6e4",
+                            }}>
+                                {(user?.first_name?.[0] || user?.username?.[0] || "U").toUpperCase()}
+                            </div>
                         </div>
-                    </div>
-                </header>
+                    </header>
+                )}
 
-                {/* Page content */}
-                <div style={{ padding: "28px", flex: 1 }}>
+                <div style={{ padding: isDashboard ? "0" : "28px", flex: 1 }}>
                     {children}
                 </div>
             </main>

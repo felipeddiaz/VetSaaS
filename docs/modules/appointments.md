@@ -59,6 +59,11 @@ Comportamiento:
 - la duracion es de 30 minutos por defecto
 - no valida conflictos de horario (es atencion inmediata)
 - el veterinario puede abrir el historial clinico inmediatamente
+- **`Appointment.walk_in = True`** se setea explicito al crear (campo
+  `editable=False`, `db_index=True`). Este flag persistido reemplaza la
+  inferencia frágil "no scheduled ancestor en AppointmentStatusChange"
+  usada antes. Ver ADR `2026-05-09-p9` y migration `appointments/0010`
+  (backfill desde history para appointments preexistentes).
 
 Reglas de negocio específicas para walk-in:
 - `reason` se sanitiza y se trunca a 255 caracteres (`sanitize_text(..., max_length=255)`). Si después de sanitizar queda vacío, el endpoint retorna `400` con `reason` en el body.
@@ -142,6 +147,14 @@ Solo se puede cancelar desde `scheduled`, `confirmed` o `in_progress`.
 
 Al cancelar se puede enviar un `cancellation_reason` opcional (texto libre).
 El motivo queda almacenado en la cita para reportes.
+
+**Event lineage**: cualquier cancelacion — sea via PATCH `/update-status/`
+o via DELETE `/api/appointments/<id>/` — DEBE crear una row en
+`AppointmentStatusChange`. Antes (pre-ADR `2026-05-09-p9`),
+`AppointmentDetailView.destroy()` mutaba `instance.status='canceled';
+instance.save()` directo, bypaseando el audit log y destruyendo el
+event lineage usado por analytics. Ahora ambos paths crean la row en
+mismo `transaction.atomic()`.
 
 Reprogramacion:
 - si la fecha original no paso: `canceled → scheduled` restaura la cita

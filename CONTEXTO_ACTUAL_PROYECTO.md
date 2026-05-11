@@ -1,6 +1,6 @@
 # Contexto actual del proyecto (VeterinariaSaaS)
 
-Fecha de corte: 2026-05-07
+Fecha de corte: 2026-05-09
 Fuente: estado real del repositorio (backend + frontend).
 
 ---
@@ -17,6 +17,7 @@ El proyecto está en fase de hardening avanzado. La base multitenant, autenticac
 - **Sprint 2026-05-05**: separación create/close en stepper (ADR p4), estandarización de PATCH (ADR p5), captura de vitales con hash comparison (ADR p6), lazy invoice creation sin facturas vacías (ADR p7).
 - **Sprint 2026-05-06**: toggles de auto-creación a `False` por defecto, modal de citas post-done abierto con CTAs explícitos (ADR p8), `force_weight` por patrón `meta` en exception handler, `FIELD_TO_STEP` en stepper, anti-stale check con `updated_at`, servicios en stepper con endpoints completos, `unit_price` en MedicalRecordProduct.
 - **Sprint 2026-05-07**: timeline editorial con Framer Motion (diario clínico agrupado año/mes, animaciones staggered, panel expandido rico), `public_id` en todas las URLs de medical records, `apiError` FIELD_MAP ampliado (30+ campos), RBAC UI usando `can_modify_charges`/`can_close` del backend, errores inline con cleanup onChange en stepper y vitales.
+- **Sprint analytics 2026-05-09 (ADR p9 + p10)**: contrato analítico v0.3 + auditoría de schema (catálogo de "analytics lies") + Capa 1 hardening (anchors writers en services, CHECK constraints, admin status readonly, DELETE bypass cerrado, MR save() guard) + Capa 2 anchor completeness (`Invoice.confirmed_at`/`cancelled_at`, `Appointment.walk_in`, provenance fields con 5 sources, backfill no-naive) + Capa 3 indexes (11 índices compuestos + EXPLAIN validation) + Capa 4 snapshots (`apps/analytics/`, `DailyOrgMetrics`, `apply_snapshot` idempotente, `is_bucket_frozen` único helper, advisory lock per-org en cron) + Capa 5 read endpoints JSON-first (`/api/v1/dashboard/operations/series/`, `/financial/series/`, cada datapoint tagged con `source`+`lifecycle_state`). 159 tests pasando, 0 regresiones.
 
 ---
 
@@ -34,7 +35,7 @@ Autenticación: `TenantJWTAuthentication` recarga usuario con `select_related('o
 
 ## 3) Módulos backend
 
-Apps activas: `organizations`, `users`, `patients`, `appointments`, `medical_records`, `inventory`, `billing`, `prescriptions`, `dashboard`, `core`.
+Apps activas: `organizations`, `users`, `patients`, `appointments`, `medical_records`, `inventory`, `billing`, `prescriptions`, `dashboard`, `analytics`, `core`.
 
 | Módulo | Acoplamiento | Estado |
 |--------|-------------|--------|
@@ -42,18 +43,19 @@ Apps activas: `organizations`, `users`, `patients`, `appointments`, `medical_rec
 | `patients` | Estable | Owner + Pet con aislamiento por org. UniqueConstraint para paciente genérico por org. |
 | `prescriptions` | Estable | Items de receta con exportación PDF. FKs por string reference. Serializers con `sanitize_text` en `dose`, `duration`, `instructions`, `notes`. Validación de tenant en `validate_medical_record` y `validate_pet`. Receta NO descuenta stock por sí misma. |
 | `users` | Estable | Roles estáticos + RBAC dinámico. Staff se crea vía API `/api/staff/create/`. |
-| `dashboard` | Estable | Métricas diarias y alertas. Solo lectura vía late imports. Sin joins que asuman MedicalRecord para cada cita. |
+| `dashboard` | Estable | Read endpoints v1 (`/api/v1/dashboard/operations/series/`, `/financial/series/`) que consumen `analytics.DailyOrgMetrics` para historia y `compute_daily_metrics` para today live. Cada datapoint tagged con `source` ∈ `snapshot`/`live` + `lifecycle_state`. `/api/internal/analytics-health/` para ADMIN_SAAS. |
 | `organizations` | Bajo | Settings por org (timezone, tax_rate). `OrganizationSettings` se crea automáticamente. Defaults de toggles migrados a `False` (`auto_create_medical_record`, `auto_create_invoice_on_done`). |
-| `appointments` | Moderado | Máquina de estados completa. Walk-in idempotente con lock en fila estable. `done` es estado terminal (`set()`). Modal post-done permanece abierto mostrando CTAs desde datos reales del backend. |
+| `appointments` | Moderado | Máquina de estados completa. Walk-in idempotente con lock en fila estable. `done` es estado terminal (`set()`). Modal post-done permanece abierto mostrando CTAs desde datos reales del backend. **`Appointment.walk_in BooleanField(db_index=True, editable=False)`** persistido (ADR p9). DELETE crea `AppointmentStatusChange` (event lineage). |
 | `inventory` | Moderado-alto | Productos, presentaciones, movimientos de stock. `MedicalRecordProduct` vive aquí. `for_organization()` siempre antes de `select_for_update()` en queryset (ADR-10 consolidado). URLs de products migradas a `<str:medical_record_pk>`. `MedicalRecordProductSerializer` expone `unit_price` vía `presentation.sale_price`. |
-| `medical_records` | Alto | Consultas con diagnóstico, tratamiento, vacunas, productos, servicios. `consultation_type` (general/vaccine/surgery/emergency), modelo `VitalSigns` (append-only, recorded_at), endpoints `vitals` y `summary`. Cierre valida `diagnosis` siempre y `treatment` si tipo cirugía. `MedicalRecordService` URLs migradas a `<str:>`. `updated_at` en fields para anti-stale. |
-| `billing` | Alto | Máquina de estados `draft→confirmed→paid / cancelled`. Stock transaccional. `auto_create_invoice_on_done` default `False`; creación lazy via `get_or_create_invoice_for_medical_record()`. `Service` con `CheckConstraint(base_price__gt=0)`. |
+| `medical_records` | Alto | Consultas con diagnóstico, tratamiento, vacunas, productos, servicios. `consultation_type` (general/vaccine/surgery/emergency), modelo `VitalSigns` (append-only, recorded_at), endpoints `vitals` y `summary`. Cierre valida `diagnosis` siempre y `treatment` si tipo cirugía. `MedicalRecordService` URLs migradas a `<str:>`. `updated_at` en fields para anti-stale. **`closed_at` editable=False + `closed_at_source` provenance + CHECK constraint + `save()` guard** (ADR p9). |
+| `billing` | Alto | Máquina de estados `draft→confirmed→paid / cancelled`. Stock transaccional. `auto_create_invoice_on_done` default `False`; creación lazy via `get_or_create_invoice_for_medical_record()`. `Service` con `CheckConstraint(base_price__gt=0)`. **`paid_at`/`confirmed_at`/`cancelled_at` editable=False + `*_source` provenance + 3 CHECK constraints; `pay_invoice` movido a `services.py`** (ADR p9). |
+| `analytics` | Lectura-derivada | App nueva (ADR p10). `DailyOrgMetrics` (1 row por org+día, 7 KPIs minimal v1, lifecycle_state, provenance_mix JSON, org_timezone_at_snapshot frozen). `DashboardSnapshotAudit` (append-only). Servicios: `is_bucket_frozen()` único, `compute_daily_metrics()` puro, `apply_snapshot()` idempotente. Mgmt commands: `build_daily_metrics` (per-org PG advisory lock + per-org failure isolation), `audit_anchor_integrity` (CI-ready). Today nunca snapshotteado. |
 
 ### Modelos con `public_id` (UUID en URLs)
 
 `Pet`, `Owner`, `Appointment`, `MedicalRecord`, `Invoice`, `Prescription`, `Product`, `Presentation`, `Service`.
 
-Modelos **sin** `public_id` (internos, nunca expuestos por UUID): `InvoiceItem`, `StockMovement`, `MedicalRecordProduct`, `MedicalRecordService`, `VitalSigns`, `InvoiceAuditLog`, `Permission`, `Role`, `UserRole`.
+Modelos **sin** `public_id` (internos, nunca expuestos por UUID): `InvoiceItem`, `StockMovement`, `MedicalRecordProduct`, `MedicalRecordService`, `VitalSigns`, `InvoiceAuditLog`, `Permission`, `Role`, `UserRole`, `DailyOrgMetrics`, `DashboardSnapshotAudit`, `OrganizationTimezoneAudit`, `AppointmentStatusChange`.
 
 URLs que referencian modelos con `public_id` usan `<str:pk>` (nunca `<int:`). La resolución va por `resolve_public_id()` con fallback controlado por `ALLOW_LEGACY_ID_LOOKUP`.
 
@@ -190,7 +192,7 @@ Estados válidos: `draft → confirmed → paid` y `draft/confirmed → cancelle
 
 ## 7) Tests
 
-Suite completa: **87 tests** en `backend/apps/`.
+Suite completa: **159 tests** en `backend/apps/`.
 
 ```bash
 python manage.py test \
@@ -202,10 +204,27 @@ python manage.py test \
   apps.medical_records.tests.test_vitals \
   apps.billing.tests.test_money \
   apps.billing.tests.test_invoice_state_machine \
-  apps.billing.tests.test_invoice_multitenancy
+  apps.billing.tests.test_invoice_multitenancy \
+  apps.billing.tests.test_event_authority \
+  apps.billing.tests.test_anchor_completeness \
+  apps.appointments.tests.test_walkin \
+  apps.dashboard.tests.test_analytics_health \
+  apps.dashboard.tests.test_series_endpoints \
+  apps.analytics.tests.test_snapshot_v1 \
+  apps.analytics.tests.test_build_command \
+  apps.analytics.tests.test_cron_safety
 ```
 
 `test_e2e.py` en la raíz de `backend/` requiere servidor corriendo — no se incluye en la suite normal.
+
+**Suites analytics (29 tests, ADR p9 + p10)**:
+- `test_event_authority` (7) — bloqueo de bypass paths a anchors
+- `test_anchor_completeness` (14) — confirmed_at/cancelled_at writers + bulk-bypass + walk_in field + audit cmd
+- `test_snapshot_v1` (18) — idempotency, today rejection, freeze transitions, TZ freeze, multi-tenant isolation, corruption visibility, provenance mix
+- `test_build_command` (6) — CLI args, today skip, defaults
+- `test_cron_safety` (7) — advisory lock, hash determinism, busy-org skip, failure isolation
+- `test_series_endpoints` (17) — RBAC, source/lifecycle tagging, corrupt filtering, missing days, cardinality, tenant isolation, decimal-as-string
+- `test_analytics_health` (4) — `/api/internal/analytics-health/` para ADMIN_SAAS
 
 ---
 
@@ -272,8 +291,12 @@ Rediseño completo 2026-05-07:
 
 **Procfile** (Railway):
 ```
-web: python manage.py migrate --no-input && python manage.py seed_permissions && gunicorn config.wsgi:application --bind 0.0.0.0:$PORT
+web: python manage.py collectstatic --noinput && python manage.py migrate --no-input && python manage.py seed_permissions && gunicorn config.wsgi:application --bind 0.0.0.0:$PORT
+nightly_snapshots: python manage.py build_daily_metrics
+nightly_anchor_audit: python manage.py audit_anchor_integrity --json
 ```
+
+Process types `nightly_snapshots` y `nightly_anchor_audit` se schedulen vía Railway Cron service. Recomendación: 06:00 UTC daily (cubre Mexico GMT-6/-7/-8 yesterday end-of-day). Ambos commands son seguros para correr múltiples veces (advisory lock + idempotency en snapshots; mgmt audit es read-only). Wire alerting al exit code (snapshots exit 2 = al menos un org falló; audit exit 1 = unresolved provenance, exit 2 = invariant violation).
 
 **Frontend**: `vercel.json` con rewrite SPA a `index.html`.
 
@@ -284,16 +307,21 @@ web: python manage.py migrate --no-input && python manage.py seed_permissions &&
 | Item | Prioridad |
 |------|-----------|
 | Gate Fase 4 RBAC: 7 días sin `RBAC_FALLBACK_ALLOWED` en Railway para poder cortar `User.role` | Alta |
-| `seed_permissions` en próximo deploy: persistir nuevos códigos RBAC en DB (vitales/summary + organizations) | Alta |
+| `seed_permissions` en próximo deploy: persistir `dashboard.financial.view` (nuevo) + códigos preexistentes (vitales/summary + organizations) | Alta |
+| Wire Railway Cron a `nightly_snapshots` + `nightly_anchor_audit` con alerting on non-zero exit | Alta |
 | `ALLOW_LEGACY_ID_LOOKUP=False` en Railway: medical_records ya migrado a `public_id`; restan billing, prescriptions, inventory, pets | Alta |
 | Stock gap en venta de recetados: `prescription_suggestions` en billing no crea `MedicalRecordProduct` → stock nunca se descuenta al vender un producto recetado | Alta |
+| Frontend dashboards consumiendo `/api/v1/dashboard/*/series/` — backend listo, UI pendiente | Media |
+| `MetricAdjustments` table (contract §2.8) — necesaria si v1 va a soportar cancellations en charts post-freeze window | Media |
 | Migrar `MedicalRecord.weight` a `VitalSigns` (data migration + eliminar campo heredado) — v2 | Media |
 | `policies.py` — fallback a `PERMISSIONS` dict no emite `RBAC_FALLBACK_ALLOWED` (invisible al gate Fase 4) | Media |
-| `inventory/serializers.py` y `patients/serializers.py` — usan regex pero no `sanitize_text()`. Bajo riesgo (regex filtra HTML), aceptable en v1 | Baja |
 | `ProductSerializer.update()` siempre actualiza la primera presentación (`first()`) sin validar identidad — correcto para v1 pero fragilidad si hay múltiples presentaciones | Media |
+| `inventory/serializers.py` y `patients/serializers.py` — usan regex pero no `sanitize_text()`. Bajo riesgo (regex filtra HTML), aceptable en v1 | Baja |
 | Inconsistencia ortográfica: `billing='cancelled'` vs `appointments='canceled'` requeriría migración de datos para unificar | Baja |
 | `billing/models.py` TODO: hacer `presentation` obligatorio en `InvoiceItem` en v2 | Baja |
 | Señal de creación de `Owner` genérico falla si el teléfono está vacío (visible en logs de test, no afecta producción) | Baja |
+| Throttling per-scope para dashboard endpoints (contract §5.4) — diferido al ramp-up de uso real | Baja |
+| Cache layer para today live aggregates — diferido (compute es barato a escala v1) | Baja |
 
 ### Fixes aplicados 2026-05-03 (sprint 1 — hardening RBAC/seguridad)
 
@@ -345,6 +373,57 @@ web: python manage.py migrate --no-input && python manage.py seed_permissions &&
 - `appointments.jsx`: `useConfirm` antes de `in_progress → done`. Modal permanece abierto. CTAs desde respuesta real del backend.
 - Documentación: `CONTEXTO_ACTUAL_PROYECTO.md`, módulos (`appointments`, `billing`, `medical_records`, `frontend`), decisiones (p8, toggles).
 
+### Fixes aplicados 2026-05-09 (sprint analytics — ADR p9 + p10)
+
+**Capa 0 — Contrato + audit**
+- `docs/dashboard-metrics-contract.md` v0.3 (event authority, reversal/cancellation policy, late-arriving data, snapshot lifecycle, schema versioning, throttling).
+- `docs/analytics-readiness-checklist.md` (anchor matrix 5-D + index requirements + auth services + isolation tests).
+- `docs/analytics-schema-audit.md` (trust matrix A/B/C/D/F, 18 analytics lies catalogados, 16 migraciones + 8 fixes ordenados, EXPLAIN findings, decay alerts).
+
+**Capa 1 — Authority hardening**
+- `pay_invoice` movido de `billing/views.py` a `billing/services.py` (single writer del anchor).
+- `MedicalRecord.save()` invariant: `status='closed' AND closed_at is None` raise.
+- `AppointmentDetailView.destroy()` crea `AppointmentStatusChange` (event lineage restaurado).
+- `InvoiceAdmin.readonly_fields` incluye `status`, `payment_method`, anchors. Admin no muta estado.
+- `create_draft_invoice_on_done` signal short-circuit cuando `update_fields` no toca status.
+- CHECK constraints DB:
+  - `invoice_paid_status_requires_paid_at` (billing/0015)
+  - `medicalrecord_closed_status_requires_closed_at` (medical_records/0014)
+
+**Capa 2 — Anchor completeness + provenance**
+- Nuevos campos `Invoice.confirmed_at`, `Invoice.cancelled_at` (editable=False) + `Appointment.walk_in BooleanField(db_index=True, editable=False)` (migrations billing/0016, billing/0017, medical_records/0015, appointments/0010).
+- Provenance fields con choices `service|audit_log|fallback|unresolved|legacy`: `Invoice.paid_at_source`, `confirmed_at_source`, `cancelled_at_source`, `MedicalRecord.closed_at_source`.
+- Backfill no-naive desde `InvoiceAuditLog`. Política estricta: jamás inventar timestamps; `unresolved` antes que falso.
+- 2 CHECK constraints adicionales: `invoice_confirmed_status_requires_confirmed_at`, `invoice_cancelled_status_requires_cancelled_at`.
+- Mgmt command `audit_anchor_integrity` (validation + provenance distribution + decay alerts; exit 0/1/2 para CI).
+
+**Capa 3 — Indexes**
+- 11 índices compuestos: `idx_inv_org_status_paid`/`_conf`/`_canc`, `idx_mr_org_status_closed_at`/`_appointment`/`_status_created`, `idx_appt_org_start_status`, `idx_vacc_org_app_date`/`_next_due`, `idx_stockmov_org_pres_created`, `idx_presc_org_created`.
+- EXPLAIN ejecutado con `enable_seqscan=off` para verificar utilizabilidad.
+- Operational rule: `ANALYZE <tabla>` después de cada import / primera corrida del nightly job.
+
+**Capa 4 — Snapshots minimal v1 (`apps/analytics/`)**
+- `DailyOrgMetrics` (1 row por org+día, 7 KPIs minimales, `lifecycle_state`, `metrics_schema_version`, `provenance_mix`, `org_timezone_at_snapshot`).
+- `DashboardSnapshotAudit` (append-only, lifecycle transitions + diff JSON).
+- `apps/analytics/services.py`: `is_bucket_frozen()` único helper, `compute_daily_metrics()` puro, `apply_snapshot()` idempotente.
+- `apps/core/db_locks.py`: `try_advisory_lock`, `advisory_lock` context manager, `hash_lock_key`.
+- Mgmt command `build_daily_metrics`: per-org PG advisory lock (Railway double-fire safe), per-org failure isolation, structured logs, exit 2 si algún org falló.
+
+**Capa 5 — Read endpoints JSON-first**
+- `/api/v1/dashboard/operations/series/` (VET/ASSISTANT/ADMIN).
+- `/api/v1/dashboard/financial/series/` (ADMIN only, permission code `dashboard.financial.view` nuevo).
+- `/api/internal/analytics-health/` (ADMIN_SAAS only) — anchor distribution, invariant violations, decay alerts, trust score per anchor.
+- Cada datapoint tagged con `source` ∈ `snapshot|live` y `lifecycle_state`. Today siempre `live`. Corrupt rows filtradas.
+- Hard cap 365 días, `?include_today=true|false`, `notes` para missing days.
+
+**Tests**: 159 totales. 24 nuevos en analytics, 17 en dashboard endpoints, 21 en billing event-authority + anchor-completeness, 4 en analytics health.
+
+**Documentación nueva**:
+- `docs/decisions/2026-05-09-p9-analytics-anchor-authority.md`
+- `docs/decisions/2026-05-09-p10-analytics-snapshots-and-read-endpoints.md`
+- `docs/modules/analytics.md`
+- Updates en `docs/modules/billing.md`, `medical_records.md`, `appointments.md`, `CLAUDE.md`.
+
 ---
 
 ## 11) Índice de ADRs (decisiones de arquitectura)
@@ -365,3 +444,5 @@ web: python manage.py migrate --no-input && python manage.py seed_permissions &&
 | `2026-05-05-p6-stepper-vitals-capture.md` | 05-05 | Captura de vitales en stepper | Implementado |
 | `2026-05-05-p7-lazy-invoice-creation.md` | 05-05 | Creación lazy de facturas | Implementado |
 | `2026-05-06-p8-post-done-manual-flow.md` | 05-06 | Flujo manual post-done con CTA explícito | Implementado |
+| `2026-05-09-p9-analytics-anchor-authority.md` | 05-09 | Analytics anchor authority + provenance (Capa 1+2) | Implementado |
+| `2026-05-09-p10-analytics-snapshots-and-read-endpoints.md` | 05-09 | Snapshots minimal v1 + read endpoints JSON-first (Capa 3+4+5) | Implementado |

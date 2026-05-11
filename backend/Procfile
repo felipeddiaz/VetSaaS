@@ -1,1 +1,11 @@
-web: python manage.py migrate --no-input && python manage.py seed_permissions && gunicorn config.wsgi:application --bind 0.0.0.0:$PORT
+web: python manage.py collectstatic --noinput && python manage.py migrate --no-input && python manage.py seed_permissions && gunicorn config.wsgi:application --bind 0.0.0.0:$PORT
+# Analytics nightly snapshot. Idempotent + per-org advisory locked, so safe
+# even if Railway double-fires. Per-org failures isolated; non-zero exit
+# code on any org failure (wire alerting on this).
+# Schedule via Railway "Cron" service. Recommended: 06:00 UTC daily
+# (covers Mexico GMT-6/-7/-8 yesterday end-of-day).
+nightly_snapshots: python manage.py build_daily_metrics
+# Anchor invariant audit. Runs after the snapshot job so any lurking
+# anchor corruption surfaces. Exit 1 = unresolved provenance, exit 2 =
+# invariant violation (P1).
+nightly_anchor_audit: python manage.py audit_anchor_integrity --json

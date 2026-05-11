@@ -210,12 +210,13 @@ def validate_name(self, value):
 | `patients` | Estable | core |
 | `prescriptions` | Estable | core (`sanitize_text`, string FKs) |
 | `users` | Estable | core, organizations |
-| `dashboard` | Estable | core (late imports, solo lectura) |
+| `dashboard` | Estable | core, analytics (read endpoints v1) |
 | `organizations` | Bajo | core, patients (signal bootstrap, ocurre 1 vez) |
 | `appointments` | Moderado | core, organizations, users, patients, medical_records (late) |
 | `inventory` | Moderado-alto | core, medical_records, prescriptions |
 | `medical_records` | Alto | core, users, patients, appointments, inventory, prescriptions, billing. Incluye `VitalSigns` (append-only, historial de signos vitales). |
 | `billing` | Alto | core, organizations, users, patients, appointments, medical_records, inventory |
+| `analytics` | Lectura-derivada | core, billing, medical_records, appointments. Solo lee de los demás; nunca muta sus modelos. Snapshots agregados nightly + read endpoints. |
 
 **Triángulo de alto riesgo**: `medical_records ↔ billing ↔ inventory`. Cualquier feature que expanda la consulta clínica (labs, vitales) o el ciclo de facturación (descuentos, reembolsos) aterriza aquí.
 
@@ -269,10 +270,31 @@ Para vistas de lista anidadas bajo una URL con `<pk>` (ej. `/medical-records/<pk
 **ADR-10 — `for_organization()` siempre primero en la cadena de queryset (2026-05-04)**
 `select_related()` y `prefetch_related()` devuelven un `QuerySet` estándar de Django que no tiene el método `for_organization()` del `TenantManager`. La cadena correcta siempre es `Model.objects.for_organization(org).select_related(...).prefetch_related(...)`. Orden inverso genera `AttributeError` en runtime.
 
+**ADR-11 — Analytics anchor authority + provenance (2026-05-09)**
+Cada timestamp usado por analytics (`Invoice.paid_at` / `confirmed_at` / `cancelled_at`, `MedicalRecord.closed_at`, `Appointment.walk_in`) tiene: (a) columna `editable=False`, (b) único writer autoritativo en `services.py`, (c) CHECK constraint DB que enforces `status='X' ⇒ anchor IS NOT NULL`, (d) campo `*_source` con choices `service|audit_log|fallback|unresolved|legacy`. Bypass paths cerrados: admin status readonly, `pay_invoice` movido de view a service, DELETE appointment ahora crea `AppointmentStatusChange`, `MedicalRecord.save()` rechaza `closed` sin `closed_at`. Backfill no-naive: política estricta `audit_log → before_paid → created_at solo si status calza → unresolved`. NUNCA inventar timestamps. Ver ADR `2026-05-09-p9` y `docs/dashboard-metrics-contract.md`.
+
+**ADR-12 — Snapshots analytics minimal v1 + read endpoints JSON-first (2026-05-09)**
+App nueva `apps/analytics/` con `DailyOrgMetrics` (7 KPIs minimales) + `DashboardSnapshotAudit`. Reglas: (a) `is_bucket_frozen()` único helper para freeze decisions, (b) `apply_snapshot()` idempotente — 3 runs producen mismos números/state/`built_at`, (c) today NUNCA snapshotteado — siempre live, (d) per-org PG advisory lock en mgmt command para Railway double-fire safety, (e) per-org failure isolation (un org fallido no aborta otros, exit 2 si alguno falló), (f) `lifecycle_state='corrupt'` rows persistidas pero filtradas en read endpoints (visibles solo en `/analytics-health/`). Read endpoints (`/api/v1/dashboard/operations/series/`, `/api/v1/dashboard/financial/series/`) tagean cada datapoint con `source` ∈ `snapshot|live` y `lifecycle_state`. Hard cap 365 días. Ver ADR `2026-05-09-p10` y `docs/modules/analytics.md`.
+
+---
+
+## Reglas analytics (no negociables)
+
+Validar PR contra esto cuando toque billing/medical_records/appointments/analytics:
+
+1. **Anchor writers solo en `services.py`**. PR que escriba `invoice.status='paid'` directo es bug. Buscar con `grep -rn "\.status\s*=\s*['\"]paid"` antes de mergear.
+2. **Provenance siempre `'service'` en escritura nueva**. Solo `audit_log`/`fallback`/`legacy`/`unresolved` en migraciones de backfill, NUNCA en código de runtime.
+3. **`build_daily_metrics` debe quedar idempotente**. Si agregas KPIs, corre 3x y verifica que `built_at` no avanza al 2do/3er run.
+4. **Today nunca snapshot**. Si necesitas refresh de today, pega el read endpoint (compute live).
+5. **`source` y `lifecycle_state` en TODA respuesta de dashboard**. Frontend que ignore estos campos es bug.
+6. **No `cache.clear()` masivo en signals**. Rompe tenants vecinos. Usar `cache.delete_many` con keys prefijadas por `org_id`.
+7. **CHECK constraints son contrato**. No agregar `NOT VALID` a constraints analíticos. No droppear sin ADR.
+8. **Bumpear `METRICS_SCHEMA_VERSION`** cuando cambies definición semántica de un KPI. Requiere dual-write 30 días (contract §4.7).
+
 ---
 
 ## Tests
-Suite completa: 87 tests en `backend/apps/`
+Suite completa: 159 tests en `backend/apps/`
 ```bash
 python manage.py test \
   apps.core.tests.test_security \
@@ -283,9 +305,21 @@ python manage.py test \
   apps.medical_records.tests.test_vitals \
   apps.billing.tests.test_money \
   apps.billing.tests.test_invoice_state_machine \
-  apps.billing.tests.test_invoice_multitenancy
+  apps.billing.tests.test_invoice_multitenancy \
+  apps.billing.tests.test_event_authority \
+  apps.billing.tests.test_anchor_completeness \
+  apps.appointments.tests.test_walkin \
+  apps.dashboard.tests.test_analytics_health \
+  apps.dashboard.tests.test_series_endpoints \
+  apps.analytics.tests.test_snapshot_v1 \
+  apps.analytics.tests.test_build_command \
+  apps.analytics.tests.test_cron_safety
 ```
 El `test_e2e.py` en la raíz de `backend/` requiere servidor corriendo — no se incluye en la suite normal.
+
+**Comandos útiles**:
+- `python manage.py audit_anchor_integrity` — valida invariantes de anchors antes de snapshots / post-deploy / post-import. Exit 0/1/2 para CI.
+- `python manage.py build_daily_metrics` — nightly snapshot. Idempotente + per-org advisory locked. Default: yesterday por org-local TZ.
 
 ---
 
