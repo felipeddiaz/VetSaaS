@@ -1,84 +1,63 @@
-import { useRef, useEffect, useMemo } from "react";
-import { Chart, registerables } from "chart.js";
+import { memo, useId, useMemo } from "react";
+import {
+  AreaChart, Area,
+  XAxis, YAxis, Tooltip, ResponsiveContainer,
+} from "recharts";
 import { useFinancialSeries } from "../../hooks/useFinancialSeries";
 
-Chart.register(...registerables);
-
+/* ── Pure helpers (outside component) ─────────────────────── */
 const DAYS_SHORT = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"];
 
-function dayLabel(dateStr) {
+const dayLabel = (dateStr) => {
   const d = new Date(dateStr + "T12:00:00");
   return `${DAYS_SHORT[d.getDay()]} ${d.getDate()}`;
-}
+};
 
-export default function RevenueLineChart({ rangeDays = 30 }) {
-  const canvasRef = useRef(null);
-  const chartRef  = useRef(null);
+const fmtMXN = (v) =>
+  v != null ? `$${Number(v).toLocaleString("es-MX")}` : "—";
+
+const transformRevenueData = (points) =>
+  points.map((p) => ({
+    label:    dayLabel(p.bucketDate),
+    paid:     p.metrics?.revenuePaid     ?? null,
+    accrual:  p.metrics?.revenueAccrual  ?? null,
+  }));
+
+/* ── Tooltip ───────────────────────────────────────────────── */
+const RevenueTooltip = ({ active, payload, label }) => {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="chart-tooltip">
+      <p className="chart-tooltip-title">{label}</p>
+      {payload.map((p) => (
+        <div key={p.dataKey} className="chart-tooltip-row">
+          <span
+            className="chart-tooltip-dot"
+            style={{ "--dot-color": p.stroke }}
+          />
+          <span>{p.name}</span>
+          <span className="chart-tooltip-val">{fmtMXN(p.value)}</span>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+/* ── Component ─────────────────────────────────────────────── */
+function RevenueLineChart({ rangeDays = 30 }) {
+  const uid = useId();
+  const gPaid    = `${uid}-paid`;
+  const gAccrual = `${uid}-accrual`;
+
   const { series, today, loading } = useFinancialSeries(rangeDays, true);
 
   const points = useMemo(() => {
-    const all = [...series];
+    const all = [...(series ?? [])];
     if (today) all.push(today);
     return all.sort((a, b) => (a.bucketDate > b.bucketDate ? 1 : -1));
   }, [series, today]);
 
-  useEffect(() => {
-    if (!canvasRef.current || points.length === 0) return;
-    if (chartRef.current) chartRef.current.destroy();
-
-    const style   = getComputedStyle(document.documentElement);
-    const primary = style.getPropertyValue("--c-primary").trim() || "#1a4434";
-    const accent  = style.getPropertyValue("--c-accent").trim()  || "#d67b5c";
-    const grid    = "rgba(15, 42, 31, 0.06)";
-
-    chartRef.current = new Chart(canvasRef.current, {
-      type: "line",
-      data: {
-        labels: points.map((p) => dayLabel(p.bucketDate)),
-        datasets: [
-          {
-            label: "Cobrado",
-            data: points.map((p) => p.metrics?.revenuePaid ?? null),
-            borderColor: primary,
-            backgroundColor: primary + "20",
-            fill: true,
-            borderWidth: 2,
-            pointRadius: 2,
-            tension: 0.3,
-            spanGaps: false,
-          },
-          {
-            label: "Devengado",
-            data: points.map((p) => p.metrics?.revenueAccrual ?? null),
-            borderColor: accent,
-            backgroundColor: accent + "20",
-            fill: true,
-            borderWidth: 1.5,
-            borderDash: [5, 3],
-            pointRadius: 0,
-            tension: 0.3,
-            spanGaps: false,
-          },
-        ],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: { mode: "index", intersect: false },
-        plugins: { legend: { display: false } },
-        scales: {
-          x: { grid: { display: false }, ticks: { font: { size: 9 }, maxTicksLimit: 12 } },
-          y: {
-            beginAtZero: true,
-            grid: { color: grid },
-            ticks: { font: { size: 10 }, callback: (v) => `$${v.toLocaleString("es-MX")}` },
-          },
-        },
-      },
-    });
-
-    return () => { if (chartRef.current) chartRef.current.destroy(); };
-  }, [points]);
+  const chartData = useMemo(() => transformRevenueData(points ?? []), [points]);
 
   if (loading && points.length === 0) {
     return <div className="chart-area"><div className="skeleton-block sk-chart" /></div>;
@@ -91,12 +70,68 @@ export default function RevenueLineChart({ rangeDays = 30 }) {
           <span className="chart-dot chart-dot-primary" /> Cobrado
         </span>
         <span className="chart-legend-item">
-          <span className="chart-dot chart-dot-dash chart-dot-accent" /> Devengado
+          <span className="chart-dot chart-dot-accent-line" /> Devengado
         </span>
       </div>
       <div className="chart-canvas-wrap">
-        <canvas ref={canvasRef} />
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart
+            data={chartData}
+            margin={{ top: 4, right: 4, left: 0, bottom: 0 }}
+          >
+            <defs>
+              <linearGradient id={gPaid} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%"  stopColor="var(--c-primary)" stopOpacity={0.15} />
+                <stop offset="95%" stopColor="var(--c-primary)" stopOpacity={0} />
+              </linearGradient>
+              <linearGradient id={gAccrual} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%"  stopColor="var(--c-accent)" stopOpacity={0.12} />
+                <stop offset="95%" stopColor="var(--c-accent)" stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <XAxis
+              dataKey="label"
+              tick={{ fontSize: 9 }}
+              axisLine={false}
+              tickLine={false}
+              interval="preserveStartEnd"
+            />
+            <YAxis
+              tick={{ fontSize: 10 }}
+              axisLine={false}
+              tickLine={false}
+              tickFormatter={fmtMXN}
+              width={72}
+            />
+            <Tooltip content={<RevenueTooltip />} />
+            <Area
+              dataKey="paid"
+              name="Cobrado"
+              stroke="var(--c-primary)"
+              fill={`url(#${gPaid})`}
+              strokeWidth={2}
+              dot={{ r: 2, fill: "var(--c-primary)" }}
+              activeDot={{ r: 4 }}
+              connectNulls={false}
+              isAnimationActive={false}
+            />
+            <Area
+              dataKey="accrual"
+              name="Devengado"
+              stroke="var(--c-accent)"
+              fill={`url(#${gAccrual})`}
+              strokeWidth={1.5}
+              strokeDasharray="5 3"
+              dot={false}
+              activeDot={{ r: 4 }}
+              connectNulls={false}
+              isAnimationActive={false}
+            />
+          </AreaChart>
+        </ResponsiveContainer>
       </div>
     </div>
   );
 }
+
+export default memo(RevenueLineChart);

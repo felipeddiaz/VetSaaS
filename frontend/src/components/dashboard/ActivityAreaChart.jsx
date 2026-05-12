@@ -1,101 +1,72 @@
-import { useRef, useEffect, useMemo } from "react";
-import { Chart, registerables } from "chart.js";
+import { memo, useMemo } from "react";
+import {
+  ComposedChart, Bar, Line,
+  XAxis, YAxis, Tooltip, ResponsiveContainer,
+} from "recharts";
 import { useDashboardSeries } from "../../hooks/useDashboardSeries";
 
-Chart.register(...registerables);
-
+/* ── Pure helpers (outside component) ─────────────────────── */
 const DAYS_SHORT = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"];
 
-function dayLabel(dateStr) {
+const dayLabel = (dateStr) => {
   const d = new Date(dateStr + "T12:00:00");
   return DAYS_SHORT[d.getDay()];
-}
+};
 
-function isCorrupt(dp) {
-  return dp?.lifecycleState === "corrupt";
-}
+const isCorrupt = (dp) => dp?.lifecycleState === "corrupt";
 
-export default function ActivityAreaChart({ rangeDays = 7 }) {
-  const canvasRef = useRef(null);
-  const chartRef  = useRef(null);
+const transformActivityData = (points) =>
+  points.map((p) => ({
+    label:  dayLabel(p.bucketDate),
+    done:   isCorrupt(p) ? null : (p.metrics?.appointmentsDone   ?? 0),
+    noShow: isCorrupt(p) ? null : (p.metrics?.appointmentsNoShow ?? 0),
+    total:  isCorrupt(p) ? null : (p.metrics?.appointmentsTotal  ?? 0),
+    corrupt: isCorrupt(p),
+  }));
+
+/* ── Tooltip ───────────────────────────────────────────────── */
+const ActivityTooltip = ({ active, payload, label }) => {
+  if (!active || !payload?.length) return null;
+  const entry = payload[0]?.payload;
+  if (entry?.corrupt) {
+    return (
+      <div className="chart-tooltip">
+        <p className="chart-tooltip-title">{label}</p>
+        <p className="chart-tooltip-meta">Datos no disponibles</p>
+      </div>
+    );
+  }
+  return (
+    <div className="chart-tooltip">
+      <p className="chart-tooltip-title">{label}</p>
+      {payload.map((p) => (
+        <div key={p.dataKey} className="chart-tooltip-row">
+          <span
+            className="chart-tooltip-dot"
+            style={{ "--dot-color": p.fill || p.stroke }}
+          />
+          <span>{p.name}</span>
+          <span className="chart-tooltip-val">{p.value ?? "—"}</span>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+/* ── Component ─────────────────────────────────────────────── */
+function ActivityAreaChart({ rangeDays = 7 }) {
   const { allPoints, loading } = useDashboardSeries(rangeDays, true);
 
-  const points = useMemo(() => {
-    if (!allPoints || allPoints.length === 0) return [];
-    return allPoints
-      .filter((p) => p && !p.isMissing)
-      .sort((a, b) => (a.bucketDate > b.bucketDate ? 1 : -1));
-  }, [allPoints]);
+  const points = useMemo(
+    () =>
+      (allPoints ?? [])
+        .filter((p) => p && !p.isMissing)
+        .sort((a, b) => (a.bucketDate > b.bucketDate ? 1 : -1)),
+    [allPoints]
+  );
 
-  const hasCorrupt = useMemo(() => points.some(isCorrupt), [points]);
-
-  useEffect(() => {
-    if (!canvasRef.current || points.length === 0) return;
-    if (chartRef.current) chartRef.current.destroy();
-
-    const style   = getComputedStyle(document.documentElement);
-    const primary = style.getPropertyValue("--c-primary").trim() || "#1a4434";
-    const accent  = style.getPropertyValue("--c-accent").trim()  || "#d67b5c";
-    const muted   = style.getPropertyValue("--c-text-3").trim()  || "#8a8a7f";
-    const grid    = "rgba(15, 42, 31, 0.06)";
-
-    chartRef.current = new Chart(canvasRef.current, {
-      type: "bar",
-      data: {
-        labels: points.map((p) => dayLabel(p.bucketDate)),
-        datasets: [
-          {
-            label: "Completadas",
-            data: points.map((p) => isCorrupt(p) ? null : (p.metrics?.appointmentsDone ?? 0)),
-            backgroundColor: primary,
-            borderRadius: 4,
-            barPercentage: 0.6,
-          },
-          {
-            label: "No-show",
-            data: points.map((p) => isCorrupt(p) ? null : (p.metrics?.appointmentsNoShow ?? 0)),
-            backgroundColor: muted,
-            borderRadius: 4,
-            barPercentage: 0.6,
-          },
-          {
-            label: "Total",
-            data: points.map((p) => isCorrupt(p) ? null : (p.metrics?.appointmentsTotal ?? 0)),
-            type: "line",
-            borderColor: accent,
-            backgroundColor: "transparent",
-            borderWidth: 2,
-            pointRadius: 3,
-            pointBackgroundColor: accent,
-            tension: 0.3,
-            spanGaps: false,
-          },
-        ],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: { mode: "index", intersect: false },
-        plugins: {
-          legend: { display: false },
-          tooltip: {
-            callbacks: {
-              label(ctx) {
-                if (ctx.raw === null) return "Datos no disponibles";
-                return `${ctx.dataset.label}: ${ctx.raw}`;
-              },
-            },
-          },
-        },
-        scales: {
-          x: { stacked: true, grid: { display: false }, ticks: { font: { size: 10 } } },
-          y: { stacked: true, beginAtZero: true, grid: { color: grid }, ticks: { font: { size: 10 } } },
-        },
-      },
-    });
-
-    return () => { if (chartRef.current) chartRef.current.destroy(); };
-  }, [points]);
+  const chartData   = useMemo(() => transformActivityData(points ?? []), [points]);
+  const hasCorrupt  = useMemo(() => points.some(isCorrupt), [points]);
 
   if (loading && points.length === 0) {
     return <div className="chart-area"><div className="skeleton-block sk-chart" /></div>;
@@ -120,8 +91,56 @@ export default function ActivityAreaChart({ rangeDays = 7 }) {
         </span>
       </div>
       <div className="chart-canvas-wrap">
-        <canvas ref={canvasRef} />
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart
+            data={chartData}
+            margin={{ top: 4, right: 4, left: -20, bottom: 0 }}
+            barCategoryGap="35%"
+          >
+            <XAxis
+              dataKey="label"
+              tick={{ fontSize: 10 }}
+              axisLine={false}
+              tickLine={false}
+            />
+            <YAxis
+              tick={{ fontSize: 10 }}
+              axisLine={false}
+              tickLine={false}
+              allowDecimals={false}
+            />
+            <Tooltip content={<ActivityTooltip />} />
+            <Bar
+              dataKey="done"
+              name="Completadas"
+              stackId="a"
+              fill="var(--c-primary)"
+              radius={[0, 0, 0, 0]}
+              isAnimationActive={false}
+            />
+            <Bar
+              dataKey="noShow"
+              name="No-show"
+              stackId="a"
+              fill="var(--c-text-3)"
+              radius={[3, 3, 0, 0]}
+              isAnimationActive={false}
+            />
+            <Line
+              dataKey="total"
+              name="Total"
+              stroke="var(--c-accent)"
+              strokeWidth={2}
+              dot={{ r: 3, fill: "var(--c-accent)" }}
+              activeDot={{ r: 5 }}
+              connectNulls={false}
+              isAnimationActive={false}
+            />
+          </ComposedChart>
+        </ResponsiveContainer>
       </div>
     </div>
   );
 }
+
+export default memo(ActivityAreaChart);
