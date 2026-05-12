@@ -1,14 +1,7 @@
-import { useState, useMemo, Component } from "react";
-import { Doughnut } from "react-chartjs-2";
-import "../../utils/registerCharts";
+import { memo, useState, useMemo, Component } from "react";
+import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from "recharts";
 
-function cssVar(name) {
-  try {
-    if (typeof window === "undefined") return "";
-    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  } catch { return ""; }
-}
-
+/* ── Constants (outside component) ────────────────────────── */
 const PIE_FILLS = {
   scheduled:   "#1e40af",
   confirmed:   "#5b21b6",
@@ -18,96 +11,113 @@ const PIE_FILLS = {
   no_show:     "#8a8a7f",
 };
 
-const StatusPieChart = ({ pieData, grandTotal, onSelect, selectedKey }) => {
+/* ── Pure helpers ──────────────────────────────────────────── */
+const transformPieData = (data) =>
+  (data ?? []).map((d) => ({
+    key:   d.key,
+    name:  d.name,
+    value: d.value,
+    fill:  PIE_FILLS[d.key] || "#8a8a7f",
+  }));
+
+/* ── Tooltip ───────────────────────────────────────────────── */
+const StatusTooltip = ({ active, payload, grandTotal }) => {
+  if (!active || !payload?.length) return null;
+  const { name, value, fill } = payload[0].payload;
+  const total = grandTotal ?? 0;
+  const pct   = total >= 10 && value != null
+    ? ` (${Math.round((value / total) * 100)}%)`
+    : "";
+  return (
+    <div className="chart-tooltip">
+      <div className="chart-tooltip-row">
+        <span className="chart-tooltip-dot" style={{ "--dot-color": fill }} />
+        <span>{name}</span>
+        <span className="chart-tooltip-val">{value ?? "—"}{pct}</span>
+      </div>
+    </div>
+  );
+};
+
+/* ── Component ─────────────────────────────────────────────── */
+function StatusPieChart({ pieData, grandTotal, onSelect, selectedKey }) {
   const [chartError, setChartError] = useState(false);
   const [localActive, setLocalActive] = useState(null);
   const activeKey = selectedKey ?? localActive;
 
-  const chartData = useMemo(() => {
-    try {
-      if (!pieData?.length) return null;
-      return {
-        labels: pieData.map((d) => d.name),
-        datasets: [{
-          data: pieData.map((d) => d.value),
-          backgroundColor: pieData.map((d) => PIE_FILLS[d.key] || "#8a8a7f"),
-          borderColor: pieData.map(() => cssVar("--c-surface") || "#fbf8f1"),
-          borderWidth: 1.5,
-          hoverBorderWidth: 2,
-          hoverBorderColor: cssVar("--c-text") || "#1a1a1a",
-          spacing: 2,
-        }],
-      };
-    } catch { return null; }
-  }, [pieData]);
+  const chartData = useMemo(() => transformPieData(pieData ?? []), [pieData]);
 
-  const options = useMemo(() => ({
-    responsive: true,
-    maintainAspectRatio: false,
-    cutout: "58%",
-    plugins: {
-      legend: {
-        position: "bottom",
-        labels: {
-          font: { size: 10 },
-          color: cssVar("--c-text-2") || "#3a3a3a",
-          padding: 12,
-          usePointStyle: true,
-          pointStyleWidth: 8,
-        },
-      },
-      tooltip: {
-        backgroundColor: cssVar("--c-surface") || "#fff",
-        titleColor: cssVar("--c-text") || "#1a1a1a",
-        bodyColor:  cssVar("--c-text-2") || "#3a3a3a",
-        borderColor: cssVar("--c-border") || "#e0dcd0",
-        borderWidth: 1, cornerRadius: 8, padding: 10,
-        titleFont: { size: 11 }, bodyFont: { size: 11 },
-        callbacks: {
-          label(ctx) {
-            const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
-            const pct   = total > 0 ? Math.round((ctx.raw / total) * 100) : 0;
-            return ` ${ctx.label}: ${ctx.raw}${grandTotal >= 10 ? ` (${pct}%)` : ""}`;
-          },
-        },
-      },
-    },
-    onClick(_event, elements) {
-      if (!elements?.length) { setLocalActive(null); onSelect?.(null); return; }
-      const key = pieData?.[elements[0]?.index]?.key;
-      if (key) {
-        const next = key === activeKey ? null : key;
-        setLocalActive(next);
-        onSelect?.(next);
-      }
-    },
-  }), [pieData, grandTotal, activeKey, onSelect]);
+  const handleClick = (_, index) => {
+    const key  = chartData[index]?.key;
+    if (!key) return;
+    const next = key === activeKey ? null : key;
+    setLocalActive(next);
+    onSelect?.(next);
+  };
+
+  const handleEmpty = () => {
+    setLocalActive(null);
+    onSelect?.(null);
+  };
 
   if (chartError) {
     return (
       <div className="pie-state-wrap">
         No se pudo cargar la gráfica.
-        <button className="btn btn-ghost btn-xs pie-retry-btn" onClick={() => setChartError(false)}>
+        <button
+          className="btn btn-ghost btn-xs pie-retry-btn"
+          onClick={() => setChartError(false)}
+        >
           Reintentar
         </button>
       </div>
     );
   }
 
-  if (!chartData) {
+  if (!chartData.length) {
     return <div className="db-pie-empty">Sin citas en este periodo.</div>;
   }
 
   return (
     <div className="pie-chart-wrap">
-      <div className="pie-chart-inner">
-        <ErrorCatcher onError={() => setChartError(true)}>
-          <Doughnut data={chartData} options={options} />
-        </ErrorCatcher>
-      </div>
+      <ErrorCatcher onError={() => setChartError(true)}>
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart onClick={handleEmpty}>
+            <Pie
+              data={chartData}
+              dataKey="value"
+              nameKey="name"
+              innerRadius="52%"
+              outerRadius="80%"
+              paddingAngle={2}
+              onClick={handleClick}
+              isAnimationActive={false}
+            >
+              {chartData.map((entry) => (
+                <Cell
+                  key={entry.key}
+                  fill={entry.fill}
+                  stroke={activeKey === entry.key ? "var(--c-text)" : "var(--c-surface)"}
+                  strokeWidth={activeKey === entry.key ? 2 : 1.5}
+                />
+              ))}
+            </Pie>
+            <Tooltip
+              content={(props) => (
+                <StatusTooltip {...props} grandTotal={grandTotal} />
+              )}
+            />
+            <Legend
+              iconType="circle"
+              iconSize={8}
+              wrapperStyle={{ fontSize: "10px", color: "var(--c-text-2)" }}
+            />
+          </PieChart>
+        </ResponsiveContainer>
+      </ErrorCatcher>
     </div>
   );
-};
+}
 
 class ErrorCatcher extends Component {
   constructor(props) { super(props); this.state = { err: false }; }
@@ -116,4 +126,4 @@ class ErrorCatcher extends Component {
   render() { return this.state.err ? null : this.props.children; }
 }
 
-export default StatusPieChart;
+export default memo(StatusPieChart);
