@@ -11,30 +11,36 @@ const PILL_CLASS = {
 };
 
 const STATUS_LABELS = {
-  scheduled: "Programada", confirmed: "Confirmada",
-  in_progress: "En consulta", done: "Completada",
-  canceled: "Cancelada",   no_show: "No se presentó",
+  scheduled:   "Programada",
+  confirmed:   "Confirmada",
+  in_progress: "En consulta",
+  done:        "Completada",
+  canceled:    "Cancelada",
+  no_show:     "No se presentó",
 };
 
 const AppointmentBreakdown = ({ byStatus, totals, statusOrder, selectedStatus }) => {
   const navigate = useNavigate();
   if (!statusOrder?.length) return null;
 
+  const grandTotal = Object.values(totals || {}).reduce((a, b) => a + b, 0);
   const title = selectedStatus
     ? `${STATUS_LABELS[selectedStatus]} (${totals[selectedStatus] || 0})`
-    : `Agenda (${Object.values(totals || {}).reduce((a, b) => a + b, 0)})`;
+    : `Agenda (${grandTotal})`;
 
   return (
     <>
       <div className="card-header">
         <span className="card-title">{title}</span>
       </div>
+
       {statusOrder.map((status) => {
-        const group = byStatus[status];
-        const total = totals[status] || 0;
-        const items = group?.items || [];
-        const hasMore = group?.has_more;
+        const group     = byStatus[status];
+        const total     = totals[status] || 0;
+        const items     = group?.items || [];
+        const hasMore   = group?.has_more;
         const remaining = group?.remaining;
+
         if (selectedStatus && selectedStatus !== status) return null;
         if (!selectedStatus && total === 0) return null;
 
@@ -62,17 +68,19 @@ const AppointmentBreakdown = ({ byStatus, totals, statusOrder, selectedStatus })
               </button>
             ))}
             {hasMore && (
-              <button className="breakdown-more-btn" onClick={() => navigate(`/appointments?status=${status}`)}>
+              <button
+                className="breakdown-more-btn"
+                onClick={() => navigate(`/appointments?status=${status}`)}
+              >
                 + Ver {remaining} más
               </button>
             )}
           </div>
         );
       })}
+
       {statusOrder.every((s) => (totals[s] || 0) === 0) && (
-        <div style={{ color: "var(--c-text-3)", fontSize: "11px", textAlign: "center", padding: "20px 0" }}>
-          Sin citas en este periodo.
-        </div>
+        <div className="breakdown-empty">Sin citas en este periodo.</div>
       )}
     </>
   );

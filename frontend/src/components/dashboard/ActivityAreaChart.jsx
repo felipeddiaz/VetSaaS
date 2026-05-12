@@ -17,7 +17,7 @@ function isCorrupt(dp) {
 
 export default function ActivityAreaChart({ rangeDays = 7 }) {
   const canvasRef = useRef(null);
-  const chartRef = useRef(null);
+  const chartRef  = useRef(null);
   const { allPoints, loading } = useDashboardSeries(rangeDays, true);
 
   const points = useMemo(() => {
@@ -33,45 +33,34 @@ export default function ActivityAreaChart({ rangeDays = 7 }) {
     if (!canvasRef.current || points.length === 0) return;
     if (chartRef.current) chartRef.current.destroy();
 
-    const labels = points.map((p) => dayLabel(p.bucketDate));
-    const doneData = points.map((p) =>
-      isCorrupt(p) ? null : (p.metrics?.appointmentsDone ?? 0)
-    );
-    const noShowData = points.map((p) =>
-      isCorrupt(p) ? null : (p.metrics?.appointmentsNoShow ?? 0)
-    );
-    const totalData = points.map((p) =>
-      isCorrupt(p) ? null : (p.metrics?.appointmentsTotal ?? 0)
-    );
-
-    const style = getComputedStyle(document.documentElement);
+    const style   = getComputedStyle(document.documentElement);
     const primary = style.getPropertyValue("--c-primary").trim() || "#1a4434";
-    const accent = style.getPropertyValue("--c-accent").trim() || "#d67b5c";
-    const muted = style.getPropertyValue("--c-text-3").trim() || "#8a8a7f";
-    const grid = "rgba(15, 42, 31, 0.06)";
+    const accent  = style.getPropertyValue("--c-accent").trim()  || "#d67b5c";
+    const muted   = style.getPropertyValue("--c-text-3").trim()  || "#8a8a7f";
+    const grid    = "rgba(15, 42, 31, 0.06)";
 
     chartRef.current = new Chart(canvasRef.current, {
       type: "bar",
       data: {
-        labels,
+        labels: points.map((p) => dayLabel(p.bucketDate)),
         datasets: [
           {
             label: "Completadas",
-            data: doneData,
+            data: points.map((p) => isCorrupt(p) ? null : (p.metrics?.appointmentsDone ?? 0)),
             backgroundColor: primary,
             borderRadius: 4,
             barPercentage: 0.6,
           },
           {
             label: "No-show",
-            data: noShowData,
+            data: points.map((p) => isCorrupt(p) ? null : (p.metrics?.appointmentsNoShow ?? 0)),
             backgroundColor: muted,
             borderRadius: 4,
             barPercentage: 0.6,
           },
           {
             label: "Total",
-            data: totalData,
+            data: points.map((p) => isCorrupt(p) ? null : (p.metrics?.appointmentsTotal ?? 0)),
             type: "line",
             borderColor: accent,
             backgroundColor: "transparent",
@@ -105,9 +94,7 @@ export default function ActivityAreaChart({ rangeDays = 7 }) {
       },
     });
 
-    return () => {
-      if (chartRef.current) chartRef.current.destroy();
-    };
+    return () => { if (chartRef.current) chartRef.current.destroy(); };
   }, [points]);
 
   if (loading && points.length === 0) {
@@ -122,11 +109,17 @@ export default function ActivityAreaChart({ rangeDays = 7 }) {
         </div>
       )}
       <div className="chart-legend">
-        <span className="chart-legend-item"><span className="chart-dot" style={{ background: "var(--c-primary)" }} /> Completadas</span>
-        <span className="chart-legend-item"><span className="chart-dot" style={{ background: "var(--c-text-3)" }} /> No-show</span>
-        <span className="chart-legend-item"><span className="chart-dot chart-dot-line" style={{ borderColor: "var(--c-accent)" }} /> Total</span>
+        <span className="chart-legend-item">
+          <span className="chart-dot chart-dot-primary" /> Completadas
+        </span>
+        <span className="chart-legend-item">
+          <span className="chart-dot chart-dot-muted" /> No-show
+        </span>
+        <span className="chart-legend-item">
+          <span className="chart-dot chart-dot-line chart-dot-accent" /> Total
+        </span>
       </div>
-      <div style={{ height: 220 }}>
+      <div className="chart-canvas-wrap">
         <canvas ref={canvasRef} />
       </div>
     </div>

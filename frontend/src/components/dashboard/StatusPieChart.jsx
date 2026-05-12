@@ -3,8 +3,10 @@ import { Doughnut } from "react-chartjs-2";
 import "../../utils/registerCharts";
 
 function cssVar(name) {
-  try { if (typeof window === "undefined") return ""; return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
-  catch { return ""; }
+  try {
+    if (typeof window === "undefined") return "";
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  } catch { return ""; }
 }
 
 const PIE_FILLS = {
@@ -47,34 +49,32 @@ const StatusPieChart = ({ pieData, grandTotal, onSelect, selectedKey }) => {
       legend: {
         position: "bottom",
         labels: {
-          font: { size: 10 }, color: cssVar("--c-text-2") || "#3a3a3a",
-          padding: 12, usePointStyle: true, pointStyleWidth: 8,
+          font: { size: 10 },
+          color: cssVar("--c-text-2") || "#3a3a3a",
+          padding: 12,
+          usePointStyle: true,
+          pointStyleWidth: 8,
         },
       },
       tooltip: {
         backgroundColor: cssVar("--c-surface") || "#fff",
         titleColor: cssVar("--c-text") || "#1a1a1a",
-        bodyColor: cssVar("--c-text-2") || "#3a3a3a",
+        bodyColor:  cssVar("--c-text-2") || "#3a3a3a",
         borderColor: cssVar("--c-border") || "#e0dcd0",
         borderWidth: 1, cornerRadius: 8, padding: 10,
         titleFont: { size: 11 }, bodyFont: { size: 11 },
         callbacks: {
           label(ctx) {
             const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
-            const pct = total > 0 ? Math.round((ctx.raw / total) * 100) : 0;
+            const pct   = total > 0 ? Math.round((ctx.raw / total) * 100) : 0;
             return ` ${ctx.label}: ${ctx.raw}${grandTotal >= 10 ? ` (${pct}%)` : ""}`;
           },
         },
       },
     },
     onClick(_event, elements) {
-      if (!elements?.length) {
-        setLocalActive(null);
-        onSelect?.(null);
-        return;
-      }
-      const idx = elements[0]?.index;
-      const key = pieData?.[idx]?.key;
+      if (!elements?.length) { setLocalActive(null); onSelect?.(null); return; }
+      const key = pieData?.[elements[0]?.index]?.key;
       if (key) {
         const next = key === activeKey ? null : key;
         setLocalActive(next);
@@ -85,9 +85,11 @@ const StatusPieChart = ({ pieData, grandTotal, onSelect, selectedKey }) => {
 
   if (chartError) {
     return (
-      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--c-text-3)", fontSize: "11px", textAlign: "center" }}>
+      <div className="pie-state-wrap">
         No se pudo cargar la gráfica.
-        <button className="btn btn-ghost btn-xs" onClick={() => setChartError(false)} style={{ marginLeft: "8px" }}>Reintentar</button>
+        <button className="btn btn-ghost btn-xs pie-retry-btn" onClick={() => setChartError(false)}>
+          Reintentar
+        </button>
       </div>
     );
   }
@@ -97,8 +99,8 @@ const StatusPieChart = ({ pieData, grandTotal, onSelect, selectedKey }) => {
   }
 
   return (
-    <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", width: "100%" }}>
-      <div style={{ width: "100%", height: 200 }}>
+    <div className="pie-chart-wrap">
+      <div className="pie-chart-inner">
         <ErrorCatcher onError={() => setChartError(true)}>
           <Doughnut data={chartData} options={options} />
         </ErrorCatcher>

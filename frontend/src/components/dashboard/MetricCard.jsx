@@ -13,35 +13,35 @@ const CARD_CONFIG = {
 const OPERATIONAL_KEYS = new Set(["appointmentsTotal", "appointmentsDone", "appointmentsNoShow"]);
 
 const MetricCard = ({ label, point, metricKey, color = "primary" }) => {
-  const cfg = CARD_CONFIG[color] || CARD_CONFIG.primary;
-  const Comp = cfg.icon;
+  const cfg          = CARD_CONFIG[color] || CARD_CONFIG.primary;
+  const Comp         = cfg.icon;
   const isOperational = OPERATIONAL_KEYS.has(metricKey);
 
   if (!point) {
     return (
       <div className={`kpi-card ${cfg.className}`}>
-        <span style={{ color: "var(--c-text-4)", fontSize: "12px" }}>—</span>
+        <span className="kpi-empty">—</span>
       </div>
     );
   }
 
   const isMissing = point.isMissing;
-  const isLive = point.isLive;
-  const showLive = isLive && !isMissing && isOperational;
-  const rawValue = isMissing ? null : (point.metrics?.[metricKey] ?? null);
+  const isLive    = point.isLive;
+  const showLive  = isLive && !isMissing && isOperational;
+  const rawValue  = isMissing ? null : (point.metrics?.[metricKey] ?? null);
 
   return (
     <div className={`kpi-card ${cfg.className}`}>
       <div className={`kpi-icon ${cfg.iconBg}`}>
         <Comp s={13} c={cfg.iconColor} />
       </div>
-      <div className="kpi-val" style={{ color: isMissing ? "var(--c-text-4)" : undefined }}>
+      <div className={`kpi-val${isMissing ? " kpi-val-missing" : ""}`}>
         {isMissing ? <MissingState /> : rawValue == null ? "—" : fmtInt(rawValue)}
       </div>
       <div className="kpi-lbl">{label}</div>
       {showLive && (
         <div className="kpi-live">
-          <span style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--c-success-text)", display: "inline-block", flexShrink: 0 }} />
+          <span className="kpi-live-dot" />
           EN VIVO
         </div>
       )}

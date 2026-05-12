@@ -20,18 +20,7 @@ export default function StockAlerts({ alerts }) {
       <div className="side-title">
         Stock crítico
         {critical.length > 0 && (
-          <span style={{
-            marginLeft: "auto",
-            fontFamily: "var(--font-display)",
-            fontSize: "10px",
-            fontWeight: "700",
-            background: "#fef2f2",
-            color: "#991b1b",
-            border: "1px solid #fecaca",
-            borderRadius: "999px",
-            padding: "1px 8px",
-            letterSpacing: "0.04em",
-          }}>
+          <span className="sa-critical-count">
             {critical.length} agotado{critical.length > 1 ? "s" : ""}
           </span>
         )}
@@ -68,13 +57,7 @@ export default function StockAlerts({ alerts }) {
       </div>
 
       {alerts.length > 5 && (
-        <div style={{
-          fontFamily: "var(--font-display)",
-          fontSize: "10.5px",
-          color: "var(--c-text-3)",
-          textAlign: "center",
-          padding: "6px 0 2px",
-        }}>
+        <div className="sa-overflow-label">
           +{alerts.length - 5} más
         </div>
       )}

@@ -16,7 +16,7 @@ const Dashboard = () => {
   const renderSkeleton = () => (
     <>
       {/* skeleton hero */}
-      <div className="skeleton-block" style={{ height: 120, borderRadius: 16, marginBottom: 16 }} />
+      <div className="skeleton-block sk-hero" />
       <div className="dash-grid">
         <div className="dash-main">
           <div className="kpiStrip-v2">

@@ -2,9 +2,9 @@ import { useNavigate } from "react-router-dom";
 import { Icon } from "../icons";
 
 const REC_TYPE = {
-  general: "General",
-  surgery: "Cirugía",
-  vaccine: "Vacuna",
+  general:   "General",
+  surgery:   "Cirugía",
+  vaccine:   "Vacuna",
   emergency: "Emergencia",
 };
 
@@ -15,7 +15,7 @@ const OperationalFeed = ({ openRecords }) => {
   return (
     <div className="card">
       <div className="card-header">
-        <span className="card-title" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+        <span className="card-title card-title-icon">
           <Icon.FileHeart s={14} c="var(--c-primary)" />
           Consultas abiertas
         </span>
@@ -24,10 +24,12 @@ const OperationalFeed = ({ openRecords }) => {
         )}
       </div>
 
-      {loading && <div style={{ color: "var(--c-text-3)", fontSize: "11px", textAlign: "center", padding: "16px 0" }}>Cargando...</div>}
+      {loading && (
+        <div className="feed-state feed-loading">Cargando...</div>
+      )}
 
       {error && (
-        <div style={{ color: "var(--c-danger-text)", fontSize: "11px", padding: "12px 0", display: "flex", alignItems: "center", gap: "8px" }}>
+        <div className="feed-state feed-error">
           <Icon.AlertTriangle s={12} c="var(--c-danger-text)" />
           <span>{error}</span>
           <button className="btn btn-ghost btn-xs" onClick={refetch}>
@@ -37,9 +39,7 @@ const OperationalFeed = ({ openRecords }) => {
       )}
 
       {!loading && !error && list.length === 0 && (
-        <div style={{ color: "var(--c-text-3)", fontSize: "11px", textAlign: "center", padding: "16px 0" }}>
-          No hay consultas abiertas.
-        </div>
+        <div className="feed-state feed-empty">No hay consultas abiertas.</div>
       )}
 
       {!loading && !error && list.length > 0 && (
@@ -63,7 +63,10 @@ const OperationalFeed = ({ openRecords }) => {
             </button>
           ))}
           {list.length > 5 && (
-            <button className="records-more-btn" onClick={() => navigate("/medical-records?status=open")}>
+            <button
+              className="records-more-btn"
+              onClick={() => navigate("/medical-records?status=open")}
+            >
               Ver todas ({list.length})
             </button>
           )}

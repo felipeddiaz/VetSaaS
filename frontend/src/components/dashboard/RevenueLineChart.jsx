@@ -13,7 +13,7 @@ function dayLabel(dateStr) {
 
 export default function RevenueLineChart({ rangeDays = 30 }) {
   const canvasRef = useRef(null);
-  const chartRef = useRef(null);
+  const chartRef  = useRef(null);
   const { series, today, loading } = useFinancialSeries(rangeDays, true);
 
   const points = useMemo(() => {
@@ -26,26 +26,22 @@ export default function RevenueLineChart({ rangeDays = 30 }) {
     if (!canvasRef.current || points.length === 0) return;
     if (chartRef.current) chartRef.current.destroy();
 
-    const labels = points.map((p) => dayLabel(p.bucketDate));
-    const paidData = points.map((p) => p.metrics?.revenuePaid ?? null);
-    const accrualData = points.map((p) => p.metrics?.revenueAccrual ?? null);
-
-    const style = getComputedStyle(document.documentElement);
+    const style   = getComputedStyle(document.documentElement);
     const primary = style.getPropertyValue("--c-primary").trim() || "#1a4434";
-    const accent = style.getPropertyValue("--c-accent").trim() || "#d67b5c";
-    const grid = "rgba(15, 42, 31, 0.06)";
+    const accent  = style.getPropertyValue("--c-accent").trim()  || "#d67b5c";
+    const grid    = "rgba(15, 42, 31, 0.06)";
 
     chartRef.current = new Chart(canvasRef.current, {
       type: "line",
       data: {
-        labels,
+        labels: points.map((p) => dayLabel(p.bucketDate)),
         datasets: [
           {
             label: "Cobrado",
-            data: paidData,
+            data: points.map((p) => p.metrics?.revenuePaid ?? null),
             borderColor: primary,
             backgroundColor: primary + "20",
-          fill: true,
+            fill: true,
             borderWidth: 2,
             pointRadius: 2,
             tension: 0.3,
@@ -53,10 +49,10 @@ export default function RevenueLineChart({ rangeDays = 30 }) {
           },
           {
             label: "Devengado",
-            data: accrualData,
+            data: points.map((p) => p.metrics?.revenueAccrual ?? null),
             borderColor: accent,
             backgroundColor: accent + "20",
-          fill: true,
+            fill: true,
             borderWidth: 1.5,
             borderDash: [5, 3],
             pointRadius: 0,
@@ -72,7 +68,11 @@ export default function RevenueLineChart({ rangeDays = 30 }) {
         plugins: { legend: { display: false } },
         scales: {
           x: { grid: { display: false }, ticks: { font: { size: 9 }, maxTicksLimit: 12 } },
-          y: { beginAtZero: true, grid: { color: grid }, ticks: { font: { size: 10 }, callback: (v) => `$${v.toLocaleString("es-MX")}` } },
+          y: {
+            beginAtZero: true,
+            grid: { color: grid },
+            ticks: { font: { size: 10 }, callback: (v) => `$${v.toLocaleString("es-MX")}` },
+          },
         },
       },
     });
@@ -87,10 +87,14 @@ export default function RevenueLineChart({ rangeDays = 30 }) {
   return (
     <div className="chart-area">
       <div className="chart-legend">
-        <span className="chart-legend-item"><span className="chart-dot" style={{ background: "var(--c-primary)" }} /> Cobrado</span>
-        <span className="chart-legend-item"><span className="chart-dot chart-dot-dash" style={{ borderColor: "var(--c-accent)" }} /> Devengado</span>
+        <span className="chart-legend-item">
+          <span className="chart-dot chart-dot-primary" /> Cobrado
+        </span>
+        <span className="chart-legend-item">
+          <span className="chart-dot chart-dot-dash chart-dot-accent" /> Devengado
+        </span>
       </div>
-      <div style={{ height: 220 }}>
+      <div className="chart-canvas-wrap">
         <canvas ref={canvasRef} />
       </div>
     </div>

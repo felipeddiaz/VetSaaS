@@ -12,20 +12,7 @@ export default function WaitingRoom({ items }) {
     <div className="side-panel">
       <div className="side-title">
         Sala de espera
-        <span style={{
-          marginLeft: "auto",
-          fontFamily: "var(--font-display)",
-          fontSize: "11px",
-          fontWeight: "700",
-          background: "rgba(26,68,52,0.08)",
-          color: "var(--c-primary)",
-          border: "1px solid rgba(26,68,52,0.14)",
-          borderRadius: "999px",
-          padding: "1px 8px",
-          letterSpacing: "0.02em",
-        }}>
-          {items.length}
-        </span>
+        <span className="wr-count">{items.length}</span>
       </div>
 
       <div className="wr-list">
@@ -41,7 +28,7 @@ export default function WaitingRoom({ items }) {
               <span className="wr-meta">
                 {p.time}
                 {p.wait_minutes > 0 && (
-                  <> · <span style={{ color: p.is_late ? "#92400e" : "inherit" }}>
+                  <> · <span className={p.is_late ? "wr-wait-late" : "wr-wait"}>
                     {p.wait_minutes}min espera
                   </span></>
                 )}
