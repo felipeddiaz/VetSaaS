@@ -21,8 +21,8 @@
   --muted:      #8a8a7f;
   --line:       #d9d2be;
 
-  --font-display: 'Outfit', sans-serif;
-  --font-body:    'Plus Jakarta Sans', -apple-system, system-ui, sans-serif;
+  --font-display: 'Oswald', sans-serif;
+  --font-body:    'Oswald', sans-serif;
 
   /* ── Primary (verde bosque) ──────────────────────────────── */
   --c-primary:       #1a4434;
@@ -118,9 +118,9 @@
   --accent:       #047857;
   --accent-soft:  rgba(4, 120, 87, 0.10);
 
-  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-  --font-dm-sans: "DM Sans", sans-serif;
-  --font-dm-serif: "DM Serif Display", serif;
+  --font-sans: 'Oswald', sans-serif;
+  --font-dm-sans: 'Oswald', sans-serif;
+  --font-dm-serif: 'Oswald', sans-serif;
 
   --bg-dark: #1a2e2b;
   --text-on-dark: #fbf8f1;

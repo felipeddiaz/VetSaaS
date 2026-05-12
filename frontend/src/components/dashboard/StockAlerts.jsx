@@ -22,7 +22,7 @@ export default function StockAlerts({ alerts }) {
         {critical.length > 0 && (
           <span style={{
             marginLeft: "auto",
-            fontFamily: "'DM Sans', var(--font-display)",
+            fontFamily: "var(--font-display)",
             fontSize: "10px",
             fontWeight: "700",
             background: "#fef2f2",
@@ -69,7 +69,7 @@ export default function StockAlerts({ alerts }) {
 
       {alerts.length > 5 && (
         <div style={{
-          fontFamily: "'DM Sans', var(--font-display)",
+          fontFamily: "var(--font-display)",
           fontSize: "10.5px",
           color: "var(--c-text-3)",
           textAlign: "center",

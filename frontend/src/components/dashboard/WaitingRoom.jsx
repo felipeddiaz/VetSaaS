@@ -14,7 +14,7 @@ export default function WaitingRoom({ items }) {
         Sala de espera
         <span style={{
           marginLeft: "auto",
-          fontFamily: "'DM Sans', var(--font-display)",
+          fontFamily: "var(--font-display)",
           fontSize: "11px",
           fontWeight: "700",
           background: "rgba(26,68,52,0.08)",
