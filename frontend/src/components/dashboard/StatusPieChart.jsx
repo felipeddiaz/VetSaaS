@@ -1,5 +1,11 @@
-import { memo, useState, useMemo, Component } from "react";
+import { memo, useState, useMemo, useLayoutEffect, Component } from "react";
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from "recharts";
+
+/* ── CSS var resolver — SVG attrs can't use var() natively ─── */
+const readCssVar = (name, fallback) => {
+  if (typeof window === "undefined") return fallback;
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+};
 
 /* ── Constants (outside component) ────────────────────────── */
 const PIE_FILLS = {
@@ -43,8 +49,18 @@ const StatusTooltip = ({ active, payload, grandTotal }) => {
 function StatusPieChart({ pieData, grandTotal, onSelect, selectedKey }) {
   const [chartError, setChartError] = useState(false);
   const [localActive, setLocalActive] = useState(null);
-  const activeKey = selectedKey ?? localActive;
 
+  // Resolve CSS vars once after mount — SVG attrs don't support var()
+  const [colors, setColors] = useState({ text: "#1a1a1a", surface: "#fbf8f1", text2: "#3a3a3a" });
+  useLayoutEffect(() => {
+    setColors({
+      text:    readCssVar("--c-text",    "#1a1a1a"),
+      surface: readCssVar("--c-surface", "#fbf8f1"),
+      text2:   readCssVar("--c-text-2",  "#3a3a3a"),
+    });
+  }, []);
+
+  const activeKey = selectedKey ?? localActive;
   const chartData = useMemo(() => transformPieData(pieData ?? []), [pieData]);
 
   const handleClick = (_, index) => {
@@ -64,10 +80,7 @@ function StatusPieChart({ pieData, grandTotal, onSelect, selectedKey }) {
     return (
       <div className="pie-state-wrap">
         No se pudo cargar la gráfica.
-        <button
-          className="btn btn-ghost btn-xs pie-retry-btn"
-          onClick={() => setChartError(false)}
-        >
+        <button className="btn btn-ghost btn-xs pie-retry-btn" onClick={() => setChartError(false)}>
           Reintentar
         </button>
       </div>
@@ -97,20 +110,16 @@ function StatusPieChart({ pieData, grandTotal, onSelect, selectedKey }) {
                 <Cell
                   key={entry.key}
                   fill={entry.fill}
-                  stroke={activeKey === entry.key ? "var(--c-text)" : "var(--c-surface)"}
+                  stroke={activeKey === entry.key ? colors.text : colors.surface}
                   strokeWidth={activeKey === entry.key ? 2 : 1.5}
                 />
               ))}
             </Pie>
-            <Tooltip
-              content={(props) => (
-                <StatusTooltip {...props} grandTotal={grandTotal} />
-              )}
-            />
+            <Tooltip content={(props) => <StatusTooltip {...props} grandTotal={grandTotal} />} />
             <Legend
               iconType="circle"
               iconSize={8}
-              wrapperStyle={{ fontSize: "10px", color: "var(--c-text-2)" }}
+              wrapperStyle={{ fontSize: "10px", color: colors.text2 }}
             />
           </PieChart>
         </ResponsiveContainer>

@@ -1,9 +1,15 @@
-import { memo, useState, useMemo, Component } from "react";
+import { memo, useState, useMemo, useLayoutEffect, Component } from "react";
 import {
   ComposedChart, Bar, Line, Cell,
   XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from "recharts";
 import LiveIndicator from "./LiveIndicator";
+
+/* ── CSS var resolver — SVG attrs can't use var() natively ─── */
+const readCssVar = (name, fallback) => {
+  if (typeof window === "undefined") return fallback;
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+};
 
 /* ── Pure helpers (outside component) ─────────────────────── */
 const MONTH_ABBR = ["ENE","FEB","MAR","ABR","MAY","JUN","JUL","AGO","SEP","OCT","NOV","DIC"];
@@ -15,13 +21,6 @@ const fmtDate = (iso) => {
 };
 
 const fmtInt = (v) => Number(v ?? 0).toLocaleString("es-MX");
-
-const cssVar = (name) => {
-  try {
-    if (typeof window === "undefined") return "";
-    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  } catch { return ""; }
-};
 
 const resolveBarColor = (entry, primary, accent) => {
   if (entry.isMissing)     return "transparent";
@@ -48,7 +47,7 @@ const OpsTooltip = ({ active, payload }) => {
   if (!d) return null;
 
   const extras = [];
-  if (d.isLive)        extras.push({ label: "HOY",        cls: "chart-tooltip-live" });
+  if (d.isLive)        extras.push({ label: "HOY",         cls: "chart-tooltip-live" });
   if (d.isProvisional) extras.push({ label: "Provisional", cls: "chart-tooltip-provisional" });
   if (d.isMissing)     extras.push({ label: "Sin datos",   cls: "chart-tooltip-missing" });
 
@@ -67,16 +66,14 @@ const OpsTooltip = ({ active, payload }) => {
       ) : (
         <>
           <div className="chart-tooltip-row">
-            <span className="chart-tooltip-dot" style={{ "--dot-color": "var(--c-primary)" }} />
+            <span className="chart-tooltip-dot" style={{ "--dot-color": readCssVar("--c-primary", "#1a4434") }} />
             <span>Citas totales</span>
             <span className="chart-tooltip-val">{fmtInt(d.total)}</span>
           </div>
           <div className="chart-tooltip-row">
-            <span className="chart-tooltip-dot" style={{ "--dot-color": "var(--c-accent)" }} />
+            <span className="chart-tooltip-dot" style={{ "--dot-color": readCssVar("--c-accent", "#d67b5c") }} />
             <span>Completadas</span>
-            <span className="chart-tooltip-val">
-              {isNaN(d.done) ? "—" : fmtInt(d.done)}
-            </span>
+            <span className="chart-tooltip-val">{isNaN(d.done) ? "—" : fmtInt(d.done)}</span>
           </div>
         </>
       )}
@@ -88,18 +85,24 @@ const OpsTooltip = ({ active, payload }) => {
 function DashboardChart({ allPoints, hasCorrupt }) {
   const [chartError, setChartError] = useState(false);
 
-  const primary = cssVar("--c-primary") || "#1a4434";
-  const accent  = cssVar("--c-accent")  || "#d67b5c";
+  // Resolve CSS vars once after mount — SVG attrs don't support var()
+  const [colors, setColors] = useState({
+    primary: "#1a4434",
+    accent:  "#d67b5c",
+    text3:   "#8a8a7f",
+    border:  "#d9d2be",
+  });
+  useLayoutEffect(() => {
+    setColors({
+      primary: readCssVar("--c-primary", "#1a4434"),
+      accent:  readCssVar("--c-accent",  "#d67b5c"),
+      text3:   readCssVar("--c-text-3",  "#8a8a7f"),
+      border:  readCssVar("--c-border",  "#d9d2be"),
+    });
+  }, []);
 
-  const chartData = useMemo(
-    () => transformOpsData(allPoints ?? []),
-    [allPoints]
-  );
-
-  const hasLive = useMemo(
-    () => (allPoints ?? []).some((p) => p.isLive),
-    [allPoints]
-  );
+  const chartData = useMemo(() => transformOpsData(allPoints ?? []), [allPoints]);
+  const hasLive   = useMemo(() => (allPoints ?? []).some((p) => p.isLive), [allPoints]);
 
   if (chartError) {
     return (
@@ -107,10 +110,7 @@ function DashboardChart({ allPoints, hasCorrupt }) {
         <div className="chart-state-msg">
           No se pudo cargar la gráfica.
           <br />
-          <button
-            className="btn btn-ghost btn-xs chart-retry-btn"
-            onClick={() => setChartError(false)}
-          >
+          <button className="btn btn-ghost btn-xs chart-retry-btn" onClick={() => setChartError(false)}>
             Reintentar
           </button>
         </div>
@@ -142,44 +142,33 @@ function DashboardChart({ allPoints, hasCorrupt }) {
       <div className="db-chart-area">
         <ErrorCatcher onError={() => setChartError(true)}>
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart
-              data={chartData}
-              margin={{ top: 4, right: 4, left: -20, bottom: 0 }}
-            >
+            <ComposedChart data={chartData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
               <XAxis
                 dataKey="label"
-                tick={{ fontSize: 9, fill: cssVar("--c-text-3") || "#8a8a7f" }}
-                axisLine={{ stroke: cssVar("--c-border") || "#e0dcd0" }}
+                tick={{ fontSize: 9, fill: colors.text3 }}
+                axisLine={{ stroke: colors.border }}
                 tickLine={false}
                 interval="preserveStartEnd"
               />
               <YAxis
-                tick={{ fontSize: 10, fill: cssVar("--c-text-3") || "#8a8a7f" }}
+                tick={{ fontSize: 10, fill: colors.text3 }}
                 axisLine={false}
                 tickLine={false}
                 allowDecimals={false}
               />
               <Tooltip content={<OpsTooltip />} />
-              <Bar
-                dataKey="total"
-                name="Citas"
-                radius={[3, 3, 0, 0]}
-                isAnimationActive={false}
-              >
+              <Bar dataKey="total" name="Citas" radius={[3, 3, 0, 0]} isAnimationActive={false}>
                 {chartData.map((entry, i) => (
-                  <Cell
-                    key={i}
-                    fill={resolveBarColor(entry, primary, accent)}
-                  />
+                  <Cell key={i} fill={resolveBarColor(entry, colors.primary, colors.accent)} />
                 ))}
               </Bar>
               <Line
                 dataKey="done"
                 name="Completadas"
-                stroke={accent}
+                stroke={colors.accent}
                 strokeWidth={2}
                 dot={false}
-                activeDot={{ r: 5, fill: accent }}
+                activeDot={{ r: 5, fill: colors.accent }}
                 connectNulls={false}
                 isAnimationActive={false}
               />

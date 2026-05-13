@@ -1,9 +1,15 @@
-import { memo, useMemo } from "react";
+import { memo, useMemo, useLayoutEffect, useState } from "react";
 import {
   ComposedChart, Bar, Line,
   XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from "recharts";
 import { useDashboardSeries } from "../../hooks/useDashboardSeries";
+
+/* ── CSS var resolver — SVG attrs can't use var() natively ─── */
+const readCssVar = (name, fallback) => {
+  if (typeof window === "undefined") return fallback;
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+};
 
 /* ── Pure helpers (outside component) ─────────────────────── */
 const DAYS_SHORT = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"];
@@ -17,10 +23,10 @@ const isCorrupt = (dp) => dp?.lifecycleState === "corrupt";
 
 const transformActivityData = (points) =>
   points.map((p) => ({
-    label:  dayLabel(p.bucketDate),
-    done:   isCorrupt(p) ? null : (p.metrics?.appointmentsDone   ?? 0),
-    noShow: isCorrupt(p) ? null : (p.metrics?.appointmentsNoShow ?? 0),
-    total:  isCorrupt(p) ? null : (p.metrics?.appointmentsTotal  ?? 0),
+    label:   dayLabel(p.bucketDate),
+    done:    isCorrupt(p) ? null : (p.metrics?.appointmentsDone   ?? 0),
+    noShow:  isCorrupt(p) ? null : (p.metrics?.appointmentsNoShow ?? 0),
+    total:   isCorrupt(p) ? null : (p.metrics?.appointmentsTotal  ?? 0),
     corrupt: isCorrupt(p),
   }));
 
@@ -41,10 +47,7 @@ const ActivityTooltip = ({ active, payload, label }) => {
       <p className="chart-tooltip-title">{label}</p>
       {payload.map((p) => (
         <div key={p.dataKey} className="chart-tooltip-row">
-          <span
-            className="chart-tooltip-dot"
-            style={{ "--dot-color": p.fill || p.stroke }}
-          />
+          <span className="chart-tooltip-dot" style={{ "--dot-color": p.fill || p.stroke }} />
           <span>{p.name}</span>
           <span className="chart-tooltip-val">{p.value ?? "—"}</span>
         </div>
@@ -57,6 +60,20 @@ const ActivityTooltip = ({ active, payload, label }) => {
 function ActivityAreaChart({ rangeDays = 7 }) {
   const { allPoints, loading } = useDashboardSeries(rangeDays, true);
 
+  // Resolve CSS vars once after mount — SVG attrs don't support var()
+  const [colors, setColors] = useState({
+    primary: "#1a4434",
+    accent:  "#d67b5c",
+    muted:   "#8a8a7f",
+  });
+  useLayoutEffect(() => {
+    setColors({
+      primary: readCssVar("--c-primary", "#1a4434"),
+      accent:  readCssVar("--c-accent",  "#d67b5c"),
+      muted:   readCssVar("--c-text-3",  "#8a8a7f"),
+    });
+  }, []);
+
   const points = useMemo(
     () =>
       (allPoints ?? [])
@@ -65,8 +82,8 @@ function ActivityAreaChart({ rangeDays = 7 }) {
     [allPoints]
   );
 
-  const chartData   = useMemo(() => transformActivityData(points ?? []), [points]);
-  const hasCorrupt  = useMemo(() => points.some(isCorrupt), [points]);
+  const chartData  = useMemo(() => transformActivityData(points ?? []), [points]);
+  const hasCorrupt = useMemo(() => points.some(isCorrupt), [points]);
 
   if (loading && points.length === 0) {
     return <div className="chart-area"><div className="skeleton-block sk-chart" /></div>;
@@ -114,7 +131,7 @@ function ActivityAreaChart({ rangeDays = 7 }) {
               dataKey="done"
               name="Completadas"
               stackId="a"
-              fill="var(--c-primary)"
+              fill={colors.primary}
               radius={[0, 0, 0, 0]}
               isAnimationActive={false}
             />
@@ -122,16 +139,16 @@ function ActivityAreaChart({ rangeDays = 7 }) {
               dataKey="noShow"
               name="No-show"
               stackId="a"
-              fill="var(--c-text-3)"
+              fill={colors.muted}
               radius={[3, 3, 0, 0]}
               isAnimationActive={false}
             />
             <Line
               dataKey="total"
               name="Total"
-              stroke="var(--c-accent)"
+              stroke={colors.accent}
               strokeWidth={2}
-              dot={{ r: 3, fill: "var(--c-accent)" }}
+              dot={{ r: 3, fill: colors.accent }}
               activeDot={{ r: 5 }}
               connectNulls={false}
               isAnimationActive={false}
