@@ -2,6 +2,9 @@ import { createContext, useContext, useState, useEffect, useRef, useCallback } f
 
 const AuthContext = createContext();
 
+const rawBase = import.meta.env.VITE_API_URL || "";
+const API_BASE = rawBase.endsWith("/") ? rawBase : rawBase + "/";
+
 const REFRESH_BEFORE_EXPIRY_MS = 5 * 60 * 1000; // refrescar 5 min antes de expirar
 
 function getTokenExp(token) {
@@ -17,6 +20,7 @@ export const AuthProvider = ({ children }) => {
     const [token, setToken] = useState(null);
     const [user, setUser] = useState(null);
     const [initializing, setInitializing] = useState(true);
+    const [permissions, setPermissions] = useState(() => new Set());
     const refreshTimerRef = useRef(null);
 
     const logout = useCallback(() => {
@@ -29,6 +33,7 @@ export const AuthProvider = ({ children }) => {
         localStorage.removeItem("user");
         setToken(null);
         setUser(null);
+        setPermissions(new Set());
     }, []);
 
     const scheduleTokenRefresh = useCallback((accessToken) => {
@@ -49,7 +54,7 @@ export const AuthProvider = ({ children }) => {
             }
 
             try {
-                const res = await fetch("/api/token/refresh/", {
+                const res = await fetch(`${API_BASE}token/refresh/`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ refresh: storedRefresh }),
@@ -63,7 +68,8 @@ export const AuthProvider = ({ children }) => {
                 } else {
                     logout();
                 }
-            } catch {
+            } catch (err) {
+                console.error("[Auth] Token refresh failed", err);
                 logout();
             }
         }, delay);
@@ -78,7 +84,7 @@ export const AuthProvider = ({ children }) => {
             scheduleTokenRefresh(storedToken);
 
             // Refresh user data from server to avoid stale org/role data in localStorage
-            fetch(`${import.meta.env.VITE_API_URL}me/`, {
+            fetch(`${API_BASE}me/`, {
                 headers: { Authorization: `Bearer ${storedToken}` },
             })
                 .then(res => res.ok ? res.json() : null)
@@ -86,16 +92,27 @@ export const AuthProvider = ({ children }) => {
                     if (data) {
                         localStorage.setItem("user", JSON.stringify(data));
                         setUser(data);
+                        setPermissions(Object.freeze(new Set(data.permissions || [])));
                     } else if (storedUser) {
-                        setUser(JSON.parse(storedUser));
+                        const parsed = JSON.parse(storedUser);
+                        setUser(parsed);
+                        setPermissions(Object.freeze(new Set(parsed.permissions || [])));
                     }
                 })
                 .catch(() => {
-                    if (storedUser) setUser(JSON.parse(storedUser));
+                    if (storedUser) {
+                        const parsed = JSON.parse(storedUser);
+                        setUser(parsed);
+                        setPermissions(Object.freeze(new Set(parsed.permissions || [])));
+                    }
                 })
                 .finally(() => setInitializing(false));
         } else {
-            if (storedUser) setUser(JSON.parse(storedUser));
+            if (storedUser) {
+                const parsed = JSON.parse(storedUser);
+                setUser(parsed);
+                setPermissions(Object.freeze(new Set(parsed.permissions || [])));
+            }
             setInitializing(false);
         }
 
@@ -116,9 +133,25 @@ export const AuthProvider = ({ children }) => {
     const setUserData = (userData) => {
         localStorage.setItem("user", JSON.stringify(userData));
         setUser(userData);
+        setPermissions(Object.freeze(new Set(userData.permissions || [])));
     };
 
     const isAuthenticated = !!token && !!user;
+
+    const can = useCallback(
+        (permCode) => permissions.has(permCode),
+        [permissions]
+    );
+
+    const canAny = useCallback(
+        (codes) => codes.some(code => permissions.has(code)),
+        [permissions]
+    );
+
+    const canAll = useCallback(
+        (codes) => codes.every(code => permissions.has(code)),
+        [permissions]
+    );
 
     return (
         <AuthContext.Provider
@@ -130,6 +163,10 @@ export const AuthProvider = ({ children }) => {
                 logout,
                 setUserData,
                 isAuthenticated,
+                permissions,
+                can,
+                canAny,
+                canAll,
             }}
         >
             {children}

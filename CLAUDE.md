@@ -112,10 +112,44 @@ with transaction.atomic():
 ```python
 @transaction.atomic
 def confirm_invoice(invoice, user):
-    invoice = Invoice.objects.select_for_update().get(pk=invoice.pk)  # re-fetch con lock
+    # re-fetch con lock + tenant filter (defense-in-depth, ADR p13)
+    invoice = Invoice.objects.for_organization(invoice.organization)\
+        .select_for_update().get(pk=invoice.pk)
     if invoice.status != 'draft':
         raise ValidationError(...)
 ```
+
+**Mutación de campos numéricos contables — F() obligatorio (ADR p13):**
+TODA mutación de `InvoiceItem.quantity` (y por extensión, cualquier campo numérico contable
+de InvoiceItem) DEBE usar `F('field') ± delta` vía `.update()`, **incluso cuando el caller
+posee `select_for_update()`**. Prohibido `item.quantity += delta; item.save()`.
+
+Razones: consistencia con `apply_stock_movement` para `Presentation.stock` + defense-in-depth
+contra bugs futuros que pierdan el lock + single round-trip a la DB.
+
+Helper único: `apps.billing.services.apply_invoice_item_quantity_delta(item, delta)`.
+
+```python
+# Incremento (item ya lockeado)
+apply_invoice_item_quantity_delta(item, +quantity)
+
+# Decremento — proyección previa para decidir delete vs update
+projected = item.quantity - decrement_amount
+if projected <= 0:
+    item.delete()
+else:
+    apply_invoice_item_quantity_delta(item, -decrement_amount)
+```
+
+**Contrato de lock en `apply_stock_movement` (ADR p13):**
+La función NO acquire su propio lock — usa `refresh_from_db()` (sin lock) para el stock-check.
+El caller DEBE poseer `select_for_update()` sobre `presentation` antes de invocarla. Lista
+canónica de callers válidos en el docstring de la función.
+
+**Fail-fast en `MedicalRecordProduct.save()`/.delete() (ADR p13):**
+Ambos métodos abren con `assert connection.in_atomic_block`. Si el caller no abrió
+`transaction.atomic()`, levantan `AssertionError`. Warning log adicional si `save()` se
+invoca sin `locked_presentation`.
 
 **bulk_create siempre debe asignar `organization` explícitamente:**
 `bulk_create` bypasea `save()` y el TenantManager — la organización nunca se asigna automáticamente.

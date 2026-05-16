@@ -390,6 +390,8 @@ def walk_in(request):
         existing = Appointment.objects.filter(
             organization=org,
             veterinarian=vet,
+            pet=pet,
+            walk_in=True,
             created_at__gte=timezone.now() - timedelta(seconds=10),
             status='in_progress',
         ).first()

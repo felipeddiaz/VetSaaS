@@ -68,6 +68,17 @@ Los `CheckConstraint` del modelo son la ultima linea de defensa; las validacione
 El stock se modifica exclusivamente a traves de `apply_stock_movement()` en `apps/inventory/services.py`.
 Nunca se escribe `presentation.stock` directamente fuera de esa funcion.
 
+**⚠️ Contrato de lock (ADR p13):** `apply_stock_movement` hace `refresh_from_db()` (sin lock) para el stock-check. **El caller DEBE poseer `select_for_update()` sobre `presentation` antes de invocar la función.** Sin lock externo, dos transacciones concurrentes pueden pasar la validación simultáneamente y dejar stock negativo.
+
+Callers actuales que cumplen el contrato (auditable en code review):
+- `billing/services.py::_confirm_locked_invoice` (via `_lock_presentations`)
+- `billing/services.py::cancel_invoice` (via `_lock_presentations`)
+- `inventory/views.py::adjust_stock`, `adjust_presentation_stock`
+- `inventory/views.py::MedicalRecordProductListCreateView.perform_create`
+- `inventory/models.py::MedicalRecordProduct.save` / `.delete`
+
+Si agregas un nuevo caller, asegúrate de lockear `presentation` primero. El docstring de la función enumera los callers válidos.
+
 Para prevenir race conditions en ventas simultaneas, `InvoiceItemCreateView.perform_create` hace:
 
 ```python
@@ -78,6 +89,47 @@ with transaction.atomic():
 ```
 
 Esto previene que dos ventas simultaneas pasen el check con el mismo stock disponible.
+
+### Orden global de locks (ADR p12)
+
+Para operaciones que tocan `MedicalRecordProduct` y sincronizan con `InvoiceItem`, se respeta el orden:
+
+```
+MedicalRecord → Invoice → Presentation → InvoiceItem → MedicalRecordProduct
+```
+
+**En `perform_create()`:**
+1. Lock de `MedicalRecord` con `select_for_update()`
+2. Lock de `Invoice` via `get_or_create_invoice_for_medical_record()`
+3. Lock de `Presentation` antes de cualquier operación de stock
+4. Sync de `InvoiceItem` bajo lock de `Invoice`
+5. Create/update de `MedicalRecordProduct` con parámetros `locked_presentation` y `previous_quantity`
+
+**En `perform_destroy()`:**
+1. Lock de `MedicalRecord`
+2. Lock de `Invoice` (si existe)
+3. Lock de `Presentation`
+4. Sync de `InvoiceItem` bajo lock
+5. Re-fetch de `MedicalRecordProduct` con lock antes de `delete()`
+
+**En `MedicalRecordProduct.save()`:**
+- Acepta `locked_presentation` para reutilizar lock ya tomado por la view
+- Acepta `previous_quantity` para evitar query extra de delta
+- Stock movement ocurre dentro de la misma transacción que el save
+- **Fail-fast (ADR p13):** `assert connection.in_atomic_block` al inicio — si el caller no está dentro de `transaction.atomic()`, levanta `AssertionError` inmediato. Sin tx, el `select_for_update()` interno no aplica lock real.
+- **Warning log:** si `save()` se invoca sin `locked_presentation` (fallback a lock interno), emite `WARNING` con `mr_id` + `pres_id` para visibilizar callers no-canónicos.
+
+**En `MedicalRecordProduct.delete()`:**
+- Mismo assert + log que `save()`.
+- Acepta `locked_presentation`.
+
+**Sites que llaman MRP.save/.delete deben estar dentro de `transaction.atomic()`**, sin excepciones. Si un test legacy llamaba `mrp.save()` sin tx, debe envolver en `with transaction.atomic():` o el assert lo bloqueará (verificable: la suite `test_invoice_concurrency` migra el caller histórico).
+
+Ver ADRs `2026-05-16-p12-concurrency-lock-order-hardening.md` (orden global de locks) y `2026-05-16-p13-day12-concurrency-remediation.md` (asserts + tenant filter + helper F()).
+
+### Deuda conocida: `MRP.delete()` no se invoca en cascada
+
+Django ORM bypasea el `delete()` custom cuando un padre es eliminado en cascada (usa `QuerySet._raw_delete`). Si se borra un `MedicalRecord` completo, los `MedicalRecordProduct` cascadeados se eliminan **sin revertir stock**. En la práctica esto no ocurre en flujos normales — `MedicalRecord` no se elimina mientras tiene productos asociados (la consulta queda como histórica) — pero **no exponer un endpoint de borrado de MR que use cascada**. Si se necesita, primero iterar `mr.products_used.all()` y llamar `.delete()` explícito en cada uno dentro de `transaction.atomic()`.
 
 ## Eliminacion de una presentacion
 

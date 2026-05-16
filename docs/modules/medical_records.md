@@ -134,6 +134,30 @@ Permiso usado:
 
 No se usa `inventory.create` para este flujo porque el acto que se protege es clinico, no de alta general de inventario.
 
+### Orden de locks (ADR p12)
+
+Para operaciones concurrentes de productos en consulta, se respeta el orden global:
+
+```
+MedicalRecord → Invoice → Presentation → InvoiceItem → MedicalRecordProduct
+```
+
+**En `MedicalRecordProductListCreateView.perform_create()`:**
+1. Lock de `MedicalRecord`
+2. Lock de `Invoice` via `get_or_create_invoice_for_medical_record()`
+3. Lock de `Presentation`
+4. Sync de `InvoiceItem` bajo lock de `Invoice` — usa `apply_invoice_item_quantity_delta(item, +qty)` para incrementos (ADR p13, patrón F())
+5. Create/update de `MedicalRecordProduct` con `locked_presentation` y `previous_quantity`
+
+**En `MedicalRecordProductDeleteView.perform_destroy()`:**
+1. Lock de `MedicalRecord`
+2. Lock de `Invoice` (si existe)
+3. Lock de `Presentation`
+4. Sync de `InvoiceItem` bajo lock — proyectar `item.quantity - fresh.quantity`; si `<= 0` llamar `item.delete()`, sino `apply_invoice_item_quantity_delta(item, -fresh.quantity)`
+5. Re-fetch de instancia con lock antes de `delete()`
+
+Ver ADRs `2026-05-16-p12-concurrency-lock-order-hardening.md` (orden global) y `2026-05-16-p13-day12-concurrency-remediation.md` (helper F() + asserts).
+
 ## Servicios usados en consulta
 
 Los servicios agregados desde consulta forman parte del contexto clinico y financiero de la atencion.
@@ -147,6 +171,31 @@ Reglas actuales:
 Permiso usado:
 - lectura: `medicalrecord.retrieve`
 - mutacion: `medicalrecord.update`
+
+### Orden de locks (ADR p12)
+
+Para operaciones concurrentes de servicios en consulta, se respeta el orden global:
+
+```
+MedicalRecord → Invoice → InvoiceItem
+```
+
+**En `MedicalRecordServiceListCreateView.perform_create()` (ADR p13 — orden corregido):**
+1. Lock de `MedicalRecord` con `select_for_update()`
+2. Validar tenant del `service` (`serializer.validated_data`)
+3. Lock de `Invoice` via `get_or_create_invoice_for_medical_record()`
+4. Sync de `InvoiceItem` bajo lock — `apply_invoice_item_quantity_delta(item, +qty)` para incrementos
+5. **Por último:** `serializer.save(medical_record=mr)` crea el MRS
+
+El orden importa: el MRS se crea **después** del sync de InvoiceItem para respetar el orden canónico `MR → Invoice → InvoiceItem → MRS`. Antes de ADR p13, MRS se guardaba antes que el lock de Invoice (deviation del orden).
+
+**En `MedicalRecordServiceDeleteView.perform_destroy()`:**
+1. Lock de `MedicalRecord`
+2. Lock de `Invoice` (si existe)
+3. Sync de `InvoiceItem` bajo lock — proyectar `item.quantity - fresh.quantity`; si `<= 0` llamar `item.delete()`, sino `apply_invoice_item_quantity_delta(item, -fresh.quantity)`
+4. Re-fetch de instancia con lock antes de `delete()`
+
+Ver ADRs `2026-05-16-p12-concurrency-lock-order-hardening.md` (orden global) y `2026-05-16-p13-day12-concurrency-remediation.md` (MRS create reorder + helper F()).
 
 Endpoints:
 - `GET /api/medical-records/<id>/services/`

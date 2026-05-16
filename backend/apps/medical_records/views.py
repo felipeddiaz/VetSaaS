@@ -167,6 +167,12 @@ class MedicalRecordServiceListCreateView(TenantQueryMixin, generics.ListCreateAP
         ).select_related('service')
 
     def perform_create(self, serializer):
+        from apps.billing.models import InvoiceItem
+        from apps.billing.services import (
+            apply_invoice_item_quantity_delta,
+            get_or_create_invoice_for_medical_record,
+        )
+
         with transaction.atomic():
             mr = resolve_public_id(
                 MedicalRecord.objects.for_organization(self.request.user.organization).select_for_update(),
@@ -174,30 +180,32 @@ class MedicalRecordServiceListCreateView(TenantQueryMixin, generics.ListCreateAP
             )
             assert_can_modify_charges(self.request.user, mr, self.request)
             service = serializer.validated_data['service']
+            quantity = serializer.validated_data['quantity']
             if service.organization_id != self.request.user.organization_id:
                 from rest_framework.exceptions import ValidationError
                 raise ValidationError({'service': 'Servicio fuera de tu organización'})
-            mrs = serializer.save(medical_record=mr)
-            self._sync_invoice_item(mrs)
 
-    def _sync_invoice_item(self, mrs):
-        from apps.billing.services import get_or_create_invoice_for_medical_record
-        from apps.billing.models import InvoiceItem
-        invoice = get_or_create_invoice_for_medical_record(mrs.medical_record)
-        if invoice.status != 'draft':
-            return
-        item, created = InvoiceItem.objects.get_or_create(
-            invoice=invoice,
-            service=mrs.service,
-            defaults={
-                'description': mrs.service.name,
-                'quantity': mrs.quantity,
-                'unit_price': mrs.service.base_price,
-            }
-        )
-        if not created:
-            item.quantity += mrs.quantity
-            item.save()
+            invoice = get_or_create_invoice_for_medical_record(mr)
+            if invoice.status == 'draft':
+                item = (
+                    InvoiceItem.objects
+                    .select_for_update()
+                    .filter(invoice=invoice, service=service, is_active=True)
+                    .first()
+                )
+                if item is None:
+                    InvoiceItem.objects.create(
+                        invoice=invoice,
+                        service=service,
+                        description=service.name,
+                        quantity=quantity,
+                        unit_price=service.base_price,
+                        organization=invoice.organization,
+                    )
+                else:
+                    apply_invoice_item_quantity_delta(item, quantity)
+
+            serializer.save(medical_record=mr)
 
 
 class MedicalRecordServiceDeleteView(generics.DestroyAPIView):
@@ -217,33 +225,41 @@ class MedicalRecordServiceDeleteView(generics.DestroyAPIView):
         )
 
     def perform_destroy(self, instance):
+        from apps.billing.models import Invoice
+        from apps.billing.models import InvoiceItem
+        from apps.billing.services import apply_invoice_item_quantity_delta
+
         with transaction.atomic():
             mr = resolve_public_id(
                 MedicalRecord.objects.for_organization(self.request.user.organization).select_for_update(),
                 self.kwargs['medical_record_pk'],
             )
             assert_can_modify_charges(self.request.user, mr, self.request)
-            self._sync_invoice_item_delete(instance)
-            instance.delete()
+            invoice_id = instance.medical_record.invoice_id
+            item = None
+            if invoice_id:
+                locked_invoice = Invoice.objects.for_organization(
+                    self.request.user.organization
+                ).select_for_update().filter(pk=invoice_id).first()
+                if locked_invoice is not None:
+                    item = InvoiceItem.objects.select_for_update().filter(
+                        invoice=locked_invoice,
+                        service=instance.service,
+                        is_active=True,
+                    ).first()
 
-    def _sync_invoice_item_delete(self, mrs):
-        from apps.billing.models import InvoiceItem
-        invoice_id = mrs.medical_record.invoice_id
-        if not invoice_id:
-            return
-        item = InvoiceItem.objects.filter(
-            invoice_id=invoice_id,
-            service=mrs.service,
-            is_active=True,
-        ).first()
-        if item is None or item.invoice.status != 'draft':
-            return
-        new_qty = item.quantity - mrs.quantity
-        if new_qty <= 0:
-            item.delete()
-        else:
-            item.quantity = new_qty
-            item.save()
+            fresh_instance = MedicalRecordService.objects.select_for_update().get(
+                pk=instance.pk,
+                medical_record=mr,
+            )
+
+            if item is not None and item.invoice.status == 'draft':
+                projected = item.quantity - fresh_instance.quantity
+                if projected <= 0:
+                    item.delete()
+                else:
+                    apply_invoice_item_quantity_delta(item, -fresh_instance.quantity)
+            fresh_instance.delete()
 
 
 class VitalSignsListCreateView(generics.ListCreateAPIView):
@@ -467,3 +483,216 @@ class VaccineRecordDetailView(TenantQueryMixin, generics.RetrieveUpdateDestroyAP
         return VaccineRecord.objects.for_organization(
             self.request.user.organization
         ).select_related('pet', 'applied_by', 'medical_record')
+
+
+_MR_STATUS_LABEL = dict(MedicalRecord.Status.choices)
+_MR_TYPE_LABEL = dict(MedicalRecord.ConsultationType.choices)
+
+
+def _mr_fmt_dt(value):
+    if not value:
+        return ""
+    try:
+        return value.strftime('%d/%m/%Y %H:%M')
+    except Exception:
+        return str(value)
+
+
+@api_view(['GET'])
+@permission_classes([make_permission("medicalrecord.retrieve")])
+def medical_record_pdf(request, pk):
+    """Genera el resumen clínico del registro como archivo PDF."""
+    from io import BytesIO
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import cm
+    from reportlab.lib import colors
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, LongTable,
+    )
+    from django.http import HttpResponse
+    from apps.core.pdf_utils import safe_pdf_text, safe_filename_segment
+
+    record = resolve_public_id(
+        MedicalRecord.objects
+            .for_organization(request.user.organization)
+            .select_related('pet__owner', 'veterinarian', 'appointment', 'organization')
+            .prefetch_related(
+                'vital_signs',
+                'services_used__service',
+                'products_used__presentation__product',
+                'prescription__items__product',
+            ),
+        pk,
+    )
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=letter,
+        leftMargin=2 * cm, rightMargin=2 * cm,
+        topMargin=2 * cm, bottomMargin=2 * cm,
+        title=f"Consulta #{record.id}",
+    )
+    styles = getSampleStyleSheet()
+    h_org = ParagraphStyle('h_org', parent=styles['Heading1'], fontSize=16, spaceAfter=4)
+    h_title = ParagraphStyle('h_title', parent=styles['Heading2'], fontSize=13, spaceAfter=2)
+    h_sub = ParagraphStyle('h_sub', parent=styles['Heading3'], fontSize=11, spaceBefore=10, spaceAfter=4)
+    body = styles['BodyText']
+    body_sm = ParagraphStyle('body_sm', parent=body, fontSize=9, leading=11)
+
+    flow = []
+    flow.append(Paragraph(safe_pdf_text(record.organization.name), h_org))
+    flow.append(Paragraph("RESUMEN DE CONSULTA", h_title))
+    flow.append(Paragraph(
+        f"Estado: <b>{_MR_STATUS_LABEL.get(record.status, record.status)}</b> "
+        f"&nbsp;·&nbsp; Tipo: {_MR_TYPE_LABEL.get(record.consultation_type, record.consultation_type)}",
+        body_sm,
+    ))
+    flow.append(Paragraph(f"Fecha: {_mr_fmt_dt(record.created_at)}", body_sm))
+    if record.closed_at:
+        flow.append(Paragraph(f"Cerrada: {_mr_fmt_dt(record.closed_at)}", body_sm))
+
+    if record.veterinarian_id:
+        vet = record.veterinarian
+        vet_name = f"{vet.first_name} {vet.last_name}".strip() or vet.username
+        spec = f" &nbsp;·&nbsp; {safe_pdf_text(vet.specialty)}" if getattr(vet, 'specialty', '') else ""
+        flow.append(Paragraph("Veterinario", h_sub))
+        flow.append(Paragraph(f"{safe_pdf_text(vet_name)}{spec}", body))
+
+    flow.append(Paragraph("Paciente", h_sub))
+    pet = record.pet
+    flow.append(Paragraph(
+        f"<b>Nombre:</b> {safe_pdf_text(pet.name)} "
+        f"&nbsp; <b>Especie:</b> {safe_pdf_text(pet.species)} "
+        f"&nbsp; <b>Raza:</b> {safe_pdf_text(pet.breed or '-')}",
+        body,
+    ))
+    if pet.owner_id:
+        flow.append(Paragraph(
+            f"<b>Dueño:</b> {safe_pdf_text(pet.owner.name)} "
+            f"&nbsp; <b>Teléfono:</b> {safe_pdf_text(pet.owner.phone)}",
+            body,
+        ))
+
+    if record.appointment_id and getattr(record.appointment, 'reason', ''):
+        flow.append(Paragraph("Motivo", h_sub))
+        flow.append(Paragraph(safe_pdf_text(record.appointment.reason), body))
+
+    last_vital = None
+    for v in record.vital_signs.all():
+        if last_vital is None or (v.recorded_at and v.recorded_at > last_vital.recorded_at):
+            last_vital = v
+    if last_vital:
+        parts = []
+        if last_vital.weight is not None:
+            parts.append(f"<b>Peso:</b> {last_vital.weight} kg")
+        if last_vital.temperature is not None:
+            parts.append(f"<b>T°:</b> {last_vital.temperature} °C")
+        if last_vital.heart_rate is not None:
+            parts.append(f"<b>FC:</b> {last_vital.heart_rate} lpm")
+        if last_vital.respiratory_rate is not None:
+            parts.append(f"<b>FR:</b> {last_vital.respiratory_rate} rpm")
+        if parts:
+            flow.append(Paragraph("Signos vitales", h_sub))
+            flow.append(Paragraph(" &nbsp;·&nbsp; ".join(parts), body))
+    elif record.weight is not None:
+        flow.append(Paragraph("Signos vitales", h_sub))
+        flow.append(Paragraph(f"<b>Peso:</b> {record.weight} kg", body))
+
+    if record.diagnosis:
+        flow.append(Paragraph("Diagnóstico", h_sub))
+        flow.append(Paragraph(
+            safe_pdf_text(record.diagnosis).replace('\n', '<br/>'), body,
+        ))
+
+    if record.treatment:
+        flow.append(Paragraph("Tratamiento", h_sub))
+        flow.append(Paragraph(
+            safe_pdf_text(record.treatment).replace('\n', '<br/>'), body,
+        ))
+
+    services = list(record.services_used.all())
+    if services:
+        flow.append(Paragraph("Servicios aplicados", h_sub))
+        rows = [["Servicio", "Cantidad"]]
+        for s in services:
+            rows.append([
+                Paragraph(safe_pdf_text(s.service.name if s.service_id else "-"), body_sm),
+                f"{s.quantity:g}",
+            ])
+        t = LongTable(rows, colWidths=[12 * cm, 4.3 * cm], repeatRows=1)
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#eeeeee')),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('GRID', (0, 0), (-1, -1), 0.25, colors.grey),
+            ('LEFTPADDING', (0, 0), (-1, -1), 4),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+            ('ALIGN', (1, 1), (1, -1), 'RIGHT'),
+        ]))
+        flow.append(t)
+
+    products = list(record.products_used.all())
+    if products:
+        flow.append(Paragraph("Productos utilizados", h_sub))
+        rows = [["Producto", "Presentación", "Cantidad"]]
+        for p in products:
+            pres = p.presentation
+            prod_name = safe_pdf_text(pres.product.name if pres and pres.product_id else "-")
+            pres_name = safe_pdf_text(pres.name if pres else "-")
+            rows.append([
+                Paragraph(prod_name, body_sm),
+                Paragraph(pres_name, body_sm),
+                f"{p.quantity:g}",
+            ])
+        t = LongTable(rows, colWidths=[7.5 * cm, 6 * cm, 2.8 * cm], repeatRows=1)
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#eeeeee')),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('GRID', (0, 0), (-1, -1), 0.25, colors.grey),
+            ('LEFTPADDING', (0, 0), (-1, -1), 4),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+            ('ALIGN', (2, 1), (2, -1), 'RIGHT'),
+        ]))
+        flow.append(t)
+
+    if record.notes:
+        flow.append(Paragraph("Notas", h_sub))
+        flow.append(Paragraph(
+            safe_pdf_text(record.notes).replace('\n', '<br/>'), body,
+        ))
+
+    prescription = getattr(record, 'prescription', None)
+    if prescription:
+        flow.append(Paragraph("Receta", h_sub))
+        for i, item in enumerate(prescription.items.all(), 1):
+            first_pres = next(iter(item.product.presentations.all()), None)
+            unit = first_pres.get_base_unit_display() if first_pres else ""
+            line = (
+                f"<b>{i}. {safe_pdf_text(item.product.name)}</b> — "
+                f"{item.quantity:g} {safe_pdf_text(unit)}".rstrip()
+            )
+            flow.append(Paragraph(line, body))
+            detail_parts = [f"Dosis: {safe_pdf_text(item.dose)}"]
+            if item.duration:
+                detail_parts.append(f"Duración: {safe_pdf_text(item.duration)}")
+            if item.instructions:
+                detail_parts.append(f"Instrucciones: {safe_pdf_text(item.instructions)}")
+            flow.append(Paragraph(" &nbsp;·&nbsp; ".join(detail_parts), body_sm))
+        if prescription.notes:
+            flow.append(Paragraph(
+                f"<i>Notas de receta:</i> {safe_pdf_text(prescription.notes)}",
+                body_sm,
+            ))
+
+    doc.build(flow)
+    buffer.seek(0)
+
+    pet_segment = safe_filename_segment(pet.name)
+    filename = f"consulta_{record.id}_{pet_segment}.pdf"
+    response = HttpResponse(buffer.read(), content_type='application/pdf')
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    return response

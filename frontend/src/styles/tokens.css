@@ -21,8 +21,8 @@
   --muted:      #8a8a7f;
   --line:       #d9d2be;
 
-  --font-display: 'Radio Canada Big', sans-serif;
-  --font-body:    'Radio Canada Big', sans-serif;
+  --font-display: 'Helvetica Neue', Helvetica, Arial, 'Inter', sans-serif;
+  --font-body:    'Helvetica Neue', Helvetica, Arial, 'Inter', sans-serif;
 
   /* ── Primary (verde bosque) ──────────────────────────────── */
   --c-primary:       #1a4434;
@@ -118,9 +118,9 @@
   --accent:       #047857;
   --accent-soft:  rgba(4, 120, 87, 0.10);
 
-  --font-sans: 'Radio Canada Big', sans-serif;
-  --font-dm-sans: 'Radio Canada Big', sans-serif;
-  --font-dm-serif: 'Radio Canada Big', sans-serif;
+  --font-sans: 'Helvetica Neue', Helvetica, Arial, 'Inter', sans-serif;
+  --font-dm-sans: 'Helvetica Neue', Helvetica, Arial, 'Inter', sans-serif;
+  --font-dm-serif: 'Helvetica Neue', Helvetica, Arial, 'Inter', sans-serif;
 
   --bg-dark: #1a2e2b;
   --text-on-dark: #fbf8f1;

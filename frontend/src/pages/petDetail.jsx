@@ -217,8 +217,9 @@ const PetDetail = () => {
                                         className="btn btn-info btn-sm"
                                         style={{ flexShrink: 0 }}
                                         onClick={() => handleViewRecord(record)}
+                                        title="Ver consulta"
                                     >
-                                        Ver
+                                        <Icon.Eye s={14} />
                                     </button>
                                 </div>
                             </div>

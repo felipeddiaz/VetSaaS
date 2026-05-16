@@ -2,81 +2,23 @@ import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useConfirm } from "../components/ConfirmDialog";
 import { apiError } from "../utils/apiError";
-import handleFormError from "../utils/handleFormError";
 import {
-    getInvoices, getInvoice, createInvoice, updateInvoice,
-    confirmInvoice, payInvoice,
-    addInvoiceItem, deleteInvoiceItem,
-    getServices, createService, updateService, deleteService,
+    getInvoices, getInvoice, createInvoice, confirmInvoice, payInvoice, directPayInvoice,
+    addInvoiceItem, getServices, downloadInvoicePDF,
 } from "../api/billing";
-import { getProducts, getPresentations } from "../api/inventory";
-import { getPets, getOwners } from "../api/pets";
+import { extractFilename, triggerDownload } from "../utils/downloadBlob";
+import { getPresentations } from "../api/inventory";
+import { getOwners } from "../api/pets";
 import { useAuth } from "../auth/authContext";
 import { Icon } from "../components/icons";
 import { toast } from "sonner";
 import SearchSelect from "../components/SearchSelect";
+import DateRangePicker from "../components/DateRangePicker";
+import s from "./billing.module.css";
 
-const FILTER_KEYS = [
-    "status",
-    "invoice_type",
-    "created_from",
-    "created_to",
-    "paid_from",
-    "paid_to",
-];
-
-const STATUS_BADGE = {
-    draft: "badge-default",
-    confirmed: "badge-info",
-    paid: "badge-success",
-    cancelled: "badge-danger",
-};
-const STATUS_LABELS = {
-    draft: "Borrador",
-    confirmed: "Confirmada",
-    paid: "Pagada",
-    cancelled: "Cancelada",
-};
-const TYPE_LABELS = {
-    consultation: "Consulta",
-    direct_sale: "Venta directa",
-};
-
-const SegmentedDateInput = ({ iso, onChange }) => {
-    const display = iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : "";
-    const [value, setValue] = useState(display);
-
-    useEffect(() => {
-        const d = iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : "";
-        setValue(d);
-    }, [iso]);
-
-    const handleChange = (e) => {
-        const digits = e.target.value.replace(/\D/g, "").slice(0, 8);
-        let fmt = "";
-        if (digits.length > 0) fmt += digits.slice(0, 2);
-        if (digits.length > 2) fmt += "/" + digits.slice(2, 4);
-        if (digits.length > 4) fmt += "/" + digits.slice(4, 8);
-
-        setValue(fmt);
-
-        if (digits.length === 8) {
-            const dd = digits.slice(0, 2);
-            const mm = digits.slice(2, 4);
-            const yyyy = digits.slice(4, 8);
-            onChange(`${yyyy}-${mm}-${dd}`);
-        } else {
-            onChange("");
-        }
-    };
-
-    return (
-        <input type="text" inputMode="numeric" value={value} onChange={handleChange}
-            placeholder="DD/MM/AAAA"
-            style={{ width: "110px", background: "none", border: "none", outline: "none", fontSize: "13px", color: "var(--c-text)", fontFamily: "inherit", textAlign: "center" }} />
-    );
-};
-
+const FILTER_KEYS = ["status", "invoice_type", "created_from", "created_to", "paid_from", "paid_to"];
+const STATUS_LABELS = { draft: "Borrador", confirmed: "Confirmada", paid: "Pagada", cancelled: "Cancelada" };
+const TYPE_LABELS = { consultation: "Consulta", direct_sale: "Venta directa" };
 const PAYMENT_METHODS = [
     { value: "cash", label: "Efectivo" },
     { value: "card", label: "Tarjeta" },
@@ -84,32 +26,26 @@ const PAYMENT_METHODS = [
     { value: "other", label: "Otro" },
 ];
 
-const EMPTY_SERVICE = { name: "", description: "", base_price: "", is_active: true };
-const EMPTY_ITEM = {
-    service: "",
-    presentation: "",
-    quantity: "1",
-    discount_type: "",
-    discount_value: "",
+const DOT_COLOR = {
+    draft: "var(--c-text-4)",
+    confirmed: "var(--c-info-text)",
+    paid: "var(--c-success-text)",
+    cancelled: "var(--c-danger-text)",
 };
 
 const Billing = () => {
-    const { token, user, initializing } = useAuth();
+    const { token, initializing, can } = useAuth();
     const confirm = useConfirm();
     const [searchParams, setSearchParams] = useSearchParams();
     const [loading, setLoading] = useState(true);
     const requestIdRef = useRef(0);
 
     const [invoices, setInvoices] = useState([]);
-    const [services, setServices] = useState([]);
-    const [products, setProducts] = useState([]);
-    const [presentations, setPresentations] = useState([]);
+    const [genericOwner, setGenericOwner] = useState(null);
 
     const [filters, setFilters] = useState(() => {
         const initial = {};
-        for (const key of FILTER_KEYS) {
-            initial[key] = searchParams.get(key) || "";
-        }
+        for (const key of FILTER_KEYS) initial[key] = searchParams.get(key) || "";
         return initial;
     });
 
@@ -117,91 +53,55 @@ const Billing = () => {
     const [showDetailModal, setShowDetailModal] = useState(false);
     const [showPayModal, setShowPayModal] = useState(false);
     const [payMethod, setPayMethod] = useState("cash");
-
-    const [showServiceModal, setShowServiceModal] = useState(false);
-    const [editingService, setEditingService] = useState(null);
-    const [serviceForm, setServiceForm] = useState(EMPTY_SERVICE);
-
-    const [itemForm, setItemForm] = useState(EMPTY_ITEM);
-    const [itemMode, setItemMode] = useState(null); // null | "service" | "product"
+    const [downloadingInvoiceId, setDownloadingInvoiceId] = useState(null);
 
     const [showNewInvoiceModal, setShowNewInvoiceModal] = useState(false);
-    const [newInvoiceOwner, setNewInvoiceOwner] = useState(null);
-    const [newInvoicePet,   setNewInvoicePet]   = useState(null);
-    const [newInvoiceType,  setNewInvoiceType]  = useState("direct_sale");
-    const [genericOwner,    setGenericOwner]    = useState(null);
-
-    useEffect(() => {
-        if (token) loadAll();
-    }, [token]);
-
-    useEffect(() => {
-        const nextFilters = { ...filters };
-        const timer = setTimeout(() => {
-            loadInvoices(nextFilters);
-        }, 300);
-        return () => clearTimeout(timer);
-    }, [
-        filters.status,
-        filters.invoice_type,
-        filters.created_from,
-        filters.created_to,
-        filters.paid_from,
-        filters.paid_to,
-    ]);
-
-    useEffect(() => {
-        getPresentations({ active: "true" }).then(r => setPresentations(r));
-    }, []);
-
-    useEffect(() => {
-        if (token) {
-            getOwners({ is_generic: true }).then(os => {
-                if (os?.length) setGenericOwner(os[0]);
-            }).catch(() => {});
-        }
-    }, [token]);
-
-    const loadAll = async () => {
-        setLoading(true);
-        try {
-            const [srvs, prods] = await Promise.all([
-                getServices(),
-                getProducts({ active: "true" }),
-            ]);
-            setServices(srvs);
-            setProducts(prods);
-            await loadInvoices(filters);
-        } catch (err) {
-            console.log(err);
-        } finally {
-            setLoading(false);
-        }
-    };
 
     const loadInvoices = async (currentFilters) => {
         const requestId = ++requestIdRef.current;
         try {
             const params = {};
-            for (const key of FILTER_KEYS) {
-                if (currentFilters[key]) params[key] = currentFilters[key];
-            }
+            for (const key of FILTER_KEYS) if (currentFilters[key]) params[key] = currentFilters[key];
             const data = await getInvoices(params);
-            if (requestId !== requestIdRef.current) return;
-            setInvoices(data);
-        } catch (err) {
-            if (requestId !== requestIdRef.current) return;
-            console.log(err);
+            if (requestId === requestIdRef.current) setInvoices(data);
+        } catch {
+            // Silencioso — el usuario ve lista vacía
         }
     };
+
+    const loadAll = async () => {
+        setLoading(requestIdRef.current === 0);
+        try {
+            const owners = await getOwners({ is_generic: "true" });
+            setGenericOwner((Array.isArray(owners) ? owners : owners?.results || [])[0] || null);
+            await loadInvoices(filters);
+        } catch {
+            // Silencioso — loadInvoices maneja su error
+        } finally { setLoading(false); }
+    };
+
+    useEffect(() => { if (token) { loadAll(); } }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
+    useEffect(() => {
+        const timer = setTimeout(() => loadInvoices(filters), 300);
+        return () => clearTimeout(timer);
+    }, [filters.status, filters.invoice_type, filters.created_from, filters.created_to, filters.paid_from, filters.paid_to]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            if (e.key === 'F11' && can("invoice.create") && !showNewInvoiceModal && !showDetailModal) {
+                e.preventDefault();
+                setShowNewInvoiceModal(true);
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [can, showNewInvoiceModal, showDetailModal]);
 
     const updateFilter = (key, value) => {
         const next = { ...filters, [key]: value };
         setFilters(next);
         const params = new URLSearchParams();
-        for (const k of FILTER_KEYS) {
-            if (next[k]) params.set(k, next[k]);
-        }
+        for (const k of FILTER_KEYS) if (next[k]) params.set(k, next[k]);
         setSearchParams(params, { replace: true });
     };
 
@@ -217,984 +117,592 @@ const Billing = () => {
             const detail = await getInvoice(invoice.public_id);
             setSelectedInvoice(detail);
             setShowDetailModal(true);
-            setItemMode(null);
-            setItemForm(EMPTY_ITEM);
-        } catch (err) {
-            toast.error("Error al cargar la factura");
-        }
-    };
-
-    const handleConfirm = async () => {
-        try {
-            const updated = await toast.promise(
-                confirmInvoice(selectedInvoice.public_id),
-                {
-                    loading: 'Confirmando...',
-                    success: 'Factura confirmada',
-                    error: (err) => {
-                        const errors = err.response?.data?.detail;
-                        return Array.isArray(errors) ? errors.join("; ") : apiError(err, "Error al confirmar");
-                    }
-                }
-            );
-            setSelectedInvoice(updated);
-            await loadInvoices(filters);
-        } catch (err) {}
-    };
-
-    const handlePay = async () => {
-        try {
-            const updated = await toast.promise(
-                payInvoice(selectedInvoice.public_id, payMethod),
-                {
-                    loading: 'Registrando pago...',
-                    success: 'Pago registrado',
-                    error: (err) => apiError(err, "Error al registrar pago")
-                }
-            );
-            setSelectedInvoice(updated);
-            setShowPayModal(false);
-            await loadInvoices(filters);
-        } catch (err) {}
-    };
-
-    const handleAddPrescriptionSuggestion = async (suggestion) => {
-        try {
-            const p = addInvoiceItem(selectedInvoice.public_id, {
-                presentation: suggestion.presentation_id,
-                quantity: suggestion.suggested_quantity,
-            }).then(() => getInvoice(selectedInvoice.public_id)).then(updated => {
-                setSelectedInvoice(updated);
-                loadInvoices(filters);
-            });
-            await toast.promise(p, {
-                loading: 'Agregando producto...',
-                success: 'Producto agregado',
-                error: (err) => apiError(err, "Error al agregar producto de receta")
-            });
-        } catch (err) {}
-    };
-
-    const handleAddItem = async (e) => {
-        e.preventDefault();
-
-        const hasService = Boolean(itemForm.service);
-        const hasPresentation = Boolean(itemForm.presentation);
-
-        if (!hasService && !hasPresentation) {
-            toast.error("Selecciona un servicio o una presentación");
-            return;
-        }
-
-        const payload = {
-            service: hasService ? parseInt(itemForm.service) : null,
-            presentation: hasPresentation ? parseInt(itemForm.presentation) : null,
-            quantity: itemForm.quantity,
-            ...(itemForm.discount_type && {
-                discount_type: itemForm.discount_type,
-                discount_value: itemForm.discount_value || "0",
-            }),
-        };
-
-        try {
-            const p = addInvoiceItem(selectedInvoice.public_id, payload)
-                .then(() => getInvoice(selectedInvoice.public_id))
-                .then(updated => {
-                    setSelectedInvoice(updated);
-                    setItemForm(EMPTY_ITEM);
-                    setItemMode(null);
-                    loadInvoices();
-                });
-            await toast.promise(p, {
-                loading: 'Agregando ítem...',
-                success: 'Ítem agregado',
-                error: (err) => {
-                    const detail = err.response?.data;
-                    if (Array.isArray(detail)) return detail.join("; ");
-                    if (typeof detail === 'object') return Object.values(detail).flat().join("; ");
-                    return "Error al agregar ítem";
-                }
-            });
-        } catch (err) {}
-    };
-
-    const handleDeleteItem = async (itemId) => {
-        const ok = await confirm({ message: "¿Eliminar este ítem de la factura?", confirmText: "Eliminar", dangerMode: true });
-        if (!ok) return;
-        try {
-            const p = deleteInvoiceItem(selectedInvoice.public_id, itemId)
-                .then(() => getInvoice(selectedInvoice.public_id))
-                .then(updated => {
-                    setSelectedInvoice(updated);
-                    loadInvoices();
-                });
-            await toast.promise(p, {
-                loading: 'Eliminando ítem...',
-                success: 'Ítem eliminado',
-                error: 'Error al eliminar ítem'
-            });
-        } catch (err) {}
-    };
-
-    const handleTaxRateChange = async (taxRate) => {
-        try {
-            const p = updateInvoice(selectedInvoice.public_id, { tax_rate: taxRate })
-                .then(() => getInvoice(selectedInvoice.public_id))
-                .then(updated => {
-                    setSelectedInvoice(updated);
-                    loadInvoices();
-                });
-            await toast.promise(p, {
-                loading: 'Actualizando...',
-                success: 'IVA actualizado',
-                error: 'Error al actualizar IVA'
-            });
-        } catch (err) {
-            console.log(err);
-        }
-    };
-
-    const handleServiceSubmit = async (e) => {
-        e.preventDefault();
-        if (!serviceForm.name.trim()) { toast.error("El nombre es obligatorio"); return; }
-        if (!serviceForm.base_price || Number(serviceForm.base_price) < 0) { toast.error("El precio es obligatorio"); return; }
-        try {
-            const p = editingService ? updateService(editingService.id, serviceForm) : createService(serviceForm);
-            await toast.promise(p, {
-                loading: editingService ? 'Actualizando...' : 'Creando...',
-                success: editingService ? 'Servicio actualizado' : 'Servicio creado',
-                error: (err) => apiError(err, "Error al guardar")
-            });
-            const srvs = await getServices();
-            setServices(srvs);
-            closeServiceModal();
-        } catch (err) {}
-    };
-
-    const handleDeleteService = async (id) => {
-        const ok = await confirm({ message: "¿Eliminar este servicio del catálogo?", confirmText: "Eliminar", dangerMode: true });
-        if (!ok) return;
-        try {
-            await toast.promise(deleteService(id), { loading: 'Eliminando...', success: 'Servicio eliminado', error: 'Error al eliminar' });
-            const srvs = await getServices();
-            setServices(srvs);
-        } catch (err) {}
-    };
-
-    const onServiceSelect = (serviceId) => {
-        const svc = services.find(s => s.id === parseInt(serviceId));
-        if (svc) {
-            setItemForm({ ...itemForm, service: serviceId, description: svc.name, unit_price: svc.base_price });
-        } else {
-            setItemForm({ ...itemForm, service: "" });
-        }
-    };
-
-    const closeServiceModal = () => {
-        setShowServiceModal(false);
-        setEditingService(null);
-        setServiceForm(EMPTY_SERVICE);
+        } catch { toast.error("Error al cargar la factura"); }
     };
 
     const closeDetailModal = () => {
         setShowDetailModal(false);
         setSelectedInvoice(null);
-        setItemMode(null);
+        setShowPayModal(false);
     };
 
-    const formatDate = (dateString) => {
-        if (!dateString) return "—";
-        return new Date(dateString).toLocaleDateString("es-ES", { year: "numeric", month: "short", day: "numeric" });
+    const handleDownloadInvoicePDF = async (publicId) => {
+        setDownloadingInvoiceId(publicId);
+        try {
+            const { blob, contentDisposition } = await downloadInvoicePDF(publicId);
+            const filename = extractFilename(contentDisposition, "factura.pdf");
+            triggerDownload(blob, filename);
+        } catch (err) { toast.error(apiError(err, "Error al descargar PDF")); }
+        finally { setDownloadingInvoiceId(null); }
     };
 
+    const handleConfirm = async () => {
+        try {
+            const updated = await toast.promise(confirmInvoice(selectedInvoice.public_id), {
+                loading: 'Confirmando...', success: 'Confirmada', error: (err) => apiError(err, "Error")
+            });
+            setSelectedInvoice(updated);
+            loadInvoices(filters);
+        } catch {
+            // toast.promise ya muestra el error
+        }
+    };
+
+    const handlePay = async () => {
+        try {
+            const updated = await toast.promise(payInvoice(selectedInvoice.public_id, payMethod), {
+                loading: 'Registrando...', success: 'Pagada', error: (err) => apiError(err, "Error")
+            });
+            setSelectedInvoice(updated);
+            setShowPayModal(false);
+            loadInvoices(filters);
+        } catch {
+            // toast.promise ya muestra el error
+        }
+    };
+
+    const handleDirectPay = async () => {
+        try {
+            const updated = await toast.promise(directPayInvoice(selectedInvoice.public_id, payMethod), {
+                loading: 'Cobrando...', success: 'Cobrada', error: (err) => apiError(err, "Error")
+            });
+            setSelectedInvoice(updated);
+            setShowPayModal(false);
+            loadInvoices(filters);
+        } catch {
+            // toast.promise ya muestra el error
+        }
+    };
+
+    const formatDate = (dateString) => dateString ? new Date(dateString).toLocaleDateString("es-ES", { year: "numeric", month: "short", day: "numeric" }) : "—";
     const formatCurrency = (amount) => Number(amount || 0).toFixed(2);
 
-    if (initializing || loading) {
-        return (
-            <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "50vh" }}>
-                <p style={{ color: "var(--c-text-3)", fontSize: "13px" }}>Cargando...</p>
-            </div>
-        );
-    }
+    if (initializing || loading) return <div style={{ display: "flex", justifyContent: "center", padding: "100px", color: "var(--c-text-3)", fontSize: "13px" }}>Cargando...</div>;
 
-    const canManage = user?.role !== "ASSISTANT";
+    const isDirectSaleDraft = selectedInvoice?.invoice_type === "direct_sale" && selectedInvoice?.status === "draft";
 
     return (
-        <div>
-            <div className="page-header">
-                <h1 className="page-title">Cobros</h1>
+        <div className={s.billingContainer}>
+            <div className={s.pageHeader}>
+                <h1 className={s.mainTitle}>Cobros</h1>
             </div>
 
-            {/* ── Filter toolbar ── */}
-            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px", marginBottom: "20px" }}>
-
-                {/* ── Quick selects ── */}
-                <div style={{
-                    display: "flex", alignItems: "center", gap: "7px",
-                    background: "var(--c-surface)", border: "1.5px solid var(--c-border)",
-                    borderRadius: "var(--r-lg)", padding: "0 13px", height: "38px",
-                    boxShadow: "var(--shadow-xs)",
-                }}>
-                    <Icon.Filter s={13} c="var(--c-text-3)" />
-                    <select value={filters.status} onChange={e => updateFilter("status", e.target.value)}
-                        style={{ background: "none", border: "none", outline: "none", fontSize: "13px", color: "var(--c-text)", cursor: "pointer", fontFamily: "inherit" }}>
-                        <option value="">Todos los estados</option>
+            <div className={s.filterBar}>
+                <div className={s.filterItem}>
+                    <Icon.Filter s={12} c="var(--c-text-4)" />
+                    <select value={filters.status} onChange={e => updateFilter("status", e.target.value)}>
+                        <option value="">Estado</option>
                         {Object.entries(STATUS_LABELS).map(([v, l]) => (<option key={v} value={v}>{l}</option>))}
                     </select>
                 </div>
-
-                <div style={{
-                    display: "flex", alignItems: "center", gap: "7px",
-                    background: "var(--c-surface)", border: "1.5px solid var(--c-border)",
-                    borderRadius: "var(--r-lg)", padding: "0 13px", height: "38px",
-                    boxShadow: "var(--shadow-xs)",
-                }}>
-                    <Icon.Receipt s={13} c="var(--c-text-3)" />
-                    <select value={filters.invoice_type} onChange={e => updateFilter("invoice_type", e.target.value)}
-                        style={{ background: "none", border: "none", outline: "none", fontSize: "13px", color: "var(--c-text)", cursor: "pointer", fontFamily: "inherit" }}>
-                        <option value="">Todos los tipos</option>
+                <div className={s.filterItem}>
+                    <Icon.Receipt s={12} c="var(--c-text-4)" />
+                    <select value={filters.invoice_type} onChange={e => updateFilter("invoice_type", e.target.value)}>
+                        <option value="">Tipo</option>
                         {Object.entries(TYPE_LABELS).map(([v, l]) => (<option key={v} value={v}>{l}</option>))}
                     </select>
                 </div>
-
-                <div style={{ width: "1px", height: "24px", background: "var(--c-border)", margin: "0 4px" }} />
-
-                {/* ── Date range: Created ── */}
-                <div style={{
-                    display: "flex", alignItems: "center", gap: "6px",
-                    background: "var(--c-surface)", border: "1.5px solid var(--c-border)",
-                    borderRadius: "var(--r-lg)", padding: "0 10px 0 13px", height: "38px",
-                    boxShadow: "var(--shadow-xs)",
-                }}>
-                    <Icon.Calendar s={13} c="var(--c-text-3)" />
-                    <span style={{ fontSize: "12px", color: "var(--c-text-3)", fontWeight: "500", whiteSpace: "nowrap" }}>Creado</span>
-                    <SegmentedDateInput iso={filters.created_from} onChange={v => updateFilter("created_from", v)} />
-                    <span style={{ color: "var(--c-text-4)", fontSize: "12px" }}>—</span>
-                    <SegmentedDateInput iso={filters.created_to} onChange={v => updateFilter("created_to", v)} />
-                </div>
-
-                <div style={{ width: "1px", height: "24px", background: "var(--c-border)", margin: "0 4px" }} />
-
-                {/* ── Date range: Paid ── */}
-                <div style={{
-                    display: "flex", alignItems: "center", gap: "6px",
-                    background: "var(--c-surface)", border: "1.5px solid var(--c-border)",
-                    borderRadius: "var(--r-lg)", padding: "0 10px 0 13px", height: "38px",
-                    boxShadow: "var(--shadow-xs)",
-                }}>
-                    <Icon.CalendarDays s={13} c="var(--c-text-3)" />
-                    <span style={{ fontSize: "12px", color: "var(--c-text-3)", fontWeight: "500", whiteSpace: "nowrap" }}>Pagado</span>
-                    <SegmentedDateInput iso={filters.paid_from} onChange={v => updateFilter("paid_from", v)} />
-                    <span style={{ color: "var(--c-text-4)", fontSize: "12px" }}>—</span>
-                    <SegmentedDateInput iso={filters.paid_to} onChange={v => updateFilter("paid_to", v)} />
-                </div>
-
-                {/* ── Actions ── */}
-                <button className="btn btn-ghost btn-sm" onClick={clearFilters}
-                    style={{ display: "flex", alignItems: "center", gap: "4px", whiteSpace: "nowrap" }}>
-                    <Icon.X s={14} />
-                    Limpiar
-                </button>
-
-                {canManage && (
-                    <button className="btn btn-primary" style={{ marginLeft: "auto" }}
-                        onClick={() => {
-                            setNewInvoiceOwner(null);
-                            setNewInvoicePet(null);
-                            setNewInvoiceType("direct_sale");
-                            setShowNewInvoiceModal(true);
-                        }}>
-                        + Nuevo Cobro
+                <DateRangePicker from={filters.created_from} to={filters.created_to} onChange={(f, t) => { updateFilter("created_from", f); updateFilter("created_to", t); }} placeholder="Creado" />
+                <button className="btn btn-ghost btn-xs" onClick={clearFilters} style={{ color: "var(--c-text-4)" }}>Limpiar</button>
+                {can("invoice.create") && (
+                    <button
+                        className="btn btn-primary btn-sm"
+                        style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "6px" }}
+                        onClick={() => setShowNewInvoiceModal(true)}
+                        title="Atajo: F11"
+                    >
+                        + Cobro
+                        <kbd style={{
+                            fontSize: "10px", fontWeight: 600, padding: "1px 5px",
+                            borderRadius: "3px", border: "1px solid rgba(255,255,255,0.3)",
+                            background: "rgba(255,255,255,0.15)", color: "inherit",
+                            lineHeight: "16px",
+                        }}>F11</kbd>
                     </button>
                 )}
             </div>
 
-            {invoices.length === 0 ? (
-                <div className="empty-state">
-                    <p className="empty-state-title">No hay cobros registrados</p>
-                    <p className="empty-state-sub">Las facturas se generan automáticamente al completar una cita</p>
+            {invoices.length === 0 ? <div className="empty-state"><p className="empty-state-title">No hay cobros</p></div> : (
+                <table className={s.tableCompact}>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Paciente / Cliente</th>
+                            <th>Tipo</th>
+                            <th>Estado</th>
+                            <th>Fecha</th>
+                            <th style={{ textAlign: "right" }}>Total</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {invoices.map(inv => (
+                            <tr key={inv.id}>
+                                <td style={{ color: "var(--c-text-3)" }}>#{inv.id}</td>
+                                <td>
+                                    <div style={{ color: "var(--c-text)" }}>{inv.pet_name}</div>
+                                    <div style={{ fontSize: "11px", color: "var(--c-text-3)" }}>{inv.owner_name}</div>
+                                </td>
+                                <td style={{ fontSize: "12px" }}>{inv.invoice_type === "direct_sale" ? "Venta directa" : "Consulta"}</td>
+                                <td>
+                                    <div className={s.statusContainer}>
+                                        <span className={s.statusDot} style={{ background: DOT_COLOR[inv.status] }} />
+                                        {STATUS_LABELS[inv.status]}
+                                    </div>
+                                </td>
+                                <td style={{ color: "var(--c-text-3)" }}>{formatDate(inv.created_at)}</td>
+                                <td style={{ textAlign: "right", color: "var(--c-text)" }}>${formatCurrency(inv.total)}</td>
+                                <td style={{ textAlign: "right" }}>
+                                    <button className={s.actionBtn} onClick={() => openInvoiceDetail(inv)}><Icon.Eye s={14} /></button>
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            )}
+
+            {/* Detail Modal */}
+            {showDetailModal && selectedInvoice && (
+                <div className="modal-overlay">
+                    <div className="modal modal-lg">
+                        <div className="modal-header">
+                            <div>
+                                <h3 className={s.mainTitle} style={{ fontSize: "16px" }}>#{selectedInvoice.id}</h3>
+                                <div className={s.statusContainer} style={{ marginTop: "4px" }}>
+                                    <span className={s.statusDot} style={{ background: DOT_COLOR[selectedInvoice.status] }} />
+                                    {STATUS_LABELS[selectedInvoice.status]}
+                                </div>
+                            </div>
+                            <div style={{ display: "flex", gap: "8px" }}>
+                                <button className="btn btn-secondary btn-sm" onClick={() => handleDownloadInvoicePDF(selectedInvoice.public_id)} disabled={downloadingInvoiceId === selectedInvoice.public_id}>
+                                    {downloadingInvoiceId === selectedInvoice.public_id ? <Icon.Loader s={12} /> : <Icon.Download s={12} />} PDF
+                                </button>
+                                <button className="modal-close" onClick={closeDetailModal}><Icon.X s={14} /></button>
+                            </div>
+                        </div>
+                        <div className="modal-body">
+                            <div className={s.infoGrid}>
+                                <div><p className={s.infoLabel}>Paciente</p><p className={s.infoValue}>{selectedInvoice.pet_name}</p></div>
+                                <div><p className={s.infoLabel}>Propietario</p><p className={s.infoValue}>{selectedInvoice.owner_name}</p></div>
+                                <div><p className={s.infoLabel}>Fecha</p><p className={s.infoValue}>{formatDate(selectedInvoice.created_at)}</p></div>
+                            </div>
+
+                            <p style={{ fontSize: "11px", fontWeight: "500", color: "var(--c-text-3)", marginBottom: "12px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Conceptos</p>
+                            <table className={s.tableCompact} style={{ border: "1px solid var(--c-border)" }}>
+                                <thead>
+                                    <tr>
+                                        <th>Descripción</th>
+                                        <th>Cant.</th>
+                                        <th style={{ textAlign: "right" }}>Total</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {selectedInvoice.items.map(item => (
+                                        <tr key={item.id}>
+                                            <td>{item.description}</td>
+                                            <td>{item.quantity}</td>
+                                            <td style={{ textAlign: "right" }}>${formatCurrency(item.subtotal)}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+
+                            <div className={s.totalsSection}>
+                                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                                    <div style={{ minWidth: "200px" }}>
+                                        <div className={s.totalRow}><span>Subtotal</span><span>${formatCurrency(selectedInvoice.subtotal)}</span></div>
+                                        <div className={s.totalRow}><span>IVA</span><span>${formatCurrency(selectedInvoice.tax_amount)}</span></div>
+                                        <div className={s.grandTotal}><span>Total</span><span>${formatCurrency(selectedInvoice.total)}</span></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="modal-footer">
+                            <div style={{ display: "flex", gap: "8px", width: "100%" }}>
+                                {isDirectSaleDraft && (
+                                    <button className="btn btn-primary btn-md" style={{ flex: 1, background: "var(--c-success-text)", borderColor: "var(--c-success-text)", color: "#fff" }} onClick={() => { setPayMethod("cash"); setShowPayModal(true); }}>
+                                        Cobrar
+                                    </button>
+                                )}
+                                {selectedInvoice.status === "draft" && !isDirectSaleDraft && (
+                                    <button className="btn btn-primary btn-md" style={{ flex: 1 }} onClick={handleConfirm}>Confirmar</button>
+                                )}
+                                {selectedInvoice.status === "confirmed" && (
+                                    <button className="btn btn-primary btn-md" style={{ flex: 1, background: "var(--c-success-text)", borderColor: "var(--c-success-text)", color: "#fff" }} onClick={() => setShowPayModal(true)}>Registrar Pago</button>
+                                )}
+                                <button className="btn btn-secondary btn-md" style={{ flex: 1 }} onClick={closeDetailModal}>Cerrar</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Pay Method Modal */}
+                    {showPayModal && (
+                        <div className="modal-overlay" style={{ zIndex: 1001 }}>
+                            <div className="modal" style={{ maxWidth: "360px" }}>
+                                <div className="modal-header">
+                                    <h3 style={{ fontSize: "15px", fontWeight: 600, color: "var(--c-text)" }}>
+                                        {isDirectSaleDraft ? "Cobrar venta directa" : "Método de pago"}
+                                    </h3>
+                                    <button className="modal-close" onClick={() => setShowPayModal(false)}><Icon.X s={14} /></button>
+                                </div>
+                                <div className="modal-body">
+                                    <div style={{ marginBottom: "16px" }}>
+                                        <label style={{ fontSize: "12px", fontWeight: 500, color: "var(--c-text-3)", display: "block", marginBottom: "8px" }}>
+                                            Método
+                                        </label>
+                                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                                            {PAYMENT_METHODS.map(m => (
+                                                <button
+                                                    key={m.value}
+                                                    className={`btn ${payMethod === m.value ? "btn-primary" : "btn-secondary"} btn-sm`}
+                                                    onClick={() => setPayMethod(m.value)}
+                                                >
+                                                    {m.label}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    <p style={{ fontSize: "12px", color: "var(--c-text-3)" }}>
+                                        Total: <strong style={{ color: "var(--c-text)" }}>${formatCurrency(selectedInvoice.total)}</strong>
+                                    </p>
+                                </div>
+                                <div className="modal-footer">
+                                    <button className="btn btn-secondary btn-sm" onClick={() => setShowPayModal(false)}>Cancelar</button>
+                                    <button
+                                        className="btn btn-primary btn-sm"
+                                        style={{ background: "var(--c-success-text)", borderColor: "var(--c-success-text)", color: "#fff" }}
+                                        onClick={isDirectSaleDraft ? handleDirectPay : handlePay}
+                                    >
+                                        {isDirectSaleDraft ? "Cobrar" : "Registrar Pago"}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </div>
-            ) : (
-                <div className="table-wrap">
-                    <table className="table">
+            )}
+
+            {/* New Invoice Modal (Venta Directa) */}
+            {showNewInvoiceModal && (
+                <NewInvoiceModal
+                    genericOwner={genericOwner}
+                    onClose={() => setShowNewInvoiceModal(false)}
+                    onPaid={() => { setShowNewInvoiceModal(false); loadInvoices(filters); }}
+                    confirm={confirm}
+                />
+            )}
+        </div>
+    );
+};
+
+/* ── NewInvoiceModal Component ── */
+const NewInvoiceModal = ({ genericOwner, onClose, onPaid, confirm }) => {
+    const [items, setItems] = useState([]);
+    const [presentationLine, setPresentationLine] = useState({ presentation: null, quantity: "1" });
+    const [serviceLine, setServiceLine] = useState({ service: null, quantity: "1" });
+    const [paymentMethod, setPaymentMethod] = useState("cash");
+    const [processing, setProcessing] = useState(false);
+    const [presentationCache, setPresentationCache] = useState([]);
+    const [serviceCache, setServiceCache] = useState([]);
+
+    useEffect(() => {
+        getPresentations({ active: "true" }).then(data => {
+            setPresentationCache(Array.isArray(data) ? data : data?.results || []);
+        }).catch(() => {});
+        getServices({ active: "true" }).then(data => {
+            setServiceCache(Array.isArray(data) ? data : data?.results || []);
+        }).catch(() => {});
+    }, []);
+
+    const handleClose = async () => {
+        if (items.length > 0) {
+            const ok = await confirm(
+                "¿Descartar este cobro?",
+                "Los ítems no se guardarán.",
+                "Descartar",
+                "Continuar editando"
+            );
+            if (!ok) return;
+        }
+        onClose();
+    };
+
+    const handleProductSearch = async (q) => {
+        const lower = q.trim().toLowerCase();
+        const source = lower
+            ? await getPresentations({ search: q }).then(d => Array.isArray(d) ? d : d?.results || []).catch(() => [])
+            : presentationCache;
+        const filtered = lower
+            ? source.filter(p => p.product_name?.toLowerCase().includes(lower) || p.name?.toLowerCase().includes(lower))
+            : source;
+        return filtered.slice(0, 8).map(p => ({
+            id: p.id,
+            label: `${p.product_name} — ${p.name} ($${Number(p.sale_price).toFixed(2)})`,
+        }));
+    };
+
+    const handleServiceSearch = async (q) => {
+        const lower = q.trim().toLowerCase();
+        const source = lower
+            ? await getServices({ active: "true", search: q }).then(d => Array.isArray(d) ? d : d?.results || []).catch(() => [])
+            : serviceCache;
+        const filtered = lower
+            ? source.filter(s => s.name?.toLowerCase().includes(lower))
+            : source;
+        return filtered.slice(0, 8).map(s => ({
+            id: s.id,
+            label: `${s.name} — $${Number(s.base_price).toFixed(2)}`,
+        }));
+    };
+
+    const addPresentationItem = () => {
+        if (!presentationLine.presentation) return;
+        const pres = presentationCache.find(p => p.id === presentationLine.presentation.id);
+        if (!pres) return;
+        const qty = Math.max(1, parseInt(presentationLine.quantity) || 1);
+        if (pres.stock < qty) {
+            toast.error(`Stock insuficiente (${pres.stock} disponible).`);
+            return;
+        }
+        const existing = items.find(i => i.type === "product" && i.id === pres.id);
+        if (existing) {
+            const newQty = existing.quantity + qty;
+            if (pres.stock < newQty) {
+                toast.error(`Stock insuficiente (${pres.stock} disponible, ya tienes ${existing.quantity}).`);
+                return;
+            }
+            setItems(prev => prev.map(i => i.id === pres.id && i.type === "product"
+                ? { ...i, quantity: newQty }
+                : i
+            ));
+        } else {
+            setItems(prev => [...prev, {
+                type: "product",
+                id: pres.id,
+                name: `${pres.product_name} — ${pres.name}`,
+                quantity: qty,
+                unit_price: pres.sale_price,
+            }]);
+        }
+        setPresentationLine({ presentation: null, quantity: "1" });
+    };
+
+    const addServiceItem = () => {
+        if (!serviceLine.service) return;
+        const svc = serviceCache.find(s => s.id === serviceLine.service.id);
+        if (!svc) return;
+        const qty = Math.max(1, parseInt(serviceLine.quantity) || 1);
+        const existing = items.find(i => i.type === "service" && i.id === svc.id);
+        if (existing) {
+            setItems(prev => prev.map(i => i.id === svc.id && i.type === "service"
+                ? { ...i, quantity: existing.quantity + qty }
+                : i
+            ));
+        } else {
+            setItems(prev => [...prev, {
+                type: "service",
+                id: svc.id,
+                name: svc.name,
+                quantity: qty,
+                unit_price: svc.base_price,
+            }]);
+        }
+        setServiceLine({ service: null, quantity: "1" });
+    };
+
+    const removeItem = (idx) => {
+        setItems(prev => prev.filter((_, i) => i !== idx));
+    };
+
+    const subtotal = items.reduce((sum, i) => sum + i.quantity * Number(i.unit_price), 0);
+
+    const handleCobrar = async () => {
+        if (items.length === 0) {
+            toast.error("Agrega al menos un ítem.");
+            return;
+        }
+        if (!genericOwner) {
+            toast.error("No se encontró el propietario genérico. Verifica la configuración.");
+            return;
+        }
+        setProcessing(true);
+        try {
+            const invoice = await createInvoice({ owner: genericOwner.id });
+            for (const item of items) {
+                const payload = item.type === "product"
+                    ? { presentation: item.id, quantity: String(item.quantity) }
+                    : { service: item.id, quantity: String(item.quantity) };
+                await addInvoiceItem(invoice.public_id, payload);
+            }
+            await directPayInvoice(invoice.public_id, paymentMethod);
+            toast.success("Venta directa cobrada");
+            onPaid();
+        } catch (err) {
+            toast.error(apiError(err, "Error al procesar el cobro. Intenta de nuevo."));
+        } finally {
+            setProcessing(false);
+        }
+    };
+
+    return (
+        <div className="modal-overlay" onClick={handleClose}>
+            <div className="modal modal-lg" onClick={e => e.stopPropagation()} style={{ maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
+                <div className="modal-header" style={{ flexShrink: 0 }}>
+                    <div>
+                        <h3 style={{ fontSize: "16px", fontWeight: 600, color: "var(--c-text)" }}>Nuevo Cobro</h3>
+                        <span style={{ fontSize: "12px", color: "var(--c-text-3)" }}>Venta directa</span>
+                    </div>
+                    <button className="modal-close" onClick={handleClose}><Icon.X s={14} /></button>
+                </div>
+
+                {/* Step 1: Add items */}
+                <div className="modal-body" style={{ flex: 1, overflow: "auto" }}>
+                    <div style={{ display: "flex", gap: "12px", marginBottom: "16px", flexWrap: "wrap" }}>
+                        {/* Product */}
+                        <div style={{ flex: "1 1 300px" }}>
+                            <label style={{ fontSize: "11px", fontWeight: 600, color: "var(--c-text-3)", display: "block", marginBottom: "4px", textTransform: "uppercase" }}>Producto</label>
+                            <div style={{ display: "flex", gap: "8px" }}>
+                                <div style={{ flex: 1 }}>
+                                    <SearchSelect
+                                        placeholder="Buscar producto..."
+                                        value={presentationLine.presentation}
+                                        onChange={item => setPresentationLine(prev => ({ ...prev, presentation: item }))}
+                                        onSearch={handleProductSearch}
+                                    />
+                                </div>
+                                <input
+                                    type="number"
+                                    className="input"
+                                    style={{ width: "70px", height: "38px", textAlign: "center" }}
+                                    value={presentationLine.quantity}
+                                    onChange={e => setPresentationLine(prev => ({ ...prev, quantity: e.target.value }))}
+                                    min="1"
+                                />
+                                <button className="btn btn-primary btn-sm" onClick={addPresentationItem} disabled={!presentationLine.presentation}>
+                                    <Icon.Plus s={14} />
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Service */}
+                        <div style={{ flex: "1 1 300px" }}>
+                            <label style={{ fontSize: "11px", fontWeight: 600, color: "var(--c-text-3)", display: "block", marginBottom: "4px", textTransform: "uppercase" }}>Servicio</label>
+                            <div style={{ display: "flex", gap: "8px" }}>
+                                <div style={{ flex: 1 }}>
+                                    <SearchSelect
+                                        placeholder="Buscar servicio..."
+                                        value={serviceLine.service}
+                                        onChange={item => setServiceLine(prev => ({ ...prev, service: item }))}
+                                        onSearch={handleServiceSearch}
+                                    />
+                                </div>
+                                <input
+                                    type="number"
+                                    className="input"
+                                    style={{ width: "70px", height: "38px", textAlign: "center" }}
+                                    value={serviceLine.quantity}
+                                    onChange={e => setServiceLine(prev => ({ ...prev, quantity: e.target.value }))}
+                                    min="1"
+                                />
+                                <button className="btn btn-primary btn-sm" onClick={addServiceItem} disabled={!serviceLine.service}>
+                                    <Icon.Plus s={14} />
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Items Table */}
+                    <table className={s.tableCompact} style={{ border: "1px solid var(--c-border)" }}>
                         <thead>
                             <tr>
-                                <th>#</th>
-                                <th>Mascota · Dueño</th>
                                 <th>Tipo</th>
-                                <th>Estado</th>
-                                <th>Fecha</th>
-                                <th style={{ textAlign: "right" }}>Total</th>
+                                <th>Concepto</th>
+                                <th>Cant.</th>
+                                <th style={{ textAlign: "right" }}>P. Unit</th>
+                                <th style={{ textAlign: "right" }}>Subtotal</th>
                                 <th></th>
                             </tr>
                         </thead>
                         <tbody>
-                            {invoices.map(inv => (
-                                <tr key={inv.id}>
-                                    <td style={{ color: "var(--c-text-3)", fontWeight: "600" }}>#{inv.id}</td>
-                                    <td>
-                                        <span style={{ fontWeight: "600" }}>{inv.pet_name}</span>
-                                        <span style={{ display: "block", fontSize: "12px", color: "var(--c-text-3)" }}>{inv.owner_name}</span>
+                            {items.length === 0 ? (
+                                <tr>
+                                    <td colSpan="6" style={{ textAlign: "center", padding: "24px", color: "var(--c-text-3)" }}>
+                                        Agrega productos o servicios para comenzar.
                                     </td>
-                                    <td>
-                                        {inv.invoice_type === "direct_sale" && <span className="badge badge-default">Venta directa</span>}
-                                        {inv.invoice_type === "consultation" && <span className="badge badge-info">Consulta</span>}
+                                </tr>
+                            ) : items.map((item, idx) => (
+                                <tr key={`${item.type}-${item.id}-${idx}`}>
+                                    <td style={{ fontSize: "11px", color: "var(--c-text-3)" }}>
+                                        {item.type === "product" ? <Icon.Package s={12} /> : <Icon.Stethoscope s={12} />}
                                     </td>
-                                    <td>
-                                        <span className={`badge ${STATUS_BADGE[inv.status]}`}>
-                                            {STATUS_LABELS[inv.status]}
-                                        </span>
+                                    <td style={{ fontWeight: 500 }}>{item.name}</td>
+                                    <td style={{ textAlign: "center" }}>{item.quantity}</td>
+                                    <td style={{ textAlign: "right" }}>${Number(item.unit_price).toFixed(2)}</td>
+                                    <td style={{ textAlign: "right", fontWeight: 500 }}>
+                                        ${(item.quantity * Number(item.unit_price)).toFixed(2)}
                                     </td>
-                                    <td style={{ color: "var(--c-text-3)" }}>{formatDate(inv.created_at)}</td>
-                                    <td style={{ textAlign: "right", fontWeight: "700" }}>
-                                        ${formatCurrency(inv.total)}
-                                    </td>
-                                    <td>
-                                        <button
-                                            className="btn btn-info btn-sm"
-                                            onClick={() => openInvoiceDetail(inv)}
-                                        >
-                                            Ver
+                                    <td style={{ textAlign: "right" }}>
+                                        <button className={s.actionBtn} onClick={() => removeItem(idx)} disabled={processing}>
+                                            <Icon.Trash s={13} />
                                         </button>
                                     </td>
                                 </tr>
                             ))}
                         </tbody>
                     </table>
-                </div>
-            )}
 
-            {/* Invoice Detail Modal */}
-            {showDetailModal && selectedInvoice && (
-                <div className="modal-overlay">
-                    <div className="modal modal-lg">
-                        <div className="modal-header">
-                            <div>
-                                <h3>Cobro #{selectedInvoice.id}</h3>
-                                <div style={{ display: "flex", gap: "6px", marginTop: "6px", alignItems: "center" }}>
-                                    <span className={`badge ${STATUS_BADGE[selectedInvoice.status]}`}>
-                                        {STATUS_LABELS[selectedInvoice.status]}
-                                    </span>
-                                    {selectedInvoice.invoice_type === "direct_sale" && (
-                                        <span className="badge badge-default">Venta directa</span>
-                                    )}
-                                    {selectedInvoice.invoice_type === "consultation" && (
-                                        <span className="badge badge-info">Consulta</span>
-                                    )}
+                    {/* Total */}
+                    {items.length > 0 && (
+                        <div style={{ marginTop: "16px", display: "flex", justifyContent: "flex-end" }}>
+                            <div style={{ minWidth: "180px" }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: "13px", color: "var(--c-text-2)" }}>
+                                    <span>Subtotal</span>
+                                    <span>${subtotal.toFixed(2)}</span>
+                                </div>
+                                {/* Note: IVA se calcula en backend con tax_rate de la org */}
+                                <div style={{ display: "flex", justifyContent: "space-between", padding: "12px 0 4px", borderTop: "1px solid var(--c-subtle)", fontSize: "16px", fontWeight: 600, color: "var(--c-text)" }}>
+                                    <span>Total estimado</span>
+                                    <span>${subtotal.toFixed(2)}</span>
                                 </div>
                             </div>
-                            <button className="modal-close" onClick={closeDetailModal}><Icon.X s={16} /></button>
                         </div>
-                        <div className="modal-body">
+                    )}
+                </div>
 
-                            {/* Patient info */}
-                            <div style={{
-                                display: "flex", gap: "20px", flexWrap: "wrap",
-                                background: "var(--c-subtle)", padding: "14px", borderRadius: "var(--r-lg)",
-                                marginBottom: "20px",
-                            }}>
-                                {[
-                                    ["Mascota", selectedInvoice.pet_name],
-                                    ["Dueño", selectedInvoice.owner_name],
-                                    ["Fecha", formatDate(selectedInvoice.created_at)],
-                                    ...(selectedInvoice.status === "paid"
-                                        ? [["Pago", PAYMENT_METHODS.find(m => m.value === selectedInvoice.payment_method)?.label || selectedInvoice.payment_method]]
-                                        : []),
-                                ].map(([label, val]) => (
-                                    <div key={label}>
-                                        <p style={{ fontSize: "11px", color: "var(--c-text-3)", marginBottom: "2px" }}>{label}</p>
-                                        <p style={{ fontWeight: "600", fontSize: "13.5px" }}>{val}</p>
-                                    </div>
+                {/* Footer: Payment method + Cobrar */}
+                <div className="modal-footer" style={{ flexShrink: 0, borderTop: "1px solid var(--c-border)", paddingTop: "12px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "12px", width: "100%" }}>
+                        <div style={{ flex: 1 }}>
+                            <label style={{ fontSize: "11px", fontWeight: 500, color: "var(--c-text-3)", display: "block", marginBottom: "4px" }}>
+                                Método de pago
+                            </label>
+                            <div style={{ display: "flex", gap: "6px" }}>
+                                {PAYMENT_METHODS.map(m => (
+                                    <button
+                                        key={m.value}
+                                        className={`btn ${paymentMethod === m.value ? "btn-primary" : "btn-secondary"} btn-xs`}
+                                        onClick={() => setPaymentMethod(m.value)}
+                                        disabled={processing}
+                                    >
+                                        {m.label}
+                                    </button>
                                 ))}
                             </div>
-
-                            {/* Items */}
-                            <div style={{ marginBottom: "16px" }}>
-                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
-                                    <p style={{ fontWeight: "600", fontSize: "13px" }}>Ítems</p>
-                                </div>
-
-                                {selectedInvoice.items.length === 0 ? (
-                                    <p style={{ color: "var(--c-text-3)", fontSize: "13px", textAlign: "center", padding: "12px" }}>Sin ítems. Agrega servicios o productos.</p>
-                                ) : (
-                                    <div className="table-wrap" style={{ marginBottom: "0" }}>
-                                        <table className="table">
-                                            <thead>
-                                                <tr>
-                                                    <th>Descripción</th>
-                                                    <th>Cant.</th>
-                                                    <th>P. Unit.</th>
-                                                    <th>Descuento</th>
-                                                    <th>Subtotal</th>
-                                                    <th></th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {selectedInvoice.items.map(item => (
-                                                    <tr key={item.id}>
-                                                        <td>{item.description}</td>
-                                                        <td>{item.quantity}</td>
-                                                        <td>${formatCurrency(item.unit_price)}</td>
-                                                        <td style={{ color: "var(--c-text-3)", fontSize: "12px" }}>
-                                                            {item.discount_type === "percentage" && `${item.discount_value}%`}
-                                                            {item.discount_type === "fixed" && `-$${formatCurrency(item.discount_value)}`}
-                                                            {!item.discount_type && "—"}
-                                                        </td>
-                                                        <td style={{ fontWeight: "600" }}>${formatCurrency(item.subtotal)}</td>
-                                                        <td>
-                                                            {canManage && selectedInvoice.status === "draft" && (
-                                                                <button
-                                                                    className="btn btn-danger btn-xs"
-                                                                    onClick={() => handleDeleteItem(item.id)}
-                                                                >
-                                                                    <Icon.X s={11} />
-                                                                </button>
-                                                            )}
-                                                        </td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                )}
-
-                                {/* Botones Agregar Servicio / Producto */}
-                                {canManage && selectedInvoice.status === "draft" && (
-                                    <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
-                                        <button
-                                            className="btn btn-secondary btn-sm"
-                                            style={{ flex: 1 }}
-                                            onClick={() => setItemMode(itemMode === "service" ? null : "service")}
-                                        >
-                                            + Agregar Servicio
-                                        </button>
-                                        <button
-                                            className="btn btn-secondary btn-sm"
-                                            style={{ flex: 1 }}
-                                            onClick={() => setItemMode(itemMode === "product" ? null : "product")}
-                                        >
-                                            + Agregar Producto
-                                        </button>
-                                    </div>
-                                )}
-
-                                {/* Sub-formulario SERVICIO */}
-                                {itemMode === "service" && selectedInvoice.status === "draft" && (
-                                    <form
-                                        onSubmit={handleAddItem}
-                                        style={{
-                                            background: "var(--c-subtle)", padding: "14px",
-                                            borderRadius: "var(--r-lg)", marginTop: "12px",
-                                            border: "1px solid var(--c-border)",
-                                        }}
-                                    >
-                                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "10px" }}>
-                                            <div>
-                                                <label className="form-label" htmlFor="billing-service">SERVICIO *</label>
-                                                <select
-                                                    id="billing-service"
-                                                    name="billing-service"
-                                                    className="select-input"
-                                                    value={itemForm.service}
-                                                    onChange={e => setItemForm(f => ({ ...f, service: e.target.value, presentation: "" }))}
-                                                    required
-                                                >
-                                                    <option value="">— Seleccionar servicio —</option>
-                                                    {services.filter(s => s.is_active).map(s => (
-                                                        <option key={s.id} value={s.id}>
-                                                            {s.name} — ${formatCurrency(s.base_price)}
-                                                        </option>
-                                                    ))}
-                                                </select>
-                                            </div>
-                                            <div>
-                                                <label className="form-label" htmlFor="billing-service-quantity">CANTIDAD</label>
-                                                <input
-                                                    id="billing-service-quantity"
-                                                    name="billing-service-quantity"
-                                                    type="number" min="0.01" step="0.01" className="input"
-                                                    value={itemForm.quantity}
-                                                    onChange={e => setItemForm(f => ({ ...f, quantity: e.target.value }))}
-                                                />
-                                            </div>
-                                            <div>
-                                                <label className="form-label" htmlFor="billing-service-discount-type">DESCUENTO (opcional)</label>
-                                                <select
-                                                    id="billing-service-discount-type"
-                                                    name="billing-service-discount-type"
-                                                    className="select-input"
-                                                    value={itemForm.discount_type}
-                                                    onChange={e => setItemForm(f => ({ ...f, discount_type: e.target.value, discount_value: "" }))}
-                                                >
-                                                    <option value="">Sin descuento</option>
-                                                    <option value="percentage">Porcentaje (%)</option>
-                                                    <option value="fixed">Monto fijo ($)</option>
-                                                </select>
-                                            </div>
-                                            {itemForm.discount_type && (
-                                                <div>
-                                                    <label className="form-label" htmlFor="billing-service-discount-value">
-                                                        {itemForm.discount_type === "percentage" ? "PORCENTAJE" : "MONTO A DESCONTAR"}
-                                                    </label>
-                                                    <input
-                                                        id="billing-service-discount-value"
-                                                        name="billing-service-discount-value"
-                                                        type="number" min="0.01" step="0.01" className="input"
-                                                        value={itemForm.discount_value}
-                                                        onChange={e => setItemForm(f => ({ ...f, discount_value: e.target.value }))}
-                                                        placeholder={itemForm.discount_type === "percentage" ? "ej: 10" : "ej: 50.00"}
-                                                    />
-                                                </div>
-                                            )}
-                                        </div>
-                                        {itemForm.service && (
-                                            <div style={{
-                                                gridColumn: "1 / -1",
-                                                background: "var(--c-surface)",
-                                                borderRadius: "var(--r-md)",
-                                                padding: "10px 14px",
-                                                fontSize: "12.5px",
-                                                color: "var(--c-text-2)",
-                                                marginBottom: "10px",
-                                            }}>
-                                                {(() => {
-                                                    const svc = services.find(s => s.id === parseInt(itemForm.service));
-                                                    if (!svc) return null;
-                                                    const qty = Number(itemForm.quantity) || 1;
-                                                    const gross = svc.base_price * qty;
-                                                    let discount = 0;
-                                                    if (itemForm.discount_type === "percentage") {
-                                                        discount = gross * (Number(itemForm.discount_value) / 100);
-                                                    } else if (itemForm.discount_type === "fixed") {
-                                                        discount = Math.min(Number(itemForm.discount_value) || 0, gross);
-                                                    }
-                                                    const net = gross - discount;
-                                                    return (
-                                                        <>
-                                                            <span>Precio unitario: <strong>${formatCurrency(svc.base_price)}</strong></span>
-                                                            {discount > 0 && (
-                                                                <span style={{ marginLeft: "12px", color: "var(--c-warning-text)" }}>
-                                                                    Descuento: -${formatCurrency(discount)}
-                                                                </span>
-                                                            )}
-                                                            <span style={{ marginLeft: "12px", fontWeight: "700", color: "var(--c-success-text)" }}>
-                                                                Total línea: ${formatCurrency(net)}
-                                                            </span>
-                                                        </>
-                                                    );
-                                                })()}
-                                            </div>
-                                        )}
-                                        <div style={{ display: "flex", gap: "8px" }}>
-                                            <button type="submit" className="btn btn-primary btn-sm">Agregar</button>
-                                            <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setItemMode(null); setItemForm(EMPTY_ITEM); }}>Cancelar</button>
-                                        </div>
-                                    </form>
-                                )}
-
-                                {/* Sub-formulario PRODUCTO */}
-                                {itemMode === "product" && selectedInvoice.status === "draft" && (
-                                    <form
-                                        onSubmit={handleAddItem}
-                                        style={{
-                                            background: "var(--c-subtle)", padding: "14px",
-                                            borderRadius: "var(--r-lg)", marginTop: "12px",
-                                            border: "1px solid var(--c-border)",
-                                        }}
-                                    >
-                                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "10px" }}>
-                                            <div>
-                                                <label className="form-label" htmlFor="billing-presentation">PRESENTACIÓN *</label>
-                                                <select
-                                                    id="billing-presentation"
-                                                    name="billing-presentation"
-                                                    className="select-input"
-                                                    value={itemForm.presentation}
-                                                    onChange={e => setItemForm(f => ({ ...f, presentation: e.target.value, service: "" }))}
-                                                    required
-                                                >
-                                                    <option value="">— Seleccionar producto —</option>
-                                                    {presentations
-                                                        .filter(p => !selectedInvoice?.items?.some(i => i.presentation === p.id))
-                                                        .map(p => (
-                                                        <option key={p.id} value={p.id} disabled={p.stock <= 0}>
-                                                            {p.product_name} — {p.name}
-                                                            {p.stock <= 0 ? ' (sin stock)' : ` ($${formatCurrency(p.sale_price)} | stock: ${p.stock})`}
-                                                        </option>
-                                                    ))}
-                                                </select>
-                                            </div>
-                                            <div>
-                                                <label className="form-label" htmlFor="billing-product-quantity">CANTIDAD</label>
-                                                <input
-                                                    id="billing-product-quantity"
-                                                    name="billing-product-quantity"
-                                                    type="number" min="0.01" step="0.01" className="input"
-                                                    value={itemForm.quantity}
-                                                    onChange={e => setItemForm(f => ({ ...f, quantity: e.target.value }))}
-                                                />
-                                            </div>
-                                            <div>
-                                                <label className="form-label" htmlFor="billing-product-discount-type">DESCUENTO (opcional)</label>
-                                                <select
-                                                    id="billing-product-discount-type"
-                                                    name="billing-product-discount-type"
-                                                    className="select-input"
-                                                    value={itemForm.discount_type}
-                                                    onChange={e => setItemForm(f => ({ ...f, discount_type: e.target.value, discount_value: "" }))}
-                                                >
-                                                    <option value="">Sin descuento</option>
-                                                    <option value="percentage">Porcentaje (%)</option>
-                                                    <option value="fixed">Monto fijo ($)</option>
-                                                </select>
-                                            </div>
-                                            {itemForm.discount_type && (
-                                                <div>
-                                                    <label className="form-label" htmlFor="billing-product-discount-value">
-                                                        {itemForm.discount_type === "percentage" ? "PORCENTAJE" : "MONTO A DESCONTAR"}
-                                                    </label>
-                                                    <input
-                                                        id="billing-product-discount-value"
-                                                        name="billing-product-discount-value"
-                                                        type="number" min="0.01" step="0.01" className="input"
-                                                        value={itemForm.discount_value}
-                                                        onChange={e => setItemForm(f => ({ ...f, discount_value: e.target.value }))}
-                                                        placeholder={itemForm.discount_type === "percentage" ? "ej: 10" : "ej: 50.00"}
-                                                    />
-                                                </div>
-                                            )}
-                                        </div>
-                                        {itemForm.presentation && (
-                                            <div style={{
-                                                gridColumn: "1 / -1",
-                                                background: "var(--c-surface)",
-                                                borderRadius: "var(--r-md)",
-                                                padding: "10px 14px",
-                                                fontSize: "12.5px",
-                                                color: "var(--c-text-2)",
-                                                marginBottom: "10px",
-                                            }}>
-                                                {(() => {
-                                                    const pres = presentations.find(p => p.id === parseInt(itemForm.presentation));
-                                                    if (!pres) return null;
-                                                    const qty = Number(itemForm.quantity) || 1;
-                                                    const gross = pres.sale_price * qty;
-                                                    let discount = 0;
-                                                    if (itemForm.discount_type === "percentage") {
-                                                        discount = gross * (Number(itemForm.discount_value) / 100);
-                                                    } else if (itemForm.discount_type === "fixed") {
-                                                        discount = Math.min(Number(itemForm.discount_value) || 0, gross);
-                                                    }
-                                                    const net = gross - discount;
-                                                    return (
-                                                        <>
-                                                            <span>Precio unitario: <strong>${formatCurrency(pres.sale_price)}</strong></span>
-                                                            {discount > 0 && (
-                                                                <span style={{ marginLeft: "12px", color: "var(--c-warning-text)" }}>
-                                                                    Descuento: -${formatCurrency(discount)}
-                                                                </span>
-                                                            )}
-                                                            <span style={{ marginLeft: "12px", fontWeight: "700", color: "var(--c-success-text)" }}>
-                                                                Total línea: ${formatCurrency(net)}
-                                                            </span>
-                                                        </>
-                                                    );
-                                                })()}
-                                            </div>
-                                        )}
-                                        <div style={{ display: "flex", gap: "8px" }}>
-                                            <button type="submit" className="btn btn-primary btn-sm">Agregar</button>
-                                            <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setItemMode(null); setItemForm(EMPTY_ITEM); }}>Cancelar</button>
-                                        </div>
-                                    </form>
-                                )}
-                            </div>
-
-                            {/* Productos recetados disponibles */}
-                            {selectedInvoice.status === "draft" && (() => {
-                                const pendingSuggestions = (selectedInvoice.prescription_suggestions || []).filter(
-                                    s => !selectedInvoice.items.some(i => i.presentation === s.presentation_id)
-                                );
-                                if (pendingSuggestions.length === 0) return null;
-                                return (
-                                    <div style={{
-                                        border: "1px solid #bfdbfe",
-                                        borderRadius: "var(--r-lg)",
-                                        padding: "12px 14px",
-                                        marginBottom: "14px",
-                                        background: "#eff6ff",
-                                    }}>
-                                        <p style={{ fontWeight: "600", fontSize: "12.5px", color: "#1d4ed8", marginBottom: "8px" }}>
-                                            Productos recetados — el cliente decide cuáles lleva
-                                        </p>
-                                        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                                            {pendingSuggestions.map(s => (
-                                                <div key={s.prescription_item_id} style={{
-                                                    display: "flex", alignItems: "center",
-                                                    justifyContent: "space-between",
-                                                    background: "#fff", borderRadius: "var(--r-md)",
-                                                    padding: "7px 10px",
-                                                    border: "1px solid #dbeafe",
-                                                }}>
-                                                    <div>
-                                                        <span style={{ fontWeight: "600", fontSize: "13px" }}>
-                                                            {s.product_name}
-                                                        </span>
-                                                        <span style={{ color: "var(--c-text-3)", fontSize: "11.5px", marginLeft: "8px" }}>
-                                                            Dosis: {s.dose} · Cant: {s.suggested_quantity} · ${s.unit_price}
-                                                        </span>
-                                                    </div>
-                                                    <button
-                                                        className="btn btn-sm"
-                                                        style={{ background: "#1d4ed8", color: "#fff", borderColor: "transparent", minWidth: "70px" }}
-                                                        onClick={() => handleAddPrescriptionSuggestion(s)}
-                                                    >
-                                                        Agregar
-                                                    </button>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                );
-                            })()}
-
-                            {/* Totals */}
-                            <div style={{ borderTop: "1px solid var(--c-border)", paddingTop: "14px", marginBottom: "8px" }}>
-                                <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                                    <div style={{ minWidth: "220px" }}>
-                                        {[
-                                            ["Subtotal", `$${formatCurrency(selectedInvoice.subtotal)}`],
-                                            [`IVA (${(Number(selectedInvoice.tax_rate) * 100).toFixed(0)}%)`, `$${formatCurrency(selectedInvoice.tax_amount)}`],
-                                        ].map(([label, value]) => (
-                                            <div key={label} style={{ display: "flex", justifyContent: "space-between", marginBottom: "5px" }}>
-                                                <span style={{ color: "var(--c-text-2)", fontSize: "13px" }}>{label}</span>
-                                                <span style={{ fontSize: "13px" }}>{value}</span>
-                                            </div>
-                                        ))}
-                                        <div style={{
-                                            display: "flex", justifyContent: "space-between",
-                                            fontWeight: "700", fontSize: "16px",
-                                            borderTop: "1px solid var(--c-border)", paddingTop: "8px", marginTop: "6px",
-                                        }}>
-                                            <span>Total</span>
-                                            <span style={{ color: "var(--c-success-text)" }}>${formatCurrency(selectedInvoice.total)}</span>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
                         </div>
-
-                        {/* Actions */}
-                        {canManage && (
-                            <div className="modal-footer" style={{ flexDirection: "column", gap: "10px" }}>
-                                {/* Indicador de pasos — solo para facturas en tránsito */}
-                                {(selectedInvoice.status === "draft" || selectedInvoice.status === "confirmed") && (
-                                    <div style={{ display: "flex", alignItems: "center", width: "100%", gap: "8px", paddingBottom: "4px" }}>
-                                        {[
-                                            { label: "Confirmar", step: 1, done: selectedInvoice.status === "confirmed" },
-                                            { label: "Registrar Pago", step: 2, done: false },
-                                        ].map((s, i, arr) => (
-                                            <div key={s.step} style={{ display: "flex", alignItems: "center", flex: i < arr.length - 1 ? "none" : 1, gap: "6px" }}>
-                                                <span style={{
-                                                    width: 22, height: 22, borderRadius: "50%", flexShrink: 0,
-                                                    display: "flex", alignItems: "center", justifyContent: "center",
-                                                    fontSize: 11, fontWeight: 700,
-                                                    background: s.done ? "#059669" : (selectedInvoice.status === "confirmed" && s.step === 2 ? "#1d4ed8" : "var(--c-border)"),
-                                                    color: "#fff",
-                                                }}>
-                                                    {s.done ? "✓" : s.step}
-                                                </span>
-                                                <span style={{
-                                                    fontSize: 12, fontWeight: 600,
-                                                    color: s.done ? "#059669" : (selectedInvoice.status === "confirmed" && s.step === 2 ? "#1d4ed8" : "var(--c-text-3)"),
-                                                    whiteSpace: "nowrap",
-                                                }}>
-                                                    {s.label}
-                                                </span>
-                                                {i < arr.length - 1 && (
-                                                    <div style={{ flex: 1, height: 2, minWidth: 20, background: s.done ? "#059669" : "var(--c-border)", marginLeft: 4 }} />
-                                                )}
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                                <div style={{ display: "flex", gap: "8px", width: "100%" }}>
-                                    {selectedInvoice.status === "draft" && (
-                                        <button className="btn btn-primary btn-md" style={{ flex: 1 }} onClick={handleConfirm}>
-                                            Confirmar cobro
-                                        </button>
-                                    )}
-                                    {selectedInvoice.status === "confirmed" && (
-                                        <button
-                                            className="btn btn-primary btn-md"
-                                            style={{ flex: 1, background: "#059669", borderColor: "#059669" }}
-                                            onClick={() => setShowPayModal(true)}
-                                        >
-                                            Registrar Pago
-                                        </button>
-                                    )}
-                                    <button className="btn btn-secondary btn-md" style={{ flex: 1 }} onClick={closeDetailModal}>
-                                        Cerrar
-                                    </button>
-                                </div>
-                            </div>
-                        )}
+                        <button className="btn btn-secondary btn-sm" onClick={handleClose} disabled={processing}>
+                            Cancelar
+                        </button>
+                        <button
+                            className="btn btn-primary btn-sm"
+                            style={{ background: "var(--c-success-text)", borderColor: "var(--c-success-text)", color: "#fff", minWidth: "100px" }}
+                            onClick={handleCobrar}
+                            disabled={items.length === 0 || processing || !genericOwner}
+                        >
+                            {processing ? <Icon.Loader s={14} /> : "Cobrar"}
+                        </button>
                     </div>
                 </div>
-            )}
-
-            {/* Pay Modal */}
-            {showPayModal && (
-                <div className="modal-overlay" style={{ zIndex: 1100 }}>
-                    <div className="modal modal-sm">
-                        <div className="modal-header">
-                            <h3>Registrar Pago</h3>
-                            <button className="modal-close" onClick={() => setShowPayModal(false)}><Icon.X s={16} /></button>
-                        </div>
-                        <div className="modal-body">
-                            <fieldset className="form-group" style={{ border: "none", margin: 0, padding: 0 }}>
-                                <legend className="form-label">MÉTODO DE PAGO</legend>
-                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-                                    {PAYMENT_METHODS.map(m => (
-                                        <button
-                                            key={m.value}
-                                            type="button"
-                                            onClick={() => setPayMethod(m.value)}
-                                            className={`btn btn-md${payMethod === m.value ? " btn-primary" : " btn-secondary"}`}
-                                        >
-                                            {m.label}
-                                        </button>
-                                    ))}
-                                </div>
-                            </fieldset>
-                            <p style={{ fontSize: "13px", color: "var(--c-text-2)" }}>
-                                Total a cobrar:{" "}
-                                <strong style={{ color: "var(--c-success-text)", fontSize: "16px" }}>
-                                    ${formatCurrency(selectedInvoice?.total)}
-                                </strong>
-                            </p>
-                        </div>
-                        <div className="modal-footer">
-                            <button
-                                className="btn btn-md"
-                                style={{ flex: 1, background: "#059669", borderColor: "#059669", color: "#fff" }}
-                                onClick={handlePay}
-                            >
-                                Confirmar Pago
-                            </button>
-                            <button className="btn btn-secondary btn-md" style={{ flex: 1 }} onClick={() => setShowPayModal(false)}>
-                                Cancelar
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* New Invoice Modal */}
-            {showNewInvoiceModal && (
-                <div className="modal-overlay">
-                    <div className="modal modal-lg">
-                        <div className="modal-header">
-                            <h3>Nuevo Cobro</h3>
-                            <button className="modal-close" onClick={() => setShowNewInvoiceModal(false)}><Icon.X s={16} /></button>
-                        </div>
-                        <div className="modal-body">
-
-                            {genericOwner && (
-                            <button
-                                type="button"
-                                className="btn btn-secondary btn-sm"
-                                style={{ marginBottom: "16px" }}
-                                onClick={() => {
-                                    setNewInvoiceOwner({ id: genericOwner.id, label: genericOwner.name });
-                                    setNewInvoicePet(null);
-                                    setNewInvoiceType("direct_sale");
-                                }}
-                            >
-                                Venta a público general
-                            </button>
-                        )}
-
-                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px", marginBottom: "20px" }}>
-                                <div>
-                                    <label className="label" htmlFor="new-invoice-owner">Propietario</label>
-                                    <SearchSelect
-                                        id="new-invoice-owner"
-                                        name="new-invoice-owner"
-                                        value={newInvoiceOwner}
-                                        onChange={item => { setNewInvoiceOwner(item); setNewInvoicePet(null); }}
-                                        onSearch={q => getOwners({ search: q }).then(os => os.filter(o => !o.is_generic).map(o => ({ id: o.id, label: o.name })))}
-                                        placeholder="Buscar propietario..."
-                                    />
-                                </div>
-
-                                <div>
-                                    <label className="label" htmlFor="new-invoice-pet">Mascota {newInvoiceOwner?.id === genericOwner?.id ? "(no requerida)" : "*"}</label>
-                                    <SearchSelect
-                                        id="new-invoice-pet"
-                                        name="new-invoice-pet"
-                                        value={newInvoicePet}
-                                        onChange={item => setNewInvoicePet(item)}
-                                        onSearch={q => getPets({ search: q, owner: newInvoiceOwner?.id }).then(ps => ps.map(p => ({ id: p.id, label: p.name })))}
-                                        placeholder={newInvoiceOwner ? "Buscar mascota..." : "Selecciona propietario primero"}
-                                        disabled={!newInvoiceOwner || newInvoiceOwner?.id === genericOwner?.id}
-                                    />
-                                </div>
-                            </div>
-
-                            <div>
-                                <label className="label" htmlFor="new-invoice-type">Tipo de Factura</label>
-                                <select
-                                    id="new-invoice-type"
-                                    name="new-invoice-type"
-                                    className="input"
-                                    value={newInvoiceType}
-                                    onChange={e => setNewInvoiceType(e.target.value)}
-                                >
-                                    <option value="direct_sale">Venta directa</option>
-                                    <option value="consultation">Consulta</option>
-                                </select>
-                            </div>
-                        </div>
-                        <div className="modal-footer">
-                            <button
-                                className="btn btn-secondary"
-                                onClick={() => setShowNewInvoiceModal(false)}
-                            >
-                                Cancelar
-                            </button>
-                            <button
-                                className="btn btn-primary"
-                                onClick={async () => {
-                                    try {
-                                        if (!newInvoiceOwner) { toast.error("Selecciona un propietario"); return; }
-                                        const isGeneric = newInvoiceOwner?.id === genericOwner?.id;
-                                        if (!isGeneric && !newInvoicePet) { toast.error("Selecciona una mascota"); return; }
-                                        const p = createInvoice({
-                                            owner: newInvoiceOwner.id,
-                                            pet: isGeneric ? undefined : newInvoicePet.id,
-                                            invoice_type: newInvoiceType,
-                                        }).then(async (newInv) => {
-                                            setShowNewInvoiceModal(false);
-                                            await loadInvoices(filters);
-                                            await openInvoiceDetail(newInv);
-                                        });
-
-                                        await toast.promise(p, {
-                                            loading: 'Creando factura...',
-                                            success: 'Factura creada',
-                                            error: (err) => err.response?.data?.detail || "Error al crear factura"
-                                        });
-                                    } catch (err) {
-                                    }
-                                }}
-                            >
-                                Crear Factura
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
+            </div>
         </div>
     );
 };

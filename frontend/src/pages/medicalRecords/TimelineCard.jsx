@@ -16,6 +16,7 @@ const TimelineCard = ({
   record, typeMeta, isExpanded, onToggle,
   onClose, onEdit, onDelete,
   onCreatePrescription, onDownloadPrescription,
+  onDownloadRecordPdf, downloadingRecordPdfId,
   downloadingPrescriptionId, user, canCreate,
 }) => {
   const d        = new Date(record.latest_vitals?.recorded_at || record.created_at);
@@ -34,7 +35,8 @@ const TimelineCard = ({
     record.products_used?.length > 0 ||
     (hasPrx && record.prescription_summary?.items?.length > 0)
   );
-  const hasActions = hasPrx || (!hasPrx && !isClosed && canCreate) || canEdit || canClose || canDel;
+  const canDownloadRecord = !!record.public_id;
+  const hasActions = hasPrx || canDownloadRecord || (!hasPrx && !isClosed && canCreate) || canEdit || canClose || canDel;
 
   return (
     <article
@@ -111,12 +113,23 @@ const TimelineCard = ({
           {hasPrx && (
             <button
               className={styles.txBtn}
-              disabled={downloadingPrescriptionId === record.prescription_summary.id}
-              onClick={(e) => { e.stopPropagation(); onDownloadPrescription?.(record.prescription_summary.id); }}
+              disabled={downloadingPrescriptionId === record.prescription_summary.public_id}
+              onClick={(e) => { e.stopPropagation(); onDownloadPrescription?.(record.prescription_summary.public_id); }}
             >
-              {downloadingPrescriptionId === record.prescription_summary.id
+              {downloadingPrescriptionId === record.prescription_summary.public_id
                 ? <Icon.Loader s={13} /> : <Icon.Download s={13} />}
               Descargar receta
+            </button>
+          )}
+          {canDownloadRecord && (
+            <button
+              className={styles.txBtn}
+              disabled={downloadingRecordPdfId === record.public_id}
+              onClick={(e) => { e.stopPropagation(); onDownloadRecordPdf?.(record.public_id); }}
+            >
+              {downloadingRecordPdfId === record.public_id
+                ? <Icon.Loader s={13} /> : <Icon.Download s={13} />}
+              Descargar PDF resumen
             </button>
           )}
           {!hasPrx && !isClosed && canCreate && (

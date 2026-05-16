@@ -163,40 +163,43 @@
 
 .table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
 }
 
 /* ─ Header ─ */
 .table thead tr {
-  background: var(--c-subtle);
-  border-bottom: 1px solid var(--c-border);
+  background: var(--ink);
 }
 .th {
-  padding: 11px 14px;
-  font-size: 10.5px;
-  font-weight: 600;
+  padding: 14px 16px;
+  font-size: 11px;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: .07em;
-  color: var(--c-text-3);
+  color: #fff;
   text-align: left;
   white-space: nowrap;
   user-select: none;
 }
+.th:first-child { border-top-left-radius: var(--r-xl); }
+.th:last-child { border-top-right-radius: var(--r-xl); }
 .th.sortable { cursor: pointer; }
-.th.sortable:hover { color: var(--c-text-2); }
+.th.sortable:hover { opacity: 0.8; }
 .thInner { display: inline-flex; align-items: center; gap: 4px; }
-.sortArrow { font-size: 10px; opacity: .5; }
-.sortArrow.active { opacity: 1; color: var(--c-primary-dark); }
+.sortArrow { font-size: 10px; opacity: .7; }
+.sortArrow.active { opacity: 1; color: #fff; }
 
 /* ─ Body rows ─ */
+.table tbody tr:nth-child(even) { background: var(--c-subtle); }
+.table tbody tr:nth-child(odd) { background: var(--c-surface); }
 .table tbody tr {
-  border-bottom: 1px solid var(--c-border);
+  border-bottom: none;
   transition: background 120ms;
 }
-.table tbody tr:last-child { border-bottom: none; }
 .table tbody tr:hover { background: var(--c-hover); }
 
-.td { padding: 13px 14px; font-size: 13px; color: var(--c-text); vertical-align: middle; }
+.td { padding: 13px 16px; font-size: 13px; color: var(--c-text); vertical-align: middle; }
 
 /* ─ Columna: Producto ─ */
 .prodCell { display: flex; align-items: center; gap: 12px; }
@@ -260,11 +263,12 @@
 /* ─ Columna: Acciones ─ */
 .actCell { display: flex; align-items: center; gap: 5px; }
 .ab {
-  padding: 5px 11px; border-radius: 7px;
-  font-size: 12px; font-weight: 500;
+  width: 30px; height: 30px;
+  border-radius: 7px;
   cursor: pointer; font-family: inherit;
   border: 1px solid transparent;
-  transition: all .12s; white-space: nowrap;
+  transition: all .12s;
+  display: flex; align-items: center; justify-content: center;
 }
 .abAj { background: var(--c-primary-light); color: var(--c-primary-dark); border-color: rgba(45,212,191,.3); }
 .abAj:hover { background: rgba(45,212,191,.2); }

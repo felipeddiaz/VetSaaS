@@ -1,0 +1,170 @@
+.billingContainer {
+    padding: 0;
+}
+
+/* ── Ultra-Refined Table ── */
+.tableCompact {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    margin-top: 8px;
+}
+
+.tableCompact thead th {
+    padding: 14px 16px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #fff;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    text-align: left;
+    border-bottom: none;
+    background: var(--ink);
+}
+
+.tableCompact thead th:first-child { border-top-left-radius: var(--r-md); }
+.tableCompact thead th:last-child { border-top-right-radius: var(--r-md); }
+
+.tableCompact tbody tr:nth-child(even) { background: var(--c-subtle); }
+.tableCompact tbody tr:nth-child(odd) { background: var(--c-surface); }
+
+.tableCompact tbody tr {
+    transition: background var(--t);
+    border-bottom: none;
+}
+
+.tableCompact tbody tr:hover {
+    background: var(--c-hover);
+}
+
+.tableCompact td {
+    padding: 14px 16px;
+    font-size: 13px;
+    color: var(--c-text-2);
+    vertical-align: middle;
+}
+
+/* ── Typography Consistency ── */
+.pageHeader {
+    margin-bottom: 32px;
+}
+
+.mainTitle {
+    font-size: 20px;
+    font-weight: 500; /* Restrained weight */
+    color: var(--c-text);
+    margin: 0;
+}
+
+/* ── Minimalist Filters ── */
+.filterBar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 32px;
+}
+
+.filterItem {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    border-bottom: 1px solid transparent;
+    transition: border-color var(--t);
+}
+
+.filterItem:hover {
+    border-bottom-color: var(--c-border);
+}
+
+.filterItem select {
+    background: none;
+    border: none;
+    outline: none;
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--c-text-2);
+    cursor: pointer;
+    padding-right: 8px;
+}
+
+/* ── Status Indicator (Clean) ── */
+.statusContainer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--c-text-3);
+}
+
+.statusDot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+}
+
+/* ── Discret Actions ── */
+.actionBtn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--r-sm);
+    color: var(--c-text-4);
+    transition: all var(--t);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+}
+
+.actionBtn:hover {
+    color: var(--c-primary);
+    background: var(--c-subtle);
+}
+
+/* ── Modal & Sections Refinement ── */
+.infoGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 24px;
+    margin-bottom: 32px;
+}
+
+.infoLabel {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--c-text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 4px;
+}
+
+.infoValue {
+    font-size: 13px;
+    color: var(--c-text);
+}
+
+.totalsSection {
+    margin-top: 32px;
+    border-top: 1px solid var(--c-border);
+    padding-top: 16px;
+}
+
+.totalRow {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+    font-size: 13px;
+    color: var(--c-text-2);
+}
+
+.grandTotal {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--c-subtle);
+    font-size: 16px;
+    font-weight: 500;
+    color: var(--c-text);
+}

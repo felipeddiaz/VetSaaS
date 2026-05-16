@@ -52,3 +52,7 @@ export const removeMedicalRecordService = async (recordPublicId, serviceId) => {
     const res = await api.delete(`medical-records/${recordPublicId}/services/${serviceId}/`);
     return res.data;
 };
+
+export const downloadMedicalRecordPDF = (publicId) =>
+    api.get(`medical-records/${publicId}/pdf/`, { responseType: "blob" })
+        .then(r => ({ blob: r.data, contentDisposition: r.headers["content-disposition"] }));

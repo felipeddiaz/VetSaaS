@@ -595,9 +595,9 @@ const Inventory = () => {
                                         {canManage && (
                                             <td className={s.td}>
                                                 <div className={s.actCell}>
-                                                    <button className={`${s.ab} ${s.abAj}`} onClick={e => openAdjust(product, e)}>Ajustar</button>
-                                                    <button className={`${s.ab} ${s.abEd}`} onClick={e => openEdit(product, e)}>Editar</button>
-                                                    <button className={`${s.ab} ${s.abDl}`} onClick={e => { e.stopPropagation(); handleDelete(product.public_id || product.id); }}>Eliminar</button>
+                                                    <button className={`${s.ab} ${s.abAj}`} onClick={e => openAdjust(product, e)} title="Ajustar stock"><Icon.Package s={14} /></button>
+                                                    <button className={`${s.ab} ${s.abEd}`} onClick={e => openEdit(product, e)} title="Editar"><Icon.Edit s={14} /></button>
+                                                    <button className={`${s.ab} ${s.abDl}`} onClick={e => { e.stopPropagation(); handleDelete(product.public_id || product.id); }} title="Eliminar"><Icon.Trash s={14} /></button>
                                                 </div>
                                             </td>
                                         )}

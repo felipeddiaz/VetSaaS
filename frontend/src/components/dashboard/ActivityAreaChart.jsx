@@ -4,6 +4,7 @@ import {
   XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from "recharts";
 import { useDashboardSeries } from "../../hooks/useDashboardSeries";
+import { Icon } from "../icons";
 
 /* ── CSS var resolver — SVG attrs can't use var() natively ─── */
 const readCssVar = (name, fallback) => {
@@ -15,15 +16,17 @@ const readCssVar = (name, fallback) => {
 const DAYS_SHORT = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"];
 
 const dayLabel = (dateStr) => {
+  if (!dateStr) return "—";
   const d = new Date(dateStr + "T12:00:00");
-  return DAYS_SHORT[d.getDay()];
+  const day = d.getDay();
+  return isNaN(day) ? "—" : DAYS_SHORT[day];
 };
 
 const isCorrupt = (dp) => dp?.lifecycleState === "corrupt";
 
 const transformActivityData = (points) =>
-  points.map((p) => ({
-    label:   dayLabel(p.bucketDate),
+  (points || []).map((p) => ({
+    label:   dayLabel(p?.bucketDate),
     done:    isCorrupt(p) ? null : (p.metrics?.appointmentsDone   ?? 0),
     noShow:  isCorrupt(p) ? null : (p.metrics?.appointmentsNoShow ?? 0),
     total:   isCorrupt(p) ? null : (p.metrics?.appointmentsTotal  ?? 0),
@@ -56,21 +59,44 @@ const ActivityTooltip = ({ active, payload, label }) => {
   );
 };
 
+/* ── Empty State / Onboarding Preview ─────────────────────── */
+const ChartEmptyState = ({ colors }) => (
+  <div className="chart-empty-premium">
+    <div className="chart-empty-bg">
+      {/* Faded mockup of a building chart */}
+      <svg width="100%" height="120" viewBox="0 0 400 120" preserveAspectRatio="none" style={{ opacity: 0.15 }}>
+        <path d="M0,100 L40,80 L80,90 L120,40 L160,60 L200,30 L240,50 L280,20 L320,40 L360,10 L400,30" 
+              fill="none" stroke={colors.primary} strokeWidth="3" strokeDasharray="5,5" />
+        <rect x="30" y="70" width="20" height="30" fill={colors.primary} opacity="0.4" />
+        <rect x="70" y="80" width="20" height="20" fill={colors.primary} opacity="0.4" />
+        <rect x="110" y="30" width="20" height="70" fill={colors.primary} opacity="0.4" />
+      </svg>
+    </div>
+    <div className="chart-empty-content">
+      <div className="chart-empty-icon"><Icon.TrendUp s={24} /></div>
+      <h4 className="chart-empty-title">Construyendo tendencias</h4>
+      <p className="chart-empty-text">
+        Aún no hay suficiente actividad registrada para proyectar tendencias semanales. 
+        Tus métricas aparecerán automáticamente conforme completes más consultas.
+      </p>
+    </div>
+  </div>
+);
+
 /* ── Component ─────────────────────────────────────────────── */
 function ActivityAreaChart({ rangeDays = 7 }) {
   const { allPoints, loading } = useDashboardSeries(rangeDays, true);
 
-  // Resolve CSS vars once after mount — SVG attrs don't support var()
   const [colors, setColors] = useState({
-    primary: "#1a4434",
+    primary: "#10b981",
     accent:  "#d67b5c",
     muted:   "#8a8a7f",
   });
   useLayoutEffect(() => {
     setColors({
-      primary: readCssVar("--c-primary", "#1a4434"),
-      accent:  readCssVar("--c-accent",  "#d67b5c"),
-      muted:   readCssVar("--c-text-3",  "#8a8a7f"),
+      primary: readCssVar("--c-success-text", "#10b981"),
+      accent:  readCssVar("--c-accent",       "#d67b5c"),
+      muted:   readCssVar("--c-text-3",       "#8a8a7f"),
     });
   }, []);
 
@@ -84,9 +110,18 @@ function ActivityAreaChart({ rangeDays = 7 }) {
 
   const chartData  = useMemo(() => transformActivityData(points ?? []), [points]);
   const hasCorrupt = useMemo(() => points.some(isCorrupt), [points]);
+  
+  // Real data check: do we have at least 2 days with non-zero total activity?
+  const hasData = useMemo(() => {
+    return chartData.filter(d => (d.total || 0) > 0).length >= 2;
+  }, [chartData]);
 
   if (loading && points.length === 0) {
     return <div className="chart-area"><div className="skeleton-block sk-chart" /></div>;
+  }
+
+  if (!hasData) {
+    return <div className="chart-area"><ChartEmptyState colors={colors} /></div>;
   }
 
   return (
@@ -111,20 +146,22 @@ function ActivityAreaChart({ rangeDays = 7 }) {
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart
             data={chartData}
-            margin={{ top: 4, right: 4, left: -20, bottom: 0 }}
+            margin={{ top: 12, right: 12, left: -20, bottom: 0 }}
             barCategoryGap="35%"
           >
             <XAxis
               dataKey="label"
-              tick={{ fontSize: 10 }}
+              tick={{ fontSize: 11, fontWeight: 500, fill: colors.muted }}
               axisLine={false}
               tickLine={false}
+              dy={8}
             />
             <YAxis
-              tick={{ fontSize: 10 }}
+              tick={{ fontSize: 11, fontWeight: 500, fill: colors.muted }}
               axisLine={false}
               tickLine={false}
               allowDecimals={false}
+              dx={-8}
             />
             <Tooltip content={<ActivityTooltip />} />
             <Bar
@@ -133,7 +170,8 @@ function ActivityAreaChart({ rangeDays = 7 }) {
               stackId="a"
               fill={colors.primary}
               radius={[0, 0, 0, 0]}
-              isAnimationActive={false}
+              isAnimationActive={true}
+              animationDuration={1000}
             />
             <Bar
               dataKey="noShow"
@@ -141,17 +179,20 @@ function ActivityAreaChart({ rangeDays = 7 }) {
               stackId="a"
               fill={colors.muted}
               radius={[3, 3, 0, 0]}
-              isAnimationActive={false}
+              isAnimationActive={true}
+              animationDuration={1000}
             />
             <Line
+              type="monotone"
               dataKey="total"
               name="Total"
               stroke={colors.accent}
-              strokeWidth={2}
-              dot={{ r: 3, fill: colors.accent }}
-              activeDot={{ r: 5 }}
+              strokeWidth={3}
+              dot={{ r: 4, fill: colors.accent, strokeWidth: 2, stroke: '#fff' }}
+              activeDot={{ r: 6, strokeWidth: 0 }}
               connectNulls={false}
-              isAnimationActive={false}
+              isAnimationActive={true}
+              animationDuration={1200}
             />
           </ComposedChart>
         </ResponsiveContainer>

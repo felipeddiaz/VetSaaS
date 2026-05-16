@@ -153,12 +153,42 @@ class MedicalRecordProduct(OrganizationalModel):
         if self.medical_record_id and not self.organization_id:
             self.organization_id = self.medical_record.organization_id
 
-        from django.db import transaction
+        from django.db import connection, transaction
         from .services import apply_stock_movement
-        if self.pk:
-            with transaction.atomic():
-                old = MedicalRecordProduct.objects.select_for_update().get(pk=self.pk)
-                diff = self.quantity - old.quantity
+        locked_presentation = kwargs.pop('locked_presentation', None)
+        previous_quantity = kwargs.pop('previous_quantity', None)
+
+        assert connection.in_atomic_block, (
+            "MedicalRecordProduct.save() debe llamarse dentro de transaction.atomic(); "
+            "sin tx el select_for_update() interno no aplica lock real y pierde la "
+            "garantía de serialización contra movimientos de stock concurrentes."
+        )
+        if locked_presentation is None:
+            import logging
+            logging.getLogger(__name__).warning(
+                "MedicalRecordProduct.save() invocado sin locked_presentation — "
+                "fallback a lock interno. Llamada fuera de la view oficial. "
+                "mr_id=%s pres_id=%s",
+                self.medical_record_id, self.presentation_id,
+            )
+
+        with transaction.atomic():
+            if self.pk:
+                if previous_quantity is None:
+                    old = MedicalRecordProduct.objects.select_for_update().get(pk=self.pk)
+                    previous_quantity = old.quantity
+                diff = self.quantity - previous_quantity
+                if diff != 0:
+                    fresh = locked_presentation or Presentation.objects.select_for_update().get(pk=self.presentation_id)
+                    self.presentation = fresh
+            else:
+                fresh = locked_presentation or Presentation.objects.select_for_update().get(pk=self.presentation_id)
+                self.presentation = fresh
+
+            super().save(*args, **kwargs)
+
+            if self.pk and previous_quantity is not None:
+                diff = self.quantity - previous_quantity
                 if diff != 0:
                     apply_stock_movement(
                         presentation=self.presentation,
@@ -168,28 +198,26 @@ class MedicalRecordProduct(OrganizationalModel):
                         reason='Ajuste por edición de consulta médica',
                         medical_record=self.medical_record,
                     )
-        else:
-            # CREATE — lock explícito antes del check de stock para evitar race condition.
-            # apply_stock_movement usa refresh_from_db() + F() pero sin lock previo
-            # dos threads podrían pasar el check simultáneamente. El lock lo previene.
-            with transaction.atomic():
-                fresh = Presentation.objects.select_for_update().get(pk=self.presentation_id)
-                self.presentation = fresh  # objeto bloqueado, no stale
+            elif previous_quantity is None:
                 apply_stock_movement(
-                    presentation=fresh,
+                    presentation=self.presentation,
                     quantity=self.quantity,
                     movement_type='out',
                     organization=self.medical_record.organization,
                     reason='Consumido en consulta médica',
                     medical_record=self.medical_record,
                 )
-        super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
-        from django.db import transaction
+        from django.db import connection, transaction
         from .services import apply_stock_movement
+        locked_presentation = kwargs.pop('locked_presentation', None)
+        assert connection.in_atomic_block, (
+            "MedicalRecordProduct.delete() debe llamarse dentro de transaction.atomic(); "
+            "sin tx el select_for_update() interno no aplica lock real."
+        )
         with transaction.atomic():
-            fresh = Presentation.objects.select_for_update().get(pk=self.presentation_id)
+            fresh = locked_presentation or Presentation.objects.select_for_update().get(pk=self.presentation_id)
             apply_stock_movement(
                 presentation=fresh,
                 quantity=self.quantity,

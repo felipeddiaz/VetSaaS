@@ -6,7 +6,7 @@ from rest_framework.exceptions import ValidationError
 from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404
 
-from apps.core.permissions import RolePermission, make_permission
+from apps.core.permissions import RolePermission, make_permission, build_permissions_list
 from apps.organizations.models import Organization
 from apps.users.serializers import UserSerializer, CreateEmployeeSerializer
 
@@ -31,6 +31,7 @@ class MeView(APIView):
             "organization": user.organization.id if user.organization else None,
             "organization_name": user.organization.name if user.organization else None,
             "organization_timezone": user.organization.timezone if user.organization else "America/Mexico_City",
+            "permissions": build_permissions_list(request.user),
         })
 
 

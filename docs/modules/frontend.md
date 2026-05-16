@@ -172,7 +172,18 @@ export const updateMedicalRecord = async (token, id, data) => {
 - Decodifica el JWT para leer `exp`, `role`, `organization`
 - Programa refresh del token 5 minutos antes de que expire
 - En init: refetch `/api/me/` para datos frescos de usuario y org
-- Persiste tokens en `localStorage`
+- Persiste tokens y user data en `localStorage`
+- Almacena `permissions` como `Set` (desde el array retornado por `/api/me/`)
+- Expone helpers memoizados para control de acceso basado en capabilities:
+  - `can(permCode)` — `Set.has()`, O(1). Ej: `can("invoice.create")`
+  - `canAny(codes)` — `some`. Ej: `canAny(["invoice.create", "invoice.confirm"])`
+  - `canAll(codes)` — `every`. Ej: `canAll(["invoice.create", "invoice.pay"])`
+- `Object.freeze` sobre el `Set` para prevenir mutaciones accidentales
+- Invalidacion en `logout()` y `setUserData()`: `setPermissions(new Set())`
+
+**Regla**: nunca inferir permisos por `user.role`. Usar exclusivamente `can()`.
+Esto soporta roles dinamicos donde dos usuarios con el mismo nombre de rol pueden
+tener distintos permisos via RBAC en DB.
 
 ## Componentes compartidos
 

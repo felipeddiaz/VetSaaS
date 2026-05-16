@@ -240,6 +240,7 @@ class MedicalRecordSerializer(serializers.ModelSerializer):
 
         return {
             'id': prescription.id,
+            'public_id': str(prescription.public_id),
             'notes': prescription.notes,
             'items': PrescriptionItemSerializer(
                 prescription.items.select_related('product').prefetch_related('product__presentations').all(),

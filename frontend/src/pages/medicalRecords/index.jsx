@@ -5,8 +5,10 @@ import { useConfirm } from "../../components/ConfirmDialog";
 import {
   getMedicalRecords, createMedicalRecord, getMedicalRecord,
   deleteMedicalRecord, closeMedicalRecord,
+  downloadMedicalRecordPDF,
 } from "../../api/medicalRecords";
 import { createPrescription, downloadPrescriptionPDF } from "../../api/prescriptions";
+import { extractFilename, triggerDownload } from "../../utils/downloadBlob";
 import { getPets } from "../../api/pets";
 import { getProducts } from "../../api/inventory";
 import { useAuth } from "../../auth/authContext";
@@ -69,6 +71,7 @@ const MedicalRecords = () => {
   const [showPrescriptionModal,  setShowPrescriptionModal]  = useState(false);
   const [prescriptionTarget,     setPrescriptionTarget]     = useState(null);
   const [downloadingPrescriptionId, setDownloadingPrescriptionId] = useState(null);
+  const [downloadingRecordPdfId,    setDownloadingRecordPdfId]    = useState(null);
 
   useEffect(() => { if (token) loadAllData(); }, [token]);
   useEffect(() => { if (token) loadRecords(); }, [selectedPet, page, token]);
@@ -196,22 +199,29 @@ const MedicalRecords = () => {
     } catch {}
   };
 
-  const handleDownloadPrescription = async (prescriptionId) => {
-    setDownloadingPrescriptionId(prescriptionId);
+  const handleDownloadPrescription = async (prescriptionPublicId) => {
+    setDownloadingPrescriptionId(prescriptionPublicId);
     try {
-      const blob = await downloadPrescriptionPDF(prescriptionId);
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `receta_${prescriptionId}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(url);
+      const { blob, contentDisposition } = await downloadPrescriptionPDF(prescriptionPublicId);
+      const filename = extractFilename(contentDisposition, "receta.pdf");
+      triggerDownload(blob, filename);
     } catch (err) {
       toast.error(apiError(err, "No se pudo descargar la receta"));
     } finally {
       setDownloadingPrescriptionId(null);
+    }
+  };
+
+  const handleDownloadRecordPdf = async (recordPublicId) => {
+    setDownloadingRecordPdfId(recordPublicId);
+    try {
+      const { blob, contentDisposition } = await downloadMedicalRecordPDF(recordPublicId);
+      const filename = extractFilename(contentDisposition, "consulta.pdf");
+      triggerDownload(blob, filename);
+    } catch (err) {
+      toast.error(apiError(err, "No se pudo descargar el PDF de la consulta"));
+    } finally {
+      setDownloadingRecordPdfId(null);
     }
   };
 
@@ -376,7 +386,9 @@ const MedicalRecords = () => {
                         onDelete={handleDelete}
                         onCreatePrescription={openPrescriptionModal}
                         onDownloadPrescription={handleDownloadPrescription}
+                        onDownloadRecordPdf={handleDownloadRecordPdf}
                         downloadingPrescriptionId={downloadingPrescriptionId}
+                        downloadingRecordPdfId={downloadingRecordPdfId}
                         user={user}
                         canCreate={canCreate}
                       />

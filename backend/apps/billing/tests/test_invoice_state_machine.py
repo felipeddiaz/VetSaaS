@@ -284,3 +284,114 @@ class LazyInvoiceCreationTests(APITestCase):
             # Verificar que la invoice ahora está linkeada
             invoice.refresh_from_db()
             self.assertEqual(invoice.medical_record, mr)
+
+
+class DirectPayInvoiceTests(APITestCase):
+    """Tests para el endpoint direct-pay/ (draft → paid en un paso, solo direct_sale)."""
+
+    @classmethod
+    def setUpTestData(cls):
+        from apps.inventory.models import Product, Presentation
+
+        cls.org = Organization.objects.create(name="Org DP Test", timezone="UTC")
+        cls.admin = _make_user("adm_dp", cls.org, "ADMIN")
+        cls.owner = Owner.objects.create(name="Cliente DP", phone="5553333333", organization=cls.org)
+        cls.pet = Pet.objects.create(name="Firulais DP", species="dog", owner=cls.owner, organization=cls.org)
+        cls.service = Service.objects.create(name="Consulta DP", base_price=Decimal("300.00"), organization=cls.org)
+
+        cls.product = Product.objects.create(
+            name="Producto DP", internal_code="DP001", category="medication",
+            organization=cls.org,
+        )
+        cls.presentation = Presentation.objects.create(
+            product=cls.product, name="Caja 10 und", base_unit="unit",
+            stock=5, sale_price=Decimal("100.00"), organization=cls.org,
+        )
+
+    def _make_invoice(self, invoice_type='direct_sale'):
+        return Invoice.objects.create(
+            owner=self.owner, pet=self.pet, organization=self.org,
+            status='draft', invoice_type=invoice_type,
+        )
+
+    def _add_service_item(self, invoice):
+        InvoiceItem.objects.create(
+            invoice=invoice, service=self.service,
+            description=self.service.name, quantity=1,
+            unit_price=self.service.base_price, organization=self.org,
+        )
+
+    def _add_presentation_item(self, invoice, quantity=1):
+        InvoiceItem.objects.create(
+            invoice=invoice, presentation=self.presentation,
+            description=str(self.presentation), quantity=quantity,
+            unit_price=self.presentation.sale_price, organization=self.org,
+        )
+
+    def _url(self, invoice, suffix=''):
+        return f'/api/billing/invoices/{invoice.public_id}/{suffix}'
+
+    def setUp(self):
+        self.client.force_authenticate(self.admin)
+
+    def test_direct_pay_draft_direct_sale_succeeds(self):
+        invoice = self._make_invoice()
+        self._add_service_item(invoice)
+        r = self.client.post(self._url(invoice, 'direct-pay/'), {'payment_method': 'cash'}, format='json')
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, 'paid')
+        self.assertIsNotNone(invoice.confirmed_at)
+        self.assertIsNotNone(invoice.paid_at)
+        self.assertEqual(invoice.confirmed_at_source, 'service')
+        self.assertEqual(invoice.paid_at_source, 'service')
+
+    def test_direct_pay_consultation_invoice_rejected(self):
+        invoice = self._make_invoice(invoice_type='consultation')
+        self._add_service_item(invoice)
+        r = self.client.post(self._url(invoice, 'direct-pay/'), {'payment_method': 'cash'}, format='json')
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_direct_pay_confirmed_invoice_rejected(self):
+        invoice = self._make_invoice()
+        self._add_service_item(invoice)
+        from apps.billing.services import confirm_invoice
+        confirm_invoice(invoice, user=self.admin)
+        r = self.client.post(self._url(invoice, 'direct-pay/'), {'payment_method': 'cash'}, format='json')
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_direct_pay_paid_invoice_rejected(self):
+        invoice = self._make_invoice()
+        self._add_service_item(invoice)
+        from apps.billing.services import confirm_invoice, pay_invoice
+        confirm_invoice(invoice, user=self.admin)
+        pay_invoice(invoice, user=self.admin, payment_method='cash')
+        r = self.client.post(self._url(invoice, 'direct-pay/'), {'payment_method': 'cash'}, format='json')
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_direct_pay_missing_payment_method_rejected(self):
+        invoice = self._make_invoice()
+        self._add_service_item(invoice)
+        r = self.client.post(self._url(invoice, 'direct-pay/'), {}, format='json')
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_direct_pay_empty_invoice_rejected(self):
+        invoice = self._make_invoice()
+        r = self.client.post(self._url(invoice, 'direct-pay/'), {'payment_method': 'cash'}, format='json')
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_direct_pay_insufficient_stock_rejected(self):
+        invoice = self._make_invoice()
+        self._add_presentation_item(invoice, quantity=10)  # stock solo tiene 5
+        r = self.client.post(self._url(invoice, 'direct-pay/'), {'payment_method': 'cash'}, format='json')
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, 'draft')
+        self.presentation.refresh_from_db()
+        self.assertEqual(self.presentation.stock, 5)
+
+    def test_direct_pay_invalid_payment_method_rejected(self):
+        invoice = self._make_invoice()
+        self._add_service_item(invoice)
+        r = self.client.post(self._url(invoice, 'direct-pay/'), {'payment_method': 'bitcoin'}, format='json')
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)

@@ -32,6 +32,9 @@ export const confirmInvoice = (id) =>
 export const payInvoice = (id, paymentMethod) =>
     api.patch(`billing/invoices/${id}/pay/`, { payment_method: paymentMethod }).then(r => r.data);
 
+export const directPayInvoice = (id, paymentMethod) =>
+    api.post(`billing/invoices/${id}/direct-pay/`, { payment_method: paymentMethod }).then(r => r.data);
+
 // Ítems de factura
 export const addInvoiceItem = (invoiceId, data) =>
     api.post(`billing/invoices/${invoiceId}/items/`, data).then(r => r.data);
@@ -41,3 +44,7 @@ export const updateInvoiceItem = (invoiceId, itemId, data) =>
 
 export const deleteInvoiceItem = (invoiceId, itemId) =>
     api.delete(`billing/invoices/${invoiceId}/items/${itemId}/`);
+
+export const downloadInvoicePDF = (publicId) =>
+    api.get(`billing/invoices/${publicId}/pdf/`, { responseType: "blob" })
+        .then(r => ({ blob: r.data, contentDisposition: r.headers["content-disposition"] }));

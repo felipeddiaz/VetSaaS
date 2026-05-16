@@ -558,22 +558,39 @@ def dashboard_summary(request):
         .order_by('stock')[:5]
     )
 
-    # ---- Query 3: Backlog counts ----
+    # ---- Query 3: Backlog ----
     open_qs = MedicalRecord.objects.for_organization(org).filter(status='open')
-    stale_cutoff = now_utc - timedelta(hours=24)
+    attention_cutoff = now_utc - timedelta(hours=3)
     backlog_agg = open_qs.aggregate(
         total=Count('id'),
-        stale_24h=Count('id', filter=Q(created_at__lt=stale_cutoff)),
+        needs_attention_count=Count(
+            'id',
+            filter=Q(created_at__lt=attention_cutoff) &
+                    (Q(diagnosis__isnull=True) | Q(diagnosis='')),
+        ),
         without_diagnosis=Count(
             'id',
             filter=Q(diagnosis__isnull=True) | Q(diagnosis=''),
         ),
     )
-    top_stale = list(
-        open_qs.filter(created_at__lt=stale_cutoff)
-        .select_related('pet', 'veterinarian')
-        .order_by('created_at')[:1]
-    )
+
+    open_records = []
+    for mr in open_qs.select_related('pet', 'veterinarian').order_by('created_at')[:50]:
+        elapsed = now_utc - mr.created_at
+        hours_open = elapsed.total_seconds() / 3600
+        has_diag = bool(mr.diagnosis and mr.diagnosis.strip())
+        open_records.append({
+            'public_id': str(mr.public_id),
+            'pet_name': mr.pet.name if mr.pet else None,
+            'veterinarian_name': (
+                f"{mr.veterinarian.first_name} {mr.veterinarian.last_name}".strip()
+                if mr.veterinarian else None
+            ),
+            'days_open': round(hours_open / 24, 1),
+            'hours_open': round(hours_open, 1),
+            'has_diagnosis': has_diag,
+            'needs_attention': (not has_diag and elapsed > timedelta(hours=3)),
+        })
 
     # ---- Query 4: AR outstanding (ADMIN only) ----
     is_admin = getattr(user, 'role', None) in ('ADMIN', 'ADMIN_SAAS')
@@ -612,24 +629,11 @@ def dashboard_summary(request):
     # ---- Build Backlog ----
     backlog = {
         'open_total': backlog_agg['total'],
-        'stale_24h': backlog_agg['stale_24h'],
+        'returned_records': len(open_records),
+        'needs_attention_count': backlog_agg['needs_attention_count'],
         'without_diagnosis': backlog_agg['without_diagnosis'],
+        'open_records': open_records,
     }
-    if top_stale:
-        mr = top_stale[0]
-        backlog['top_stale'] = {
-            'pet_name': mr.pet.name if mr.pet else None,
-            'veterinarian_name': (
-                f"{mr.veterinarian.first_name} {mr.veterinarian.last_name}".strip()
-                if mr.veterinarian else None
-            ),
-            'hours_open': round(
-                (now_utc - mr.created_at).total_seconds() / 3600, 1
-            ),
-            'has_diagnosis': bool(mr.diagnosis and mr.diagnosis.strip()),
-        }
-    else:
-        backlog['top_stale'] = None
 
     # ---- Build Stock Alerts ----
     stock_alerts = []

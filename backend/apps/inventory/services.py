@@ -22,10 +22,24 @@ def apply_stock_movement(
     Único punto de entrada para todos los cambios de stock.
     Nadie debe actualizar Presentation.stock directamente fuera de esta función.
 
+    ⚠️ CONTRATO DE LOCK (CRÍTICO):
+    El caller DEBE poseer `select_for_update()` sobre `presentation` antes de
+    llamar a esta función. La verificación de stock usa `refresh_from_db()`
+    (sin lock); sin lock externo, dos transacciones concurrentes pueden pasar
+    la validación simultáneamente y dejar stock negativo. Auditoría Día 1-2
+    confirmó que romper este contrato es la regresión más probable.
+
+    Callers actuales que cumplen el contrato:
+      - billing/services.py::_confirm_locked_invoice (via _lock_presentations)
+      - billing/services.py::cancel_invoice (via _lock_presentations)
+      - inventory/views.py::adjust_stock, adjust_presentation_stock
+      - inventory/views.py::MedicalRecordProductListCreateView.perform_create
+      - inventory/models.py::MedicalRecordProduct.save / .delete
+
     Lanza ValidationError si un movimiento 'out' dejaría stock negativo.
 
     NOTA: usa Presentation.all_objects.filter(pk=...).update() intencionalmente.
-    Razón: update() garantiza atomicidad en stock (sin race conditions).
+    Razón: update() garantiza atomicidad de la UPDATE final en stock.
     Es seguro porque pk viene de un objeto ya validado y conocido por la llamada.
     """
     org_id = getattr(organization, 'pk', organization)

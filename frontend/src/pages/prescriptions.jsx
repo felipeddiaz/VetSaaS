@@ -17,6 +17,7 @@ import {
     getPrescriptions,
     updatePrescription,
 } from "../api/prescriptions";
+import { extractFilename, triggerDownload } from "../utils/downloadBlob";
 
 const formatDate = (ds) =>
     new Date(ds).toLocaleDateString("es-ES", { year: "numeric", month: "long", day: "numeric" });
@@ -115,10 +116,10 @@ const DetailModal = ({ prescription: rx, downloadingId, onDownload, onClose }) =
                 <button
                     className="btn btn-primary btn-md"
                     style={{ flex: 1 }}
-                    onClick={() => onDownload(rx.id)}
-                    disabled={downloadingId === rx.id}
+                    onClick={() => onDownload(rx.public_id)}
+                    disabled={downloadingId === rx.public_id}
                 >
-                    {downloadingId === rx.id
+                    {downloadingId === rx.public_id
                         ? <><Icon.Loader s={14} /> Generando…</>
                         : <><Icon.Download s={14} /> Descargar PDF</>}
                 </button>
@@ -197,11 +198,11 @@ const PrescriptionCard = ({ rx, downloadingId, canCreate, onView, onDownload, on
                 </button>
                 <button
                     className="btn btn-primary btn-sm"
-                    onClick={() => onDownload(rx.id)}
-                    disabled={downloadingId === rx.id}
+                    onClick={() => onDownload(rx.public_id)}
+                    disabled={downloadingId === rx.public_id}
                     style={{ flex: 1 }}
                 >
-                    {downloadingId === rx.id
+                    {downloadingId === rx.public_id
                         ? <><Icon.Loader s={13} /> …</>
                         : <><Icon.Download s={13} /> PDF</>}
                 </button>
@@ -330,16 +331,12 @@ const Prescriptions = () => {
         } catch { toast.error("Error al eliminar la receta"); }
     };
 
-    const handleDownloadPDF = async (id) => {
-        setDownloadingId(id);
+    const handleDownloadPDF = async (publicId) => {
+        setDownloadingId(publicId);
         try {
-            const blob = await downloadPrescriptionPDF(id);
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url; a.download = `receta_${id}.pdf`;
-            document.body.appendChild(a); a.click();
-            document.body.removeChild(a);
-            window.URL.revokeObjectURL(url);
+            const { blob, contentDisposition } = await downloadPrescriptionPDF(publicId);
+            const filename = extractFilename(contentDisposition, "receta.pdf");
+            triggerDownload(blob, filename);
         } catch { toast.error("Error al generar el PDF"); }
         finally { setDownloadingId(null); }
     };

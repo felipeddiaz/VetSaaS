@@ -68,6 +68,7 @@ Comportamiento:
 Reglas de negocio específicas para walk-in:
 - `reason` se sanitiza y se trunca a 255 caracteres (`sanitize_text(..., max_length=255)`). Si después de sanitizar queda vacío, el endpoint retorna `400` con `reason` en el body.
 - `notes` se sanitiza y se trunca a 5000 caracteres (`sanitize_text(..., max_length=5000)`).
+- **Deduplicación segura (ADR p12)**: el filtro de reutilización ahora exige `walk_in=True` y `pet=pet` — no recicla cita de otra mascota aunque sea del mismo veterinario en la misma ventana de 10 segundos.
 
 Pet es obligatorio salvo que la organización tenga `allow_anonymous_walkin = True`:
 

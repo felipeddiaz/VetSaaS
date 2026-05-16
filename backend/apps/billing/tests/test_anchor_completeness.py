@@ -18,7 +18,7 @@ from django.test import TestCase
 
 from apps.appointments.models import Appointment, AppointmentStatusChange
 from apps.billing.models import Invoice, InvoiceItem, Service
-from apps.billing.services import cancel_invoice, confirm_invoice, pay_invoice
+from apps.billing.services import cancel_invoice, confirm_invoice, pay_invoice, pay_direct_sale
 from apps.organizations.models import Organization
 from apps.patients.models import Owner, Pet
 from apps.users.models import User
@@ -216,3 +216,94 @@ class AuditAnchorIntegrityCommandTests(_FixtureMixin, TestCase):
         self.assertIn('invariant_findings', data)
         self.assertIn('provenance_distribution', data)
         self.assertIn('exit_code', data)
+
+
+class DirectPayAnchorTests(_FixtureMixin, TestCase):
+    """Anchors + audit logs para pay_direct_sale (draft → paid atómico)."""
+
+    def test_direct_pay_sets_both_anchors_and_sources(self):
+        invoice = self._draft_invoice()
+        pay_direct_sale(invoice, user=self.user, payment_method='cash')
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, 'paid')
+        self.assertIsNotNone(invoice.confirmed_at)
+        self.assertEqual(invoice.confirmed_at_source, 'service')
+        self.assertIsNotNone(invoice.paid_at)
+        self.assertEqual(invoice.paid_at_source, 'service')
+        self.assertLessEqual(invoice.confirmed_at, invoice.paid_at)
+
+    def test_direct_pay_creates_two_audit_logs(self):
+        from apps.billing.models import InvoiceAuditLog
+
+        invoice = self._draft_invoice()
+        pay_direct_sale(invoice, user=self.user, payment_method='card')
+
+        logs = list(InvoiceAuditLog.objects.filter(invoice=invoice).order_by('created_at'))
+        self.assertEqual(len(logs), 2)
+        self.assertEqual(logs[0].previous_status, 'draft')
+        self.assertEqual(logs[0].new_status, 'confirmed')
+        self.assertEqual(logs[1].previous_status, 'confirmed')
+        self.assertEqual(logs[1].new_status, 'paid')
+
+    def test_direct_pay_rolls_back_stock_on_payment_error(self):
+        """
+        Verifica que un fallo en _pay_locked_invoice DESPUÉS de que
+        _confirm_locked_invoice ya descontó stock + escribió confirmed_at
+        revierte TODO atómicamente.
+
+        El test mockea _pay_locked_invoice para que lance una excepción
+        después de la confirmación exitosa. Sin mock, payment_method='bitcoin'
+        es rechazado ANTES de entrar a _confirm_locked_invoice (validación
+        early en pay_direct_sale), por lo que el rollback nunca se ejercitaría
+        — falso-positivo.
+        """
+        from unittest.mock import patch
+        from apps.billing.models import InvoiceAuditLog
+        from apps.inventory.models import Product, Presentation
+
+        product = Product.objects.create(
+            name="DP Rollback", internal_code="DPRB001", category="medication",
+            organization=self.org,
+        )
+        presentation = Presentation.objects.create(
+            product=product, name="Caja DP", base_unit="unit",
+            stock=10, sale_price=Decimal("50.00"), organization=self.org,
+        )
+        invoice = Invoice.objects.create(
+            owner=self.owner, pet=self.pet, organization=self.org,
+            status='draft', invoice_type='direct_sale',
+        )
+        InvoiceItem.objects.create(
+            invoice=invoice, presentation=presentation,
+            description=str(presentation), quantity=3,
+            unit_price=presentation.sale_price, organization=self.org,
+        )
+
+        original_stock = presentation.stock
+        audit_count_before = InvoiceAuditLog.objects.filter(invoice=invoice).count()
+
+        # Forzar fallo DESPUÉS de _confirm_locked_invoice (stock ya descontado,
+        # confirmed_at ya escrito, audit log de confirmed ya creado).
+        with patch(
+            'apps.billing.services._pay_locked_invoice',
+            side_effect=ValidationError('Simulated payment gateway timeout'),
+        ):
+            with self.assertRaises(ValidationError):
+                pay_direct_sale(invoice, user=self.user, payment_method='cash')
+
+        # Todo rolledback: stock, status, anchors, audit log
+        presentation.refresh_from_db()
+        invoice.refresh_from_db()
+        self.assertEqual(presentation.stock, original_stock,
+                         "Stock no fue revertido tras rollback")
+        self.assertEqual(invoice.status, 'draft',
+                         "Status no volvió a draft tras rollback")
+        self.assertIsNone(invoice.confirmed_at,
+                          "confirmed_at no fue revertido tras rollback")
+        self.assertIsNone(invoice.paid_at,
+                          "paid_at no debería estar set")
+        self.assertEqual(
+            InvoiceAuditLog.objects.filter(invoice=invoice).count(),
+            audit_count_before,
+            "InvoiceAuditLog row de confirmed no fue revertida tras rollback",
+        )

@@ -17,6 +17,7 @@ const Timeline = ({
   records, expandedId, onToggleExpand,
   onCloseRecord, onEdit, onDelete,
   onCreatePrescription, onDownloadPrescription,
+  onDownloadRecordPdf, downloadingRecordPdfId,
   downloadingPrescriptionId, user, canCreate,
 }) => {
   const groups = useMemo(() => {
@@ -79,7 +80,9 @@ const Timeline = ({
                       onDelete={() => onDelete(record.public_id)}
                       onCreatePrescription={() => onCreatePrescription(record)}
                       onDownloadPrescription={onDownloadPrescription}
+                      onDownloadRecordPdf={onDownloadRecordPdf}
                       downloadingPrescriptionId={downloadingPrescriptionId}
+                      downloadingRecordPdfId={downloadingRecordPdfId}
                       user={user}
                       canCreate={canCreate}
                     />

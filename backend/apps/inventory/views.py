@@ -320,6 +320,12 @@ class MedicalRecordProductListCreateView(TenantQueryMixin, generics.ListCreateAP
         return ctx
 
     def perform_create(self, serializer):
+        from apps.billing.models import InvoiceItem
+        from apps.billing.services import (
+            apply_invoice_item_quantity_delta,
+            get_or_create_invoice_for_medical_record,
+        )
+
         with transaction.atomic():
             medical_record = resolve_public_id(
                 MedicalRecord.objects.for_organization(self.request.user.organization).select_for_update(),
@@ -330,39 +336,44 @@ class MedicalRecordProductListCreateView(TenantQueryMixin, generics.ListCreateAP
             quantity = serializer.validated_data['quantity']
             if presentation.organization_id != self.request.user.organization_id:
                 raise ValidationError({'presentation': 'Presentación fuera de tu organización'})
+            invoice = get_or_create_invoice_for_medical_record(medical_record)
+            locked_pres = Presentation.objects.select_for_update().get(pk=presentation.pk)
 
-            mrp = MedicalRecordProduct.objects.filter(
+            if invoice.status == 'draft':
+                item = (
+                    InvoiceItem.objects
+                    .select_for_update()
+                    .filter(invoice=invoice, presentation=locked_pres, is_active=True)
+                    .first()
+                )
+                if item is None:
+                    InvoiceItem.objects.create(
+                        invoice=invoice,
+                        presentation=locked_pres,
+                        description=str(locked_pres),
+                        quantity=quantity,
+                        unit_price=locked_pres.sale_price,
+                        organization=invoice.organization,
+                    )
+                else:
+                    apply_invoice_item_quantity_delta(item, quantity)
+
+            mrp = MedicalRecordProduct.objects.select_for_update().filter(
                 medical_record=medical_record,
-                presentation=presentation,
+                presentation=locked_pres,
             ).first()
 
             if mrp is not None:
-                mrp.quantity += quantity
-                mrp.save()
+                previous_quantity = mrp.quantity
+                mrp.quantity = previous_quantity + quantity
+                mrp.save(locked_presentation=locked_pres, previous_quantity=previous_quantity)
             else:
-                mrp = serializer.save(medical_record=medical_record)
-
-            self._sync_invoice_item(medical_record, presentation, quantity)
-
-    def _sync_invoice_item(self, medical_record, presentation, quantity_delta):
-        from apps.billing.services import get_or_create_invoice_for_medical_record
-        from apps.billing.models import InvoiceItem
-
-        invoice = get_or_create_invoice_for_medical_record(medical_record)
-        if invoice.status != 'draft':
-            return
-        item, created = InvoiceItem.objects.get_or_create(
-            invoice=invoice,
-            presentation=presentation,
-            defaults={
-                'description': str(presentation),
-                'quantity': quantity_delta,
-                'unit_price': presentation.sale_price,
-            }
-        )
-        if not created:
-            item.quantity += quantity_delta
-            item.save()
+                mrp = MedicalRecordProduct(
+                    medical_record=medical_record,
+                    presentation=locked_pres,
+                    quantity=quantity,
+                )
+                mrp.save(locked_presentation=locked_pres)
 
 
 class MedicalRecordProductDeleteView(generics.DestroyAPIView):
@@ -382,47 +393,58 @@ class MedicalRecordProductDeleteView(generics.DestroyAPIView):
         )
 
     def perform_destroy(self, instance):
+        from apps.billing.models import Invoice
+        from apps.billing.models import InvoiceItem
+        from apps.billing.services import apply_invoice_item_quantity_delta
+
         with transaction.atomic():
             mr = resolve_public_id(
                 MedicalRecord.objects.for_organization(self.request.user.organization).select_for_update(),
                 self.kwargs['medical_record_pk'],
             )
             assert_can_modify_charges(self.request.user, mr, self.request)
-            self._sync_invoice_item_delete(instance)
-            instance.delete()
+            invoice_id = instance.medical_record.invoice_id
+            locked_invoice = None
+            if invoice_id:
+                locked_invoice = Invoice.objects.for_organization(
+                    self.request.user.organization
+                ).select_for_update().filter(pk=invoice_id).first()
 
-    def _sync_invoice_item_delete(self, mrp):
-        from apps.billing.models import InvoiceItem
+            locked_pres = Presentation.objects.select_for_update().get(pk=instance.presentation_id)
 
-        invoice_id = mrp.medical_record.invoice_id
-        if not invoice_id:
-            return
+            item = None
+            if locked_invoice is not None:
+                item = InvoiceItem.objects.select_for_update().filter(
+                    invoice=locked_invoice,
+                    presentation=locked_pres,
+                    is_active=True,
+                ).first()
 
-        item = InvoiceItem.objects.filter(
-            invoice_id=invoice_id,
-            presentation=mrp.presentation,
-            is_active=True,
-        ).first()
-        if item is None:
-            return
-
-        if item.invoice.status != 'draft':
-            events_logger.warning(
-                "MEDICAL_RECORD_INVOICE_SYNC_SKIPPED",
-                extra={
-                    "user_id": self.request.user.id,
-                    "organization_id": self.request.user.organization_id,
-                    "medical_record_id": mrp.medical_record_id,
-                    "invoice_id": item.invoice_id,
-                    "endpoint": self.request.path,
-                    "method": self.request.method,
-                },
+            fresh_instance = MedicalRecordProduct.objects.select_for_update().get(
+                pk=instance.pk,
+                medical_record=mr,
             )
-            return
 
-        new_quantity = item.quantity - mrp.quantity
-        if new_quantity <= 0:
-            item.delete()
-        else:
-            item.quantity = new_quantity
-            item.save()
+            should_sync_invoice = True
+            if item is not None and item.invoice.status != 'draft':
+                events_logger.warning(
+                    "MEDICAL_RECORD_INVOICE_SYNC_SKIPPED",
+                    extra={
+                        "user_id": self.request.user.id,
+                        "organization_id": self.request.user.organization_id,
+                        "medical_record_id": instance.medical_record_id,
+                        "invoice_id": item.invoice_id,
+                        "endpoint": self.request.path,
+                        "method": self.request.method,
+                    },
+                )
+                should_sync_invoice = False
+
+            if item is not None and should_sync_invoice:
+                projected = item.quantity - fresh_instance.quantity
+                if projected <= 0:
+                    item.delete()
+                else:
+                    apply_invoice_item_quantity_delta(item, -fresh_instance.quantity)
+
+            fresh_instance.delete(locked_presentation=locked_pres)

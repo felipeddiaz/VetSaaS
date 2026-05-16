@@ -237,16 +237,19 @@ class DashboardSummaryTests(APITestCase):
         r = self.client.get(SUMMARY_URL)
         backlog = r.data['backlog']
         self.assertGreaterEqual(backlog['open_total'], 2)
-        self.assertGreaterEqual(backlog['stale_24h'], 1)
+        self.assertGreaterEqual(backlog['needs_attention_count'], 1)
         self.assertGreaterEqual(backlog['without_diagnosis'], 1)
+        self.assertGreaterEqual(backlog['returned_records'], 1)
 
-    def test_backlog_top_stale_is_oldest(self):
+    def test_backlog_open_records_oldest_first(self):
         self.client.force_authenticate(self.vet)
         r = self.client.get(SUMMARY_URL)
-        top = r.data['backlog']['top_stale']
-        self.assertIsNotNone(top)
-        self.assertFalse(top['has_diagnosis'])
-        self.assertGreaterEqual(top['hours_open'], 48)
+        records = r.data['backlog']['open_records']
+        self.assertGreaterEqual(len(records), 2)
+        oldest = records[0]
+        self.assertFalse(oldest['has_diagnosis'])
+        self.assertGreaterEqual(oldest['days_open'], 2)
+        self.assertTrue(oldest['needs_attention'])
 
     # ------------------------------------------------------------------
     # Stock alerts

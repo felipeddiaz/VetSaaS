@@ -1,0 +1,328 @@
+.vdrp-wrapper {
+  position: relative;
+  display: inline-block;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: #111827;
+}
+
+/* Trigger Button */
+.vdrp-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+  min-width: 260px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  transition: all 0.2s ease;
+}
+
+.vdrp-trigger:hover {
+  border-color: #9ca3af;
+}
+
+.vdrp-trigger.active {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.vdrp-trigger-icon {
+  margin-right: 8px;
+  color: #6b7280;
+  display: flex;
+  align-items: center;
+}
+
+.vdrp-trigger-text {
+  flex: 1;
+  text-align: left;
+}
+
+.vdrp-trigger-text.placeholder {
+  color: #9ca3af;
+}
+
+.vdrp-trigger-clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  color: #9ca3af;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s, background 0.2s;
+}
+
+.vdrp-trigger-clear.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.vdrp-trigger-clear:hover {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+/* Popover */
+.vdrp-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  display: none;
+  z-index: 50;
+  opacity: 0;
+  transform: translateY(-10px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.vdrp-popover.open {
+  display: flex;
+  flex-direction: column;
+}
+
+.vdrp-popover.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.vdrp-popover-body {
+  display: flex;
+}
+
+/* Presets */
+.vdrp-presets {
+  width: 140px;
+  border-right: 1px solid #e5e7eb;
+  padding: 12px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.vdrp-preset-btn {
+  background: transparent;
+  border: none;
+  text-align: left;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #374151;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.vdrp-preset-btn:hover {
+  background: #f3f4f6;
+}
+
+.vdrp-preset-btn.active {
+  background: #eff6ff;
+  color: #2563eb;
+  font-weight: 500;
+}
+
+/* Calendars Container */
+.vdrp-calendars {
+  display: flex;
+  padding: 16px;
+  gap: 24px;
+}
+
+.vdrp-month {
+  width: 252px;
+}
+
+.vdrp-month-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.vdrp-month-nav {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #6b7280;
+  transition: background 0.15s;
+}
+
+.vdrp-month-nav:hover {
+  background: #f3f4f6;
+}
+
+.vdrp-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  text-align: center;
+  font-size: 12px;
+  font-weight: 500;
+  color: #9ca3af;
+  margin-bottom: 8px;
+}
+
+.vdrp-days {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  row-gap: 4px;
+}
+
+.vdrp-day-cell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+}
+
+.vdrp-day-btn {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  border-radius: 50%;
+  font-size: 13px;
+  color: #374151;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+  transition: color 0.15s;
+}
+
+.vdrp-day-btn:hover {
+  background: #f3f4f6;
+}
+
+.vdrp-day-btn:disabled {
+  color: #d1d5db;
+  cursor: not-allowed;
+  background: transparent !important;
+}
+
+/* Range Styles */
+.vdrp-day-cell.in-range::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 0;
+  right: 0;
+  background: #dcfce7; /* Light green */
+  z-index: 1;
+}
+
+.vdrp-day-cell.range-start::before {
+  left: 50%;
+}
+
+.vdrp-day-cell.range-end::before {
+  right: 50%;
+}
+
+/* Fix for single day selected (both start and end) */
+.vdrp-day-cell.range-start.range-end::before {
+  display: none;
+}
+
+.vdrp-day-cell.range-start .vdrp-day-btn,
+.vdrp-day-cell.range-end .vdrp-day-btn {
+  background: #22c55e; /* Solid green */
+  color: #ffffff;
+  font-weight: 500;
+}
+
+.vdrp-day-cell.range-start .vdrp-day-btn:hover,
+.vdrp-day-cell.range-end .vdrp-day-btn:hover {
+  background: #16a34a;
+}
+
+/* Today indicator */
+.vdrp-day-cell.today:not(.range-start):not(.range-end) .vdrp-day-btn {
+  color: #2563eb;
+  font-weight: 600;
+}
+.vdrp-day-cell.today:not(.range-start):not(.range-end)::after {
+  content: "";
+  position: absolute;
+  bottom: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #2563eb;
+  z-index: 2;
+}
+
+/* Footer */
+.vdrp-footer {
+  padding: 12px 16px;
+  border-top: 1px solid #e5e7eb;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #f9fafb;
+  border-radius: 0 0 12px 12px;
+}
+
+.vdrp-footer-text {
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.vdrp-footer-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.vdrp-btn {
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: all 0.15s;
+}
+
+.vdrp-btn-cancel {
+  background: transparent;
+  color: #4b5563;
+}
+
+.vdrp-btn-cancel:hover {
+  background: #e5e7eb;
+}
+
+.vdrp-btn-apply {
+  background: #111827;
+  color: #ffffff;
+}
+
+.vdrp-btn-apply:hover {
+  background: #374151;
+}

@@ -19,7 +19,7 @@ import logging
 
 from rest_framework.permissions import BasePermission
 
-from .permissions_codes import PERMISSIONS
+from .permissions_codes import PERMISSIONS, PERMISSION_CODES
 
 logger = logging.getLogger(__name__)
 rbac_logger = logging.getLogger("rbac.events")
@@ -353,6 +353,22 @@ class HybridPermission(BasePermission):
 
     def _get_db_permissions(self, user) -> "set | None":
         return _get_cached_permissions(user)
+
+
+# ---------------------------------------------------------------------------
+# API pública — lista de permisos para el frontend (/api/me/)
+# ---------------------------------------------------------------------------
+
+def build_permissions_list(user) -> list[str]:
+    """
+    Retorna lista de códigos de permiso activos para el usuario.
+    Usa el mismo cache (user._cached_permissions) que HybridPermission.
+    Reutilizable, testeable. Consumida por MeView.
+    """
+    return [
+        code for code in PERMISSION_CODES
+        if user_has_permission(user, code)
+    ]
 
 
 # ---------------------------------------------------------------------------

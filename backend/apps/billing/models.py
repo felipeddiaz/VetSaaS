@@ -145,8 +145,11 @@ class Invoice(PublicIdMixin, OrganizationalModel):
         # puede correr desde InvoiceItem.save() cuando el contexto ya fue limpiado
         # (ej. señales post_save). Do NOT replace with objects.
         raw_subtotal = sum(
-            item.subtotal
-            for item in InvoiceItem.all_objects.filter(invoice=self, is_active=True)
+            (
+                item.subtotal
+                for item in InvoiceItem.all_objects.filter(invoice=self, is_active=True)
+            ),
+            Decimal('0.00')
         )
         subtotal, tax_amount, total = invoice_totals(raw_subtotal, self.tax_rate)
         Invoice.all_objects.filter(pk=self.pk).update(

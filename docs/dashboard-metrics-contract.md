@@ -1,11 +1,12 @@
 # Dashboard Metrics Contract
 
-Version: 0.3 (draft)
+Version: 0.4 (draft)
 Owner: Backend
-Status: Draft — aligned with schema audit findings; pending Capa 1 implementation
-Last updated: 2026-05-09
+Status: Draft — event authority table updated for p11 (pay_direct_sale)
+Last updated: 2026-05-15
 
 Changelog:
+- 0.4: Updated event authority table (§2.7) — all billing anchors now exist and have authoritative writers in `services.py`. Added `pay_direct_sale` as second writer for `confirmed_at` + `paid_at` (atomic single-step for direct_sale). Added note in §3.1.2 about `direct_sale` accrual=cash behavior.
 - 0.3: minimal alignment with `analytics-schema-audit.md` findings. Marked anchors with explicit trust levels (A/B/C/D/F). Locked `Invoice.cancelled_at` decision to "ADD column, do not rely on audit log". Documented `AppointmentDetailView.destroy()` bypass as a known event-authority violation pending fix C3. Renamed vaccine fields to match real model (`application_date`, `next_due_date`). Removed `priority` from `next_appointments` payload. Annotated `pay_invoice` writer as "currently in views, fix C1 in progress". No metric definitions changed.
 - 0.2: incorporated v0.1 review feedback. Added §2.7 (Event Authority), §2.8 (Reversal/Cancellation Policy), §2.9 (Late-arriving Data Policy), §4.6 (Snapshot Lifecycle State), §4.7 (Metrics Schema Versioning), §5.4 (Analytics Throttling). Conversion mutation window extended T+7 → T+14. Appendix A documents resolutions per review item.
 - 0.1: initial draft.
@@ -88,16 +89,16 @@ that bypass the service are forbidden for any model whose status feeds an analyt
 
 Authoritative writers (current state — annotated against real schema):
 
-| Anchor field | Authoritative writer | Module | Status (2026-05-09) |
+| Anchor field | Authoritative writer | Module | Status (2026-05-15) |
 |--------------|---------------------|--------|---------------------|
-| `Invoice.confirmed_at` | `billing/services.py::confirm_invoice` | billing | ⛔ COLUMN DOES NOT EXIST. Pending migration M1. Until M1: anchor unavailable. |
-| `Invoice.paid_at` | `billing/services.py::pay_invoice` | billing | ⚠️ Column exists. Writer currently in `billing/views.py` line 179, NOT services. Pending fix C1+C2 to relocate. |
-| `Invoice.cancelled_at` | `billing/services.py::cancel_invoice` | billing | ⛔ COLUMN DOES NOT EXIST. Decision (v0.3): ADD column via migration M2, do NOT use `InvoiceAuditLog` as anchor. Until M2: anchor unavailable. |
-| `MedicalRecord.closed_at` | `medical_records/views.py::close_medical_record` | medical_records | ✅ Column exists, writer is canonical. Pending fix C4 + migration M16 to add DB-level invariant `status='closed' ⇒ closed_at NOT NULL`. |
-| `Appointment.done_at` | not stored — derived from `AppointmentStatusChange.created_at` | appointments | ✅ Acceptable per §3.2.2 (anchor on `start_datetime` instead). Adding `done_at` is a v2 concern. |
-| `VaccineRecord.application_date` | model write at create | medical_records | ✅ DateField, daily granularity. User-supplied at create. |
-| `Appointment` cancel transition | `appointments/views.py::update_status` | appointments | ⚠️ `AppointmentDetailView.destroy()` line 79 mutates `status='canceled'` directly, bypassing `update_status` and skipping the `AppointmentStatusChange` audit row. Pending fix C3. |
-| `Appointment.walk_in` | walk-in creation view | appointments | ⛔ COLUMN DOES NOT EXIST. Walk-ins are inferred today, fragile. Pending migration M13 + fix C7. |
+| `Invoice.confirmed_at` | `billing/services.py::confirm_invoice`, `pay_direct_sale` | billing | ✅ Column exists. Two writers, both in `services.py`. |
+| `Invoice.paid_at` | `billing/services.py::pay_invoice`, `pay_direct_sale` | billing | ✅ Column exists. Two writers, both in `services.py`. `pay_direct_sale` escribe `confirmed_at` + `paid_at` atomicamente. |
+| `Invoice.cancelled_at` | `billing/services.py::cancel_invoice` | billing | ✅ Column exists. Writer in `services.py`. |
+| `MedicalRecord.closed_at` | `medical_records/views.py::close_medical_record` | medical_records | ✅ Column exists, writer is canonical. CHECK constraint active (M16). |
+| `Appointment.done_at` | not stored — derived from `AppointmentStatusChange.created_at` | appointments | ✅ Acceptable per §3.2.2 (anchor on `start_datetime` instead). |
+| `VaccineRecord.application_date` | model write at create | medical_records | ✅ DateField, daily granularity. |
+| `Appointment` cancel transition | `appointments/views.py::update_status` | appointments | ⚠️ `destroy()` bypasses `update_status`. Pending fix C3. |
+| `Appointment.walk_in` | walk-in creation view | appointments | ✅ Column exists. |
 
 Enforcement:
 - Each authoritative writer MUST set the timestamp inside the same `transaction.atomic()`
@@ -213,6 +214,7 @@ Notes             <edge cases, gotchas>
 - Mutation policy: immutable after T+2.
 - Notes:
   - Accrual ≥ paid for any historical day. If the chart shows accrual < paid for a day, the snapshot is corrupt — alert.
+  - **Direct sale behavior**: para facturas `direct_sale`, `confirmed_at ≈ paid_at` (diferencia de milisegundos, escritos en la misma transaccion por `pay_direct_sale`). Las curvas de accrual y cash coinciden para este tipo de factura. Esto es comportamiento esperado — distinto al de `consultation` donde puede haber horas/dias entre confirmacion y pago. Ver ADR `2026-05-15-p11-pay-direct-sale.md`.
   - This is the metric to use for "service productivity" of a clinic, not `revenue_paid`. UX label should make this distinction visible to ADMIN.
 
 #### 3.1.3 `accounts_receivable_outstanding`

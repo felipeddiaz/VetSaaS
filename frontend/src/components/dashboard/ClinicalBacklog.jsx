@@ -1,64 +1,103 @@
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { Icon } from "../icons";
 
 export default function ClinicalBacklog({ backlog }) {
   const navigate = useNavigate();
+  const [expanded, setExpanded] = useState(false);
 
   if (!backlog) return null;
 
-  const stale    = backlog.stale_24h ?? 0;
-  const noDiag   = backlog.without_diagnosis ?? 0;
-  const hasIssues = stale > 0 || noDiag > 0;
+  const total     = backlog.open_total ?? 0;
+  const needsAttn = backlog.needs_attention_count ?? 0;
+  const noDiag    = backlog.without_diagnosis ?? 0;
+  const records   = backlog.open_records ?? [];
+  const hasIssues = needsAttn > 0 || noDiag > 0;
+
+  if (total === 0) {
+    return (
+      <div className="dsp">
+        <div className="dsp-head">
+          <h3 className="dsp-title">Backlog clínico</h3>
+        </div>
+        <p className="dsp-empty">Sin consultas pendientes.</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="side-panel">
-      <div className="side-title">Backlog clínico</div>
+    <div className="dsp">
+      <div className="dsp-head">
+        <h3 className="dsp-title">Backlog clínico</h3>
+        {needsAttn > 0 && (
+          <span className="badge badge-danger">{needsAttn}</span>
+        )}
+      </div>
 
-      {!hasIssues ? (
-        <div className="side-empty-ok">Sin consultas pendientes</div>
-      ) : (
-        <>
-          {/* Counter pills */}
-          <div className="bl-counters">
-            {stale > 0 && (
-              <div className="bl-counter bl-counter-danger">
-                {stale} abierta{stale > 1 ? "s" : ""} &gt;24h
-              </div>
-            )}
-            {noDiag > 0 && (
-              <div className="bl-counter bl-counter-warning">
-                {noDiag} sin diagnóstico
-              </div>
-            )}
-          </div>
+      {hasIssues && (
+        <div className="dsp-chip-row">
+          {needsAttn > 0 && (
+            <span className="badge badge-danger">
+              {needsAttn} necesita{needsAttn > 1 ? "n" : ""} atención
+            </span>
+          )}
+          {noDiag > 0 && (
+            <span className="badge badge-warning">
+              {noDiag} sin diagnóstico
+            </span>
+          )}
+        </div>
+      )}
 
-          {/* Top stale record */}
-          {backlog.top_stale && (
-            <div className="bl-top">
-              <span className="bl-top-pet">
-                {backlog.top_stale.pet_name || "Sin mascota"}
-              </span>
-              <span className="bl-top-meta">
-                {[
-                  backlog.top_stale.veterinarian_name,
-                  backlog.top_stale.hours_open != null
-                    ? `${Math.round(backlog.top_stale.hours_open)}h abierta`
-                    : null,
-                ].filter(Boolean).join(" · ")}
-              </span>
-              {!backlog.top_stale.has_diagnosis && (
-                <span className="bl-top-warn">Sin diagnóstico registrado</span>
+      {expanded && records.length > 0 && (
+        <div className="dsp-backlog-list">
+          {records.map((r) => (
+            <div
+              key={r.public_id}
+              className="dsp-backlog-row"
+              role="button"
+              tabIndex={0}
+              onClick={() => navigate(`/medical-records?record=${r.public_id}`)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  navigate(`/medical-records?record=${r.public_id}`);
+                }
+              }}
+            >
+              <div className="dsp-callout-name">
+                {r.pet_name || "Sin mascota"}
+              </div>
+              <div className="dsp-callout-meta">
+                {r.veterinarian_name}
+                {" · "}
+                {r.days_open >= 1
+                  ? `${r.days_open} ${r.days_open === 1 ? "día" : "días"} abierta`
+                  : `${Math.round(r.hours_open)}h abierta`}
+              </div>
+              {!r.has_diagnosis && (
+                <div className="dsp-callout-warn">
+                  <Icon.AlertCircle s={12} /> Sin diagnóstico
+                </div>
               )}
             </div>
-          )}
-
-          <button
-            className="side-link-btn"
-            onClick={() => navigate("/medical-records")}
-          >
-            Gestionar →
-          </button>
-        </>
+          ))}
+        </div>
       )}
+
+      <button
+        className="btn btn-ghost btn-xs dsp-action"
+        onClick={() => setExpanded((v) => !v)}
+      >
+        {expanded ? "▲ Contraer" : `▼ Ver todas (${total})`}
+      </button>
+
+      <button
+        className="btn btn-ghost btn-xs dsp-action"
+        onClick={() => navigate("/medical-records")}
+      >
+        Gestionar consultas →
+      </button>
     </div>
   );
 }

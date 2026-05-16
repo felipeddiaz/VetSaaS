@@ -1,6 +1,6 @@
 # Contexto actual del proyecto (VeterinariaSaaS)
 
-Fecha de corte: 2026-05-09
+Fecha de corte: 2026-05-16
 Fuente: estado real del repositorio (backend + frontend).
 
 ---
@@ -18,6 +18,7 @@ El proyecto está en fase de hardening avanzado. La base multitenant, autenticac
 - **Sprint 2026-05-06**: toggles de auto-creación a `False` por defecto, modal de citas post-done abierto con CTAs explícitos (ADR p8), `force_weight` por patrón `meta` en exception handler, `FIELD_TO_STEP` en stepper, anti-stale check con `updated_at`, servicios en stepper con endpoints completos, `unit_price` en MedicalRecordProduct.
 - **Sprint 2026-05-07**: timeline editorial con Framer Motion (diario clínico agrupado año/mes, animaciones staggered, panel expandido rico), `public_id` en todas las URLs de medical records, `apiError` FIELD_MAP ampliado (30+ campos), RBAC UI usando `can_modify_charges`/`can_close` del backend, errores inline con cleanup onChange en stepper y vitales.
 - **Sprint analytics 2026-05-09 (ADR p9 + p10)**: contrato analítico v0.3 + auditoría de schema (catálogo de "analytics lies") + Capa 1 hardening (anchors writers en services, CHECK constraints, admin status readonly, DELETE bypass cerrado, MR save() guard) + Capa 2 anchor completeness (`Invoice.confirmed_at`/`cancelled_at`, `Appointment.walk_in`, provenance fields con 5 sources, backfill no-naive) + Capa 3 indexes (11 índices compuestos + EXPLAIN validation) + Capa 4 snapshots (`apps/analytics/`, `DailyOrgMetrics`, `apply_snapshot` idempotente, `is_bucket_frozen` único helper, advisory lock per-org en cron) + Capa 5 read endpoints JSON-first (`/api/v1/dashboard/operations/series/`, `/financial/series/`, cada datapoint tagged con `source`+`lifecycle_state`). 159 tests pasando, 0 regresiones.
+- **Sprint concurrencia 2026-05-16 (ADR p12)**: orden global de locks `MedicalRecord → Invoice → Presentation → InvoiceItem → MedicalRecordProduct` + `cancel_invoice()` con lock de Invoice + Presentations + `get_or_create_invoice_for_medical_record()` atómico + MR lockeado + `InvoiceDetailView.update()` bajo lock + `MedicalRecordProduct.save()` con parámetros `locked_presentation`/`previous_quantity` para evitar re-lock redundante + walk-in dedup con `pet=pet` + `walk_in=True`. Tests de concurrencia: 14 OK. Regresión amplia: 90 OK.
 
 ---
 
@@ -207,6 +208,7 @@ python manage.py test \
   apps.billing.tests.test_invoice_multitenancy \
   apps.billing.tests.test_event_authority \
   apps.billing.tests.test_anchor_completeness \
+  apps.billing.tests.test_invoice_concurrency \
   apps.appointments.tests.test_walkin \
   apps.dashboard.tests.test_analytics_health \
   apps.dashboard.tests.test_series_endpoints \
@@ -306,6 +308,7 @@ Process types `nightly_snapshots` y `nightly_anchor_audit` se schedulen vía Rai
 
 | Item | Prioridad |
 |------|-----------|
+| **Día 3 — Multitenant FK validation** (Errores 8-9): `validate_owner/pet/appointment/medical_record` en `InvoiceSerializer` + `validate_product` en `PrescriptionItemSerializer` | Alta |
 | Gate Fase 4 RBAC: 7 días sin `RBAC_FALLBACK_ALLOWED` en Railway para poder cortar `User.role` | Alta |
 | `seed_permissions` en próximo deploy: persistir `dashboard.financial.view` (nuevo) + códigos preexistentes (vitales/summary + organizations) | Alta |
 | Wire Railway Cron a `nightly_snapshots` + `nightly_anchor_audit` con alerting on non-zero exit | Alta |
@@ -424,6 +427,112 @@ Process types `nightly_snapshots` y `nightly_anchor_audit` se schedulen vía Rai
 - `docs/modules/analytics.md`
 - Updates en `docs/modules/billing.md`, `medical_records.md`, `appointments.md`, `CLAUDE.md`.
 
+### Fixes aplicados 2026-05-16 (sprint concurrencia — ADR p12)
+
+**Orden global de locks** (no negociable):
+```
+MedicalRecord → Invoice → Presentation → InvoiceItem → MedicalRecordProduct
+```
+
+**Services — `billing/services.py`:**
+- `cancel_invoice()`: re-fetch con `select_for_update()` de Invoice + lock de Presentations en orden estable por pk antes de reversar stock.
+- `get_or_create_invoice_for_medical_record()`: `@transaction.atomic`, lock de `MedicalRecord`, retorna Invoice lockeada.
+- Helper `_lock_presentations(presentation_ids)`: lockea múltiples Presentations en orden determinista.
+
+**Views — `billing/views.py`:**
+- `InvoiceDetailView.update()`: `transaction.atomic()` + lock de Invoice antes del check de `draft`.
+- `InvoiceItemDetailView.update()/destroy()`: `transaction.atomic()` + lock de Invoice para proteger `recalculate_totals()`.
+
+**Views — `inventory/views.py`:**
+- `MedicalRecordProductListCreateView.perform_create()`: lock de MR → Invoice (via helper) → Presentation → InvoiceItem → MRP.
+- `MedicalRecordProductDeleteView.perform_destroy()`: re-fetch de instancia con lock antes de delete, sync de InvoiceItem bajo lock de Invoice.
+
+**Models — `inventory/models.py`:**
+- `MedicalRecordProduct.save()`: parámetros opcionales `locked_presentation` y `previous_quantity` para evitar re-lock redundante cuando la view ya lockeó.
+- `MedicalRecordProduct.delete()`: acepta `locked_presentation` para reutilizar lock del caller.
+
+**Views — `medical_records/views.py`:**
+- `MedicalRecordServiceListCreateView.perform_create()`: lock de MR → Invoice → sync de InvoiceItem bajo lock.
+- `MedicalRecordServiceDeleteView.perform_destroy()`: re-fetch de instancia con lock, sync de InvoiceItem bajo lock de Invoice.
+
+**Views — `appointments/views.py`:**
+- `walk_in()`: dedup ahora exige `walk_in=True` y `pet=pet` — no reutiliza cita de otra mascota.
+
+**Tests nuevos** (`apps/billing/tests/test_invoice_concurrency.py`):
+- `test_parallel_product_and_service_create_single_invoice`
+- `test_medical_record_product_create_integrity_error_does_not_decrement_stock`
+- `test_cancel_invoice_parallel_pay_and_cancel_keeps_single_final_state`
+- `test_parallel_add_and_delete_same_product_keeps_correct_stock`
+
+**Tests extendidos** (`apps/appointments/tests/test_walkin.py`):
+- `test_walkin_dedup_does_not_reuse_different_pet`
+- `test_walkin_dedup_does_not_reuse_non_walkin_appointment`
+
+**Resultados**: 14 tests de concurrencia OK + 90 tests de regresión OK (0 fallos).
+
+**Documentación nueva**:
+- `docs/decisions/2026-05-16-p12-concurrency-lock-order-hardening.md`
+- Updates en `docs/modules/billing.md`, `inventory.md`, `medical_records.md`, `appointments.md`.
+
+### Fixes aplicados 2026-05-16 (remediación post-review Día 1-2 — ADR p13)
+
+Tras p12, una segunda pasada de revisión paralela (`code-reviewer`, `security-auditor`, `backend-architect`) confirmó las 7 fixes core correctas pero detectó 7 gaps secundarios. Todos resueltos:
+
+**Convención de mutación de `InvoiceItem.quantity` (regla no negociable):**
+- Toda mutación de `InvoiceItem.quantity` DEBE usar `F('quantity') ± delta` vía `update()`, **incluso con `select_for_update()`**. Prohibido `item.quantity += delta; item.save()`.
+- Helper único: `apps.billing.services.apply_invoice_item_quantity_delta(item, delta)`.
+- Razón: consistencia con `apply_stock_movement` para `Presentation.stock` + defense-in-depth + single round-trip.
+
+**Sites refactorizados (4) con el helper:**
+- `medical_records/views.py::MedicalRecordServiceListCreateView.perform_create` (increment) — además **orden corregido**: `mrs = serializer.save(...)` ahora se ejecuta DESPUÉS del sync de InvoiceItem para respetar el orden canónico `MR → Invoice → InvoiceItem → MRS`.
+- `medical_records/views.py::MedicalRecordServiceDeleteView.perform_destroy` (decrement con proyección previa).
+- `inventory/views.py::MedicalRecordProductListCreateView.perform_create` (increment).
+- `inventory/views.py::MedicalRecordProductDeleteView.perform_destroy` (decrement con proyección previa).
+
+**Patrón canónico decrement (delete paths):**
+```python
+projected = item.quantity - fresh_instance.quantity
+if projected <= 0:
+    item.delete()
+else:
+    apply_invoice_item_quantity_delta(item, -fresh_instance.quantity)
+```
+
+**Defense-in-depth tenant filter** (`billing/services.py`):
+- `confirm_invoice`, `pay_invoice`, `pay_direct_sale` re-lockean con `Invoice.objects.for_organization(invoice.organization).select_for_update().get(pk=invoice.pk)` — consistente con `cancel_invoice` que ya lo hacía.
+
+**Contrato de lock documentado** (`inventory/services.py`):
+- Docstring de `apply_stock_movement` ahora enumera explícitamente "⚠️ CONTRATO DE LOCK (CRÍTICO)" + lista los 5 callers válidos. Próximo contribuidor no puede romperlo por desconocimiento.
+
+**Fail-fast en `MedicalRecordProduct.save()` y `.delete()`** (`inventory/models.py`):
+- `assert connection.in_atomic_block` al inicio de ambos métodos. Si el caller no abrió `transaction.atomic()`, levanta `AssertionError` con mensaje canónico.
+- Warning log si `save()` se invoca sin `locked_presentation` (visibilidad de callers no-canónicos en prod).
+- Smoke verificado: invocar `MRP.save()` fuera de atomic dispara el assert.
+
+**Test rollback corregido** (`billing/tests/test_anchor_completeness.py`):
+- `test_direct_pay_rolls_back_stock_on_payment_error` reemplaza el falso-positivo (`payment_method='bitcoin'` rechazado ANTES de `_confirm_locked_invoice`) por `unittest.mock.patch` que dispara `ValidationError` DESPUÉS de la confirmación. Verifica rollback completo de stock + `confirmed_at` + `paid_at` + `InvoiceAuditLog`.
+
+**Tests de concurrencia nuevos** (`billing/tests/test_invoice_concurrency.py`):
+- `test_two_parallel_pay_direct_sale_serialize` — 2 POSTs paralelos a `/direct-pay/` sobre misma invoice; solo 1 retorna 200, stock descontado una vez.
+- `test_two_parallel_invoice_patch_serialize` — 2 PATCHes paralelos serializados via lock, estado final coherente.
+- `test_parallel_pay_direct_sale_and_cancel_keep_consistent_stock` — `pay_direct_sale` + `cancel_invoice` paralelos, solo una operación gana, stock consistente.
+
+**Doc reference corregida**:
+- `pay_direct_sale.__doc__`: `§4.2` → `§3.1.2 (revenue_accrual)`.
+
+**Resultados**: 233 tests pasan (suite completa CLAUDE.md + 3 nuevos concurrentes). `audit_anchor_integrity` → `✓ All invariants hold`. Smoke del assert OK.
+
+**Deuda conocida flagged (fuera de scope, documentar para sprint separado):**
+- `medical_records/views.py:432` escribe `closed_at` desde view en lugar de `services.py` (viola ADR p9 / ADR-11). Extraer a `medical_records/services.py::close_medical_record_service()`.
+- `MedicalRecordProduct.delete()` no se invoca en cascada de `MedicalRecord.delete()` (Django ORM bypasea custom delete). Stock no se revierte si se borra el MR completo. No exponer endpoint de cascade-delete sin antes iterar productos.
+- `InvoiceSerializer.validate()` exige `pet/owner` incluso en PATCH parcial. Bloquea PATCH minimalistas como `{"notes": "x"}`. Los tests envían `pet` + `owner` explícitamente para sortearlo.
+
+**Documentación nueva**:
+- `docs/decisions/2026-05-16-p13-day12-concurrency-remediation.md`
+- Updates en `docs/modules/billing.md` (sección F() helper + tenant filter), `inventory.md` (contrato `apply_stock_movement` + assert + deuda cascade), `medical_records.md` (orden MRS create + helper en MRP/MRS), `CLAUDE.md` (regla F() obligatoria).
+
+**Próximo**: Día 3 — tenant validators P0 #8-9 (`InvoiceSerializer` + `PrescriptionItemSerializer`).
+
 ---
 
 ## 11) Índice de ADRs (decisiones de arquitectura)
@@ -446,3 +555,5 @@ Process types `nightly_snapshots` y `nightly_anchor_audit` se schedulen vía Rai
 | `2026-05-06-p8-post-done-manual-flow.md` | 05-06 | Flujo manual post-done con CTA explícito | Implementado |
 | `2026-05-09-p9-analytics-anchor-authority.md` | 05-09 | Analytics anchor authority + provenance (Capa 1+2) | Implementado |
 | `2026-05-09-p10-analytics-snapshots-and-read-endpoints.md` | 05-09 | Snapshots minimal v1 + read endpoints JSON-first (Capa 3+4+5) | Implementado |
+| `2026-05-16-p12-concurrency-lock-order-hardening.md` | 05-16 | Orden global de locks + hardening concurrencia Día 1-2 | Implementado |
+| `2026-05-16-p13-day12-concurrency-remediation.md` | 05-16 | Remediación post-review Día 1-2 (helper F() + asserts + tenant filter + docstring) | Implementado |

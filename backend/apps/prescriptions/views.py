@@ -147,8 +147,10 @@ def prescription_pdf(request, pk):
     separator()
 
     draw_line('Medicamentos', font='Helvetica-Bold', size=12, offset=18)
-    for i, item in enumerate(prescription.items.select_related('product').all(), 1):
-        unit = item.product.unit or ''
+    items_qs = prescription.items.select_related('product').prefetch_related('product__presentations').all()
+    for i, item in enumerate(items_qs, 1):
+        first_pres = next(iter(item.product.presentations.all()), None)
+        unit = first_pres.get_base_unit_display() if first_pres else ''
         draw_line(
             f"{i}. {item.product.name}  —  {item.quantity} {unit}".strip(),
             font='Helvetica-Bold',

@@ -7,6 +7,7 @@ from rest_framework.test import APITestCase
 
 from apps.core.models import Permission, Role, UserRole
 from apps.core.permissions_codes import PERMISSION_CODES, PERMISSIONS
+from apps.appointments.models import Appointment
 from apps.organizations.models import Organization
 from apps.patients.models import Owner, Pet
 from apps.users.models import User
@@ -100,6 +101,12 @@ class WalkInRBACTests(APITestCase):
         cls.pet = Pet.objects.create(
             name="Buddy",
             species="dog",
+            owner=cls.owner,
+            organization=cls.org,
+        )
+        cls.pet_b = Pet.objects.create(
+            name="Michi",
+            species="cat",
             owner=cls.owner,
             organization=cls.org,
         )
@@ -238,3 +245,48 @@ class WalkInRBACTests(APITestCase):
         self.assertIn(response.status_code, [status.HTTP_201_CREATED, status.HTTP_200_OK])
         if response.status_code == status.HTTP_201_CREATED:
             self.assertLessEqual(len(response.data.get("reason", "")), 255)
+
+    def test_walkin_dedup_does_not_reuse_different_pet(self):
+        self.auth(self.admin)
+
+        first = self.client.post("/api/appointments/walk-in/", {
+            "pet": self.pet.id,
+            "veterinarian": self.vet_with_perm.id,
+            "reason": "Walkin uno",
+        })
+        second = self.client.post("/api/appointments/walk-in/", {
+            "pet": self.pet_b.id,
+            "veterinarian": self.vet_with_perm.id,
+            "reason": "Walkin dos",
+        })
+
+        self.assertEqual(first.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(second.status_code, status.HTTP_201_CREATED)
+        self.assertNotEqual(first.data["id"], second.data["id"])
+
+    def test_walkin_dedup_does_not_reuse_non_walkin_appointment(self):
+        self.auth(self.admin)
+        Appointment.objects.create(
+            organization=self.org,
+            pet=self.pet,
+            veterinarian=self.vet_with_perm,
+            date="2026-01-01",
+            start_time="10:00:00",
+            end_time="10:30:00",
+            start_datetime="2026-01-01T10:00:00Z",
+            end_datetime="2026-01-01T10:30:00Z",
+            timezone_at_creation="UTC",
+            reason="Cita regular",
+            status='in_progress',
+            walk_in=False,
+            created_by=self.admin,
+        )
+
+        response = self.client.post("/api/appointments/walk-in/", {
+            "pet": self.pet.id,
+            "veterinarian": self.vet_with_perm.id,
+            "reason": "Walkin real",
+        })
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(Appointment.objects.get(pk=response.data["id"]).walk_in)

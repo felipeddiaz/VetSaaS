@@ -15,17 +15,20 @@ const readCssVar = (name, fallback) => {
 const DAYS_SHORT = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"];
 
 const dayLabel = (dateStr) => {
+  if (!dateStr) return "—";
   const d = new Date(dateStr + "T12:00:00");
-  return `${DAYS_SHORT[d.getDay()]} ${d.getDate()}`;
+  const day = d.getDay();
+  if (isNaN(day)) return "—";
+  return `${DAYS_SHORT[day]} ${d.getDate()}`;
 };
 
 const fmtMXN = (v) => v != null ? `$${Number(v).toLocaleString("es-MX")}` : "—";
 
 const transformRevenueData = (points) =>
-  points.map((p) => ({
-    label:   dayLabel(p.bucketDate),
-    paid:    p.metrics?.revenuePaid    ?? null,
-    accrual: p.metrics?.revenueAccrual ?? null,
+  (points || []).map((p) => ({
+    label:   dayLabel(p?.bucketDate),
+    paid:    p?.metrics?.revenuePaid    ?? null,
+    accrual: p?.metrics?.revenueAccrual ?? null,
   }));
 
 /* ── Tooltip ───────────────────────────────────────────────── */

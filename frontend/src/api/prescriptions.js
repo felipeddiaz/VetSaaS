@@ -18,5 +18,6 @@ export const updatePrescription = (id, data) =>
 export const deletePrescription = (id) =>
     api.delete(`prescriptions/${id}/`);
 
-export const downloadPrescriptionPDF = (id) =>
-    api.get(`prescriptions/${id}/pdf/`, { responseType: "blob" }).then(r => r.data);
+export const downloadPrescriptionPDF = (publicId) =>
+    api.get(`prescriptions/${publicId}/pdf/`, { responseType: "blob" })
+        .then(r => ({ blob: r.data, contentDisposition: r.headers["content-disposition"] }));

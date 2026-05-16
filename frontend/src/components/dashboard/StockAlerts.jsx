@@ -5,9 +5,11 @@ export default function StockAlerts({ alerts }) {
 
   if (!alerts || alerts.length === 0) {
     return (
-      <div className="side-panel">
-        <div className="side-title">Stock crítico</div>
-        <div className="side-empty-ok">Sin alertas de stock</div>
+      <div className="dsp">
+        <div className="dsp-head">
+          <h3 className="dsp-title">Stock crítico</h3>
+        </div>
+        <p className="dsp-empty">Sin alertas de stock.</p>
       </div>
     );
   }
@@ -16,53 +18,46 @@ export default function StockAlerts({ alerts }) {
   const warning  = alerts.filter((a) => a.severity !== "critical");
 
   return (
-    <div className="side-panel">
-      <div className="side-title">
-        Stock crítico
+    <div className="dsp">
+      <div className="dsp-head">
+        <h3 className="dsp-title">Stock crítico</h3>
         {critical.length > 0 && (
-          <span className="sa-critical-count">
-            {critical.length} agotado{critical.length > 1 ? "s" : ""}
-          </span>
+          <span className="badge badge-danger">{critical.length}</span>
         )}
       </div>
 
-      <div className="sa-list">
-        {/* Critical first */}
+      <ul className="dsp-list">
         {critical.slice(0, 3).map((a, i) => (
-          <div key={`c-${i}`} className="sa-item sa-item-critical">
-            <div className="sa-sev-bar sa-sev-critical" />
-            <div className="sa-body">
-              <span className="sa-name">{a.product_name}</span>
-              <span className="sa-meta">
+          <li key={`c-${i}`} className="dsp-item dsp-item-critical">
+            <span className="dsp-sev dsp-sev-critical" />
+            <div className="dsp-item-body">
+              <span className="dsp-item-name">{a.product_name}</span>
+              <span className="dsp-item-meta">
                 {a.presentation_name} · {a.stock} / mín {a.min_stock}
               </span>
             </div>
-            <span className="sa-badge sa-badge-critical">Agotado</span>
-          </div>
+            <span className="badge badge-danger">Agotado</span>
+          </li>
         ))}
-
-        {/* Warning after */}
         {warning.slice(0, 2).map((a, i) => (
-          <div key={`w-${i}`} className="sa-item">
-            <div className="sa-sev-bar sa-sev-warning" />
-            <div className="sa-body">
-              <span className="sa-name">{a.product_name}</span>
-              <span className="sa-meta">
+          <li key={`w-${i}`} className="dsp-item">
+            <span className="dsp-sev dsp-sev-warning" />
+            <div className="dsp-item-body">
+              <span className="dsp-item-name">{a.product_name}</span>
+              <span className="dsp-item-meta">
                 {a.presentation_name} · {a.stock} / mín {a.min_stock}
               </span>
             </div>
-            <span className="sa-badge sa-badge-warning">Bajo</span>
-          </div>
+            <span className="badge badge-warning">Bajo</span>
+          </li>
         ))}
-      </div>
+      </ul>
 
       {alerts.length > 5 && (
-        <div className="sa-overflow-label">
-          +{alerts.length - 5} más
-        </div>
+        <p className="dsp-overflow">+{alerts.length - 5} más</p>
       )}
 
-      <button className="side-link-btn" onClick={() => navigate("/inventory")}>
+      <button className="btn btn-ghost btn-xs dsp-action" onClick={() => navigate("/inventory")}>
         Ver inventario →
       </button>
     </div>
