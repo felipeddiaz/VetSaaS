@@ -296,6 +296,40 @@ invoice = Invoice.objects.for_organization(
 
 Defense-in-depth: incluso si un caller futuro pasa una `Invoice` resuelta sin tenant filter (e.g. mgmt command, webhook), el service aplica el filtro de organización antes de mutar estado/anchors.
 
+### Tenant validators en `InvoiceSerializer` (ADR p14 — Día 3)
+
+`InvoiceSerializer` valida que los 4 FKs (`owner`, `pet`, `appointment`, `medical_record`) pertenezcan a la organización del `request.user`. Antes de Día 3, un FK cross-org provocaba HTTP 500 (la única defensa era `Invoice.clean()` que levanta `django.core.exceptions.ValidationError`, no mapeada por DRF).
+
+```python
+def validate_pet(self, pet):
+    return _validate_same_org(pet, self._get_request(), 'pet', 'InvoiceSerializer')
+```
+
+**Helper local `_validate_same_org`** (no promovido a `apps/core/` — ver [deuda A1](../deuda/fase2-prioridad-alta.md#a1)):
+- Centraliza el chequeo `obj.organization_id != request.user.organization_id`.
+- Emite `TENANT_VALIDATION_REJECTED` (WARNING, logger `apps.tenant_validation`) — evento separado de `TENANT_MISMATCH_DETECTED` (ERROR, object-level attacks) para no saturar la señal operacional.
+- Maneja `None` (FKs opcionales).
+- Acceso defensivo a `request` via `_get_request()` (patrón `.get('request') + assert` — ver memoria `feedback-serializer-context-access`).
+
+**`Invoice.clean()` se mantiene como app-side defense-in-depth** (legacy residue). Migración futura → service-layer + DB CHECK constraint, ver [deuda A2](../deuda/fase2-prioridad-alta.md#a2).
+
+### PATCH parcial corregido (Fix 4 ADR p14)
+
+`InvoiceSerializer.validate()` ahora resuelve `owner`/`pet` con fallback al `self.instance` cuando el field no está en el payload:
+
+```python
+owner = data.get('owner', getattr(self.instance, 'owner', None))
+pet = data.get('pet', getattr(self.instance, 'pet', None))
+```
+
+Antes de Día 3, PATCH minimalistas como `{"notes": "x"}` retornaban 400 "La mascota es requerida" aunque la invoice tuviera `pet` cargado.
+
+**Comportamiento preservado:**
+- CREATE sin `pet` y con `owner` no-generic → sigue siendo 400.
+- CREATE con `owner` generic → sigue forzando `direct_sale`.
+- PATCH `{"pet": null}` explícito → 400 (presencia explícita del valor).
+- PATCH `{"notes": "x"}` sobre invoice con pet → 200 (Fix 4).
+
 ## Validacion de stock en serializer
 
 Antes de intentar crear el item se valida en el serializer:

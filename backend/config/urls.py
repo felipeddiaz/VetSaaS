@@ -33,6 +33,7 @@ from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
 )
+from rest_framework.permissions import AllowAny
 import logging
 from apps.core.throttling import LoginRateThrottle, LoginUserRateThrottle
 from apps.core.sanitize import sanitize_text
@@ -41,6 +42,10 @@ _login_logger = logging.getLogger('django')
 
 
 class ThrottledTokenObtainPairView(TokenObtainPairView):
+    # Issue #13 / ADR p15: el default global REST_FRAMEWORK.DEFAULT_PERMISSION_CLASSES
+    # ahora es IsAuthenticated. Las vistas públicas (login, refresh) DEBEN declarar
+    # AllowAny explícito para no romper el flujo de autenticación.
+    permission_classes = [AllowAny]
     throttle_classes = [LoginRateThrottle, LoginUserRateThrottle]
 
     def post(self, request, *args, **kwargs):
@@ -58,6 +63,17 @@ class ThrottledTokenObtainPairView(TokenObtainPairView):
             )
         return response
 
+
+class PublicTokenRefreshView(TokenRefreshView):
+    """Refresh endpoint público — sin esto, el default IsAuthenticated bloquea
+    el flujo de renovación de tokens (Issue #13 / ADR p15).
+
+    Throttle dedicado (LoginRateThrottle) para prevenir spam de refresh con un
+    token robado — sin él solo aplicaría user/anon default (500/h), insuficiente
+    para una operación de credencial-equivalente."""
+    permission_classes = [AllowAny]
+    throttle_classes = [LoginRateThrottle, LoginUserRateThrottle]
+
 router = DefaultRouter()
 router.register(r'pets', PetViewSet, basename='patient')
 router.register(r'owners', OwnerViewSet, basename='owner')
@@ -68,8 +84,8 @@ urlpatterns = [
     # Rutas explícitas que colisionarían con el router deben ir ANTES del include del router
     path('api/organizations/settings/', OrganizationSettingsView.as_view()),
     path('api/appointments/', include('apps.appointments.urls')),
-    path('api/token/', ThrottledTokenObtainPairView.as_view()),
-    path('api/token/refresh/', TokenRefreshView.as_view()),
+    path('api/token/', ThrottledTokenObtainPairView.as_view(), name='token_obtain_pair'),
+    path('api/token/refresh/', PublicTokenRefreshView.as_view(), name='token_refresh'),
     path('api/', include(router.urls)),
     path('api/me/', MeView.as_view()),
     path('api/staff/', StaffListView.as_view(), name='staff-list'),

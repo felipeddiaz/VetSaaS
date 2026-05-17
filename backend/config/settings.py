@@ -100,6 +100,13 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'apps.core.authentication.TenantJWTAuthentication',
     ),
+    # Issue #13 / ADR p15: default global = IsAuthenticated.
+    # Views nuevas que olviden declarar permission_classes quedan cerradas por defecto
+    # en lugar de heredar AllowAny implícito. Los endpoints públicos (token, refresh)
+    # declaran permission_classes=[AllowAny] explícito en config/urls.py.
+    'DEFAULT_PERMISSION_CLASSES': (
+        'rest_framework.permissions.IsAuthenticated',
+    ),
     'DEFAULT_THROTTLE_CLASSES': [
         'rest_framework.throttling.AnonRateThrottle',
         'rest_framework.throttling.UserRateThrottle',
@@ -271,6 +278,15 @@ LOGGING = {
         'rbac.events': {
             'handlers': ['rbac_console'],
             'level': 'INFO',
+            'propagate': False,
+        },
+        # Tenant validation en serializers (ADR p14) — evento TENANT_VALIDATION_REJECTED
+        # WARNING (no ERROR) para diferenciar de TENANT_MISMATCH_DETECTED
+        # (HybridPermission.has_object_permission, severidad ERROR para object-level attacks).
+        # Output JSON estructurado para ingestión Railway / agregadores.
+        'apps.tenant_validation': {
+            'handlers': ['rbac_console'],
+            'level': 'WARNING',
             'propagate': False,
         },
         # Ciclo de vida consultas (cerrar, idempotencia) — mismo destino que consola

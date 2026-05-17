@@ -66,6 +66,8 @@ Al cerrar via `close_medical_record` view (POST `/api/medical-records/<uuid>/clo
 - `fallback` — backfilled desde `updated_at` (migration 0014)
 - `legacy` — preexistente al provenance tracking (mark via migration 0015)
 
+> **Deuda técnica:** `close_medical_record` actualmente escribe `closed_at` desde la **view**, no desde un service. Viola ADR p9 (single authoritative writer en `services.py`). El `_source='service'` es técnicamente falso. Migración planificada — ver [deuda A3](../deuda/fase2-prioridad-alta.md#a3---closed_at-writer-fuera-de-service-medical_recordsviewspy432).
+
 ## Recetas medicas
 
 La receta medica es un documento clinico independiente de la factura.
@@ -96,6 +98,7 @@ Validaciones backend:
 - la receta debe tener al menos un medicamento
 - solo se permite una receta por consulta (OneToOneField)
 - los productos agregados a una receta deben tener `requires_prescription = true`
+- **tenant validation (ADR p14 — Día 3):** `PrescriptionItemSerializer.validate_product` y `PrescriptionItemWriteSerializer.validate_product` rechazan productos de otra organización con `400 'Acceso inválido.'`. El endpoint `/items/` además exige `requires_prescription=True` **después** del tenant check (no revelar atributos de productos cross-org). Antes de Día 3 no había tenant check → leak en el PDF de receta. Helper local `_validate_same_org` emite `TENANT_VALIDATION_REJECTED` (WARNING). Migración a mixin centralizado planificada — ver [deuda A1](../deuda/fase2-prioridad-alta.md#a1).
 
 La ruta `/prescriptions` se conserva como visor secundario para consulta, reimpresion y mantenimiento historico, pero el flujo principal de prescripcion es desde historial clinico.
 

@@ -306,10 +306,21 @@ Process types `nightly_snapshots` y `nightly_anchor_audit` se schedulen vía Rai
 
 ## 10) Deuda técnica y pendientes
 
-| Item | Prioridad |
-|------|-----------|
-| **Día 3 — Multitenant FK validation** (Errores 8-9): `validate_owner/pet/appointment/medical_record` en `InvoiceSerializer` + `validate_product` en `PrescriptionItemSerializer` | Alta |
-| Gate Fase 4 RBAC: 7 días sin `RBAC_FALLBACK_ALLOWED` en Railway para poder cortar `User.role` | Alta |
+> **Índice formal en [`docs/deuda/`](docs/deuda/README.md)** — items de hardening arquitectónico agrupados por fase (Fase 2 alta / Fase 3 media / Fase 4 baja). Esta tabla mantiene items operativos (deploy, config, frontend) que no encajan en hardening estructural.
+
+| Item | Prioridad | Tracking |
+|------|-----------|----------|
+| ~~Día 3 — Multitenant FK validation (Errores 8-9)~~ | ✅ Cerrado | ADR p14 |
+| **Fase 2 — Extracción `TenantScopedSerializerMixin` + migración 9 sitios** | Alta | [deuda A1](docs/deuda/fase2-prioridad-alta.md#a1) |
+| **Fase 2 — `Invoice.clean()` → service + DB CHECK** | Alta | [deuda A2](docs/deuda/fase2-prioridad-alta.md#a2) |
+| **Fase 2 — `closed_at` writer fuera de service (ADR p9 violation)** | Alta | [deuda A3](docs/deuda/fase2-prioridad-alta.md#a3) |
+| **Fase 2 — `MRP.delete()` no se invoca en cascade** | Alta | [deuda A4](docs/deuda/fase2-prioridad-alta.md#a4) |
+| **Fase 2 — Soft-delete real en `Owner`/`Pet`/`Organization`** | Alta | [deuda A5](docs/deuda/fase2-prioridad-alta.md#a5) |
+| **Fase 2 — `InvoiceAuditLog.invoice` `CASCADE→SET_NULL` + snapshot `invoice_public_id_at_delete`** | Alta | [deuda A6](docs/deuda/fase2-prioridad-alta.md#a6) |
+| **Fase 2 — `MedicalRecord.vet_name_at_close` snapshot cuando User borrado** | Alta | [deuda A7](docs/deuda/fase2-prioridad-alta.md#a7) |
+| **Fase 3 — `_create_default_superuser` signal → mgmt command `bootstrap_superuser`** | Media | [deuda B5](docs/deuda/fase3-prioridad-media.md#b5) |
+| **Fase 3 — `seed_permissions --prune` destructivo de Permission huérfanos** | Media | [deuda B6](docs/deuda/fase3-prioridad-media.md#b6) |
+| Gate Fase 4 RBAC: 7 días sin `RBAC_FALLBACK_ALLOWED` en Railway para poder cortar `User.role` | Alta | [deuda B3](docs/deuda/fase3-prioridad-media.md#b3) |
 | `seed_permissions` en próximo deploy: persistir `dashboard.financial.view` (nuevo) + códigos preexistentes (vitales/summary + organizations) | Alta |
 | Wire Railway Cron a `nightly_snapshots` + `nightly_anchor_audit` con alerting on non-zero exit | Alta |
 | `ALLOW_LEGACY_ID_LOOKUP=False` en Railway: medical_records ya migrado a `public_id`; restan billing, prescriptions, inventory, pets | Alta |
@@ -533,6 +544,90 @@ else:
 
 **Próximo**: Día 3 — tenant validators P0 #8-9 (`InvoiceSerializer` + `PrescriptionItemSerializer`).
 
+### Fixes aplicados 2026-05-16 (Día 3 — tenant validators serializers — ADR p14)
+
+**P0 #8 + #9 cerrados.** Última pieza pre-beta. Approach hotfix-conservador (no se promueve abstracción a `apps/core/` hasta battle-testing post-beta — ver ADR p14).
+
+**Serializers — `billing/serializers.py`:**
+- `InvoiceSerializer`: 4 `validate_<fk>` (owner, pet, appointment, medical_record) usando helper local `_validate_same_org`. Cross-org FK ahora retorna **400 'Acceso inválido.'** (antes: 500 crudo porque `Invoice.clean()` levantaba `django.core.exceptions.ValidationError` no mapeada por DRF).
+- Patrón canónico `_get_request()`: `self.context.get('request') + assert is not None`. Loud failure si se invoca fuera de view DRF, sin romper introspectivos (schema generation, swagger).
+- Fix 4 PATCH partial: `data.get('field', getattr(self.instance, 'field', None))` permite PATCH minimalistas como `{"notes": "x"}` sin re-enviar pet/owner. Bug pre-existente que afectaba UX real.
+
+**Serializers — `prescriptions/serializers.py`:**
+- `PrescriptionItemSerializer` (nested en `PrescriptionSerializer.items`): nuevo `validate_product` con tenant check. Cierra el leak de productos cross-org en el PDF de receta.
+- `PrescriptionItemWriteSerializer.validate_product`: tenant check añadido **antes** del existente `requires_prescription` check (no revelar atributo de producto cross-org).
+- Helper `_validate_same_org` duplicado (idéntico al de billing) — se elimina en Fase 2 cuando se extraiga el mixin.
+
+**Observabilidad — nuevo evento `TENANT_VALIDATION_REJECTED`:**
+- Logger `apps.tenant_validation` → handler `rbac_console` (JSON estructurado, Railway-ready).
+- Severidad **WARNING** (no ERROR). Separado intencionalmente de `TENANT_MISMATCH_DETECTED` (ERROR, `HybridPermission.has_object_permission`) para no saturar la señal operacional con typos de UI / IDs stale / replays.
+- Campos: `source='serializer'`, `serializer`, `field`, `user_id`, `user_org_id`, `resource_org_id`, `resource_pk`, `endpoint`, `method`.
+
+**Tests:**
+- `billing/tests/test_invoice_multitenancy.py`: 14 nuevos (6 P0 + 8 PATCH partial). Total billing multitenancy: 20/20 OK.
+- `prescriptions/tests/test_multitenancy.py`: **archivo nuevo** (dir tampoco existía). 7 tests cubren: nested PrescriptionItem cross-org, WriteSerializer cross-org, orden tenant-first / requires_prescription-second, observabilidad assertLogs, PATCH nested replace items, PATCH notes-only sin tocar items.
+- Suite completa: **254/254 OK**, `audit_anchor_integrity` → `✓ All invariants hold`.
+
+**Decisiones rechazadas (documentadas en ADR p14):**
+- ❌ `TenantScopedSerializerMixin` + `TenantScopedPrimaryKeyRelatedField` promovidos a `apps/core/` ahora. Razones: cambio silencioso de contrato API (mensajes inglés vs español), cambio de filosofía semántica (400 "Acceso inválido" vs 404 "Not found"), side effects en `validate()` legacy, DRF caching/nested edge cases, blast radius transversal pre-beta. La abstracción es correcta arquitectónicamente — diferida a Fase 2 post-beta.
+- ❌ Copia-pega de 5+ validators más (consolidaría deuda existente de 7 sitios duplicados).
+- ❌ `@expectedFailure` para PATCH partial bug (cerca de release degrada disciplina QA).
+
+**Decisiones aceptadas como deuda visible (ver `docs/deuda/`):**
+- 🔴 **Fase 2 (post-beta inmediato)**: extracción de mixin centralizado + migración 9 sitios; `Invoice.clean()` → service + DB CHECK; `closed_at` writer fuera de service (ADR p9 violation); `MRP.delete()` cascade.
+- 🟠 **Fase 3 (sprint dedicado)**: `apply_stock_movement` lock-internal o assert; PrescriptionItemSerializer dedup; RBAC Fase 4 (cortar `User.role` legacy); eliminar `_validate_same_org` duplicados.
+- 🟡 **Fase 4 (mejoras arquitectónicas)**: decisión 400 vs 404 cross-tenant; `InvoiceSerializer.validate()` side effects (`generic owner → direct_sale` mutación).
+
+**Resultados pre-beta:** 9/9 P0 cerrados (#1-7 concurrencia Días 1-2 + #8-9 tenant Día 3). Listo para staging.
+
+**Documentación nueva**:
+- `docs/decisions/2026-05-16-p14-tenant-validators-day3.md` — ADR completo
+- `docs/deuda/README.md` — índice de deuda
+- `docs/deuda/fase2-prioridad-alta.md` — A1-A4 (post-beta inmediato)
+- `docs/deuda/fase3-prioridad-media.md` — B1-B4 (sprint dedicado)
+- `docs/deuda/fase4-prioridad-baja.md` — C1-C2 (arquitectónicas)
+- Updates en `docs/modules/billing.md` (tenant validators + PATCH fix), `medical_records.md` (receta tenant + closed_at deuda link), `inventory.md` (cascade deuda link), `CLAUDE.md` (regla `.get() + assert`).
+
+**Próximo**: staging deploy + monitoreo Railway 7+ días → si métricas estables, beta launch. En paralelo: Fase 2 sprint planning.
+
+### Fixes aplicados 2026-05-17 (Día 4 PR-4A — perimeter hardening — ADR p15)
+
+**P0 #12 + #13 cerrados.** PR-4A del sprint pre-beta. PR-4B (#10 + #11) pendiente.
+
+**Fix #12 — `_create_default_superuser` privilege escalation (CVSS 9.9) — `apps/users/apps.py`:**
+- Reescritura completa del signal `post_migrate`. Se reemplaza `User.objects.get_or_create(username=...)` por `filter(username).first()` + bifurcación explícita en 3 branches:
+  - Usuario no existe → `create_user(..., is_superuser=True, role='ADMIN_SAAS')` + log INFO `SUPERUSER_BOOTSTRAP_CREATED`. La org `'Vet Care Internal'` solo se crea aquí (no quedan orgs huérfanas si abortamos).
+  - Usuario existe Y es el platform-superuser legítimo (`is_superuser=True AND role='ADMIN_SAAS' AND email coincide cuando se provee`) → solo refresca `is_active` si estaba inactivo. **NO resetea password** (idempotencia de credenciales).
+  - Usuario existe pero NO es el platform-superuser esperado → log CRITICAL `SUPERUSER_BOOTSTRAP_SKIPPED` con `reason='username_collision_non_platform_user'` + abort sin mutación.
+- Vector cerrado: una clínica registra VET con username `admin`, env Railway tiene `DJANGO_SUPERUSER_USERNAME=admin`, el siguiente deploy ya NO escala al VET ni le resetea password.
+
+**Fix #13 — `DEFAULT_PERMISSION_CLASSES` faltante — `config/settings.py` + `config/urls.py`:**
+- `REST_FRAMEWORK['DEFAULT_PERMISSION_CLASSES'] = ('rest_framework.permissions.IsAuthenticated',)` añadido. Cualquier vista nueva que olvide declarar `permission_classes` queda cerrada por defecto.
+- `ThrottledTokenObtainPairView.permission_classes = [AllowAny]` añadido para preservar acceso público al login.
+- `PublicTokenRefreshView(TokenRefreshView)` con `permission_classes = [AllowAny]` (subclass nueva — `TokenRefreshView` se usaba directamente).
+- Rutas reciben `name='token_obtain_pair'` y `name='token_refresh'` para soportar `reverse()` en tests.
+
+**Tests nuevos:**
+- `apps/users/tests/test_bootstrap.py` — 7 tests (creación, collision skip, idempotencia password, refresh is_active, no-org-leak en collision, email mismatch, env vars ausentes).
+- `apps/core/tests/test_default_permissions.py` — 3 tests (settings default, token endpoint público, refresh endpoint público).
+- **Resultados**: 10/10 nuevos OK + 134/134 regresión OK (suite security/sanitize/throttling/invoices/state-machine/multitenancy/prescriptions/close/walkin).
+
+**Decisiones rechazadas (documentadas en ADR p15):**
+- ❌ Soft-delete real (deuda A5) en este PR — blast radius transversal, exige migraciones en 3 modelos + filtrado en `TenantManager` + actualización de endpoints.
+- ❌ Mover signal a management command ahora (deuda B5) — exige cambios en `Procfile` Railway + revisión de orden de boot.
+- ❌ `HybridPermission` como default global — sin `required_permission` declarado se comporta indefinidamente. `IsAuthenticated` es el invariante mínimo correcto.
+
+**Deuda generada (visible en `docs/deuda/`):**
+- 🔴 **Fase 2 (post-beta inmediato)**: A5 (soft-delete real), A6 (`InvoiceAuditLog.invoice` `CASCADE→SET_NULL`), A7 (`MR.vet_name_at_close` snapshot).
+- 🟠 **Fase 3 (sprint dedicado)**: B5 (signal → mgmt command `bootstrap_superuser`), B6 (`seed_permissions --prune`).
+
+**Documentación nueva**:
+- `docs/decisions/2026-05-17-p15-day4-cascade-lockdown.md` — ADR completo
+- `docs/deuda/fase2-prioridad-alta.md` — A5-A7 añadidos
+- `docs/deuda/fase3-prioridad-media.md` — B5-B6 añadidos
+
+**Próximo**: PR-4B (Issue #10 organizations singleton + Issue #11 cascade + `ProtectedError` handler bounded).
+
 ---
 
 ## 11) Índice de ADRs (decisiones de arquitectura)
@@ -557,3 +652,5 @@ else:
 | `2026-05-09-p10-analytics-snapshots-and-read-endpoints.md` | 05-09 | Snapshots minimal v1 + read endpoints JSON-first (Capa 3+4+5) | Implementado |
 | `2026-05-16-p12-concurrency-lock-order-hardening.md` | 05-16 | Orden global de locks + hardening concurrencia Día 1-2 | Implementado |
 | `2026-05-16-p13-day12-concurrency-remediation.md` | 05-16 | Remediación post-review Día 1-2 (helper F() + asserts + tenant filter + docstring) | Implementado |
+| `2026-05-16-p14-tenant-validators-day3.md` | 05-16 | Día 3 — tenant validators P0 #8-9 + Fix 4 PATCH partial + plan Fase 2 mixin | Implementado |
+| `2026-05-17-p15-day4-cascade-lockdown.md` | 05-17 | Día 4 — PR-4A: privilege escalation guard + default IsAuthenticated. PR-4B (cascade + ProtectedError handler) pendiente | Parcial (PR-4A) |

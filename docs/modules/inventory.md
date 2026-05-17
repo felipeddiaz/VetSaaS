@@ -131,6 +131,8 @@ Ver ADRs `2026-05-16-p12-concurrency-lock-order-hardening.md` (orden global de l
 
 Django ORM bypasea el `delete()` custom cuando un padre es eliminado en cascada (usa `QuerySet._raw_delete`). Si se borra un `MedicalRecord` completo, los `MedicalRecordProduct` cascadeados se eliminan **sin revertir stock**. En la práctica esto no ocurre en flujos normales — `MedicalRecord` no se elimina mientras tiene productos asociados (la consulta queda como histórica) — pero **no exponer un endpoint de borrado de MR que use cascada**. Si se necesita, primero iterar `mr.products_used.all()` y llamar `.delete()` explícito en cada uno dentro de `transaction.atomic()`.
 
+Decisión documentada con 3 opciones (signal `pre_delete` / service iterativo / DB trigger) — ver [deuda A4](../deuda/fase2-prioridad-alta.md#a4---medicalrecordproductdelete-no-se-invoca-en-cascade). Resolver solo cuando MR delete sea requisito explícito del producto.
+
 ## Eliminacion de una presentacion
 
 Una presentacion solo puede eliminarse si cumple todas las condiciones:

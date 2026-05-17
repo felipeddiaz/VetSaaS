@@ -1,3 +1,4 @@
+import logging
 import re
 from rest_framework import serializers
 from decimal import Decimal
@@ -6,6 +7,43 @@ from .money import discount_amount, money
 from apps.core.sanitize import sanitize_text
 
 SERVICE_NAME_REGEX = re.compile(r'^[A-Za-z0-9ÁÉÍÓÚáéíóúñÑ\s\-\(\)\/\%\+]+$')
+
+# Logger dedicado para rechazos de tenant en serializers (ADR p14) — evento
+# TENANT_VALIDATION_REJECTED a severidad WARNING. Separado de
+# TENANT_MISMATCH_DETECTED (HybridPermission, ERROR) para no saturar la señal
+# operacional con typos de UI / IDs stale del frontend.
+tenant_logger = logging.getLogger('apps.tenant_validation')
+
+
+def _validate_same_org(value, request, field_name, serializer_name):
+    """
+    Helper local: verifica que `value` pertenezca a la organización del
+    request.user. Emite TENANT_VALIDATION_REJECTED en caso de violación.
+    Retorna `value` si pasa (o si es None — FK opcional).
+
+    NO se promueve a apps/core/ todavía (ADR p14 Fase 2). Battle-testing
+    primero en los 2 sitios de Día 3, luego extracción a mixin centralizado.
+    """
+    if value is None:
+        return value
+    user_org_id = getattr(request.user, 'organization_id', None)
+    obj_org_id = getattr(value, 'organization_id', None)
+    if user_org_id is None or obj_org_id is None:
+        return value
+    if obj_org_id != user_org_id:
+        tenant_logger.warning("TENANT_VALIDATION_REJECTED", extra={
+            "source": "serializer",
+            "serializer": serializer_name,
+            "field": field_name,
+            "user_id": getattr(request.user, 'pk', None),
+            "user_org_id": user_org_id,
+            "resource_org_id": obj_org_id,
+            "resource_pk": getattr(value, 'pk', None),
+            "endpoint": getattr(request, 'path', None),
+            "method": getattr(request, 'method', None),
+        })
+        raise serializers.ValidationError('Acceso inválido.')
+    return value
 
 
 class ServiceSerializer(serializers.ModelSerializer):
@@ -170,9 +208,35 @@ class InvoiceSerializer(serializers.ModelSerializer):
         from apps.core.sanitize import sanitize_text
         return sanitize_text(value or '', max_length=5000)
 
+    def _get_request(self):
+        """Acceso defensivo + assert. Loud failure si falta el context."""
+        request = self.context.get('request')
+        assert request is not None, (
+            "InvoiceSerializer requiere 'request' en su context. "
+            "Si lo invocas fuera de una view DRF (shell, admin, mgmt command), "
+            "pasa context={'request': fake_request} con user.organization seteado."
+        )
+        return request
+
+    def validate_owner(self, owner):
+        return _validate_same_org(owner, self._get_request(), 'owner', 'InvoiceSerializer')
+
+    def validate_pet(self, pet):
+        return _validate_same_org(pet, self._get_request(), 'pet', 'InvoiceSerializer')
+
+    def validate_appointment(self, appointment):
+        return _validate_same_org(appointment, self._get_request(), 'appointment', 'InvoiceSerializer')
+
+    def validate_medical_record(self, mr):
+        return _validate_same_org(mr, self._get_request(), 'medical_record', 'InvoiceSerializer')
+
     def validate(self, data):
-        owner = data.get('owner')
-        pet = data.get('pet')
+        # Resolver owner y pet considerando partial PATCH: los campos ausentes
+        # heredan del instance actual. CREATE no tiene instance → fallback None.
+        # Fix 4 (ADR p14): permite PATCH minimalistas tipo {"notes": "x"} sin
+        # forzar al cliente a re-enviar pet/owner en cada PATCH.
+        owner = data.get('owner', getattr(self.instance, 'owner', None))
+        pet = data.get('pet', getattr(self.instance, 'pet', None))
         if owner and getattr(owner, 'is_generic', False):
             # Generic owner: force direct_sale, pet is optional
             data['invoice_type'] = 'direct_sale'

@@ -1,6 +1,38 @@
+import logging
 from rest_framework import serializers
 from .models import Prescription, PrescriptionItem
 from apps.core.sanitize import sanitize_text
+
+# Logger dedicado para rechazos de tenant en serializers (ADR p14). Separado
+# de TENANT_MISMATCH_DETECTED (HybridPermission, ERROR) — éste es WARNING.
+tenant_logger = logging.getLogger('apps.tenant_validation')
+
+
+def _validate_same_org(value, request, field_name, serializer_name):
+    """
+    Idéntico al helper en apps/billing/serializers.py (ADR p14 Fase 1).
+    Fase 2 (post-beta) extrae a apps/core/serializers.py como mixin.
+    """
+    if value is None:
+        return value
+    user_org_id = getattr(request.user, 'organization_id', None)
+    obj_org_id = getattr(value, 'organization_id', None)
+    if user_org_id is None or obj_org_id is None:
+        return value
+    if obj_org_id != user_org_id:
+        tenant_logger.warning("TENANT_VALIDATION_REJECTED", extra={
+            "source": "serializer",
+            "serializer": serializer_name,
+            "field": field_name,
+            "user_id": getattr(request.user, 'pk', None),
+            "user_org_id": user_org_id,
+            "resource_org_id": obj_org_id,
+            "resource_pk": getattr(value, 'pk', None),
+            "endpoint": getattr(request, 'path', None),
+            "method": getattr(request, 'method', None),
+        })
+        raise serializers.ValidationError('Acceso inválido.')
+    return value
 
 
 class PrescriptionItemSerializer(serializers.ModelSerializer):
@@ -34,6 +66,17 @@ class PrescriptionItemSerializer(serializers.ModelSerializer):
         if value <= 0:
             raise serializers.ValidationError("La cantidad debe ser mayor a 0.")
         return value
+
+    def validate_product(self, product):
+        # Tenant isolation (ADR p14 — P0 #9). Aplica también a items nested
+        # en PrescriptionSerializer.items (DRF propaga context al child).
+        request = self.context.get('request')
+        assert request is not None, (
+            "PrescriptionItemSerializer requiere 'request' en su context. "
+            "Si se invoca via PrescriptionSerializer nested, el context se "
+            "propaga automáticamente desde el parent (DRF default)."
+        )
+        return _validate_same_org(product, request, 'product', 'PrescriptionItemSerializer')
 
 
 class PrescriptionSerializer(serializers.ModelSerializer):
@@ -121,6 +164,13 @@ class PrescriptionItemWriteSerializer(serializers.ModelSerializer):
         return sanitize_text(value or '', max_length=5000)
 
     def validate_product(self, product):
+        # Tenant check primero — no revelar `requires_prescription` de productos
+        # de otra organización (ADR p14 — P0 #9).
+        request = self.context.get('request')
+        assert request is not None, (
+            "PrescriptionItemWriteSerializer requiere 'request' en su context."
+        )
+        _validate_same_org(product, request, 'product', 'PrescriptionItemWriteSerializer')
         if not product.requires_prescription:
             raise serializers.ValidationError(
                 "Este producto no requiere receta. Puede dispensarse directamente desde inventario."
