@@ -28,7 +28,11 @@ from apps.users.views import (
 )
 from rest_framework.routers import DefaultRouter
 from apps.patients.views import PetViewSet, OwnerViewSet
-from apps.organizations.views import OrganizationViewSet, OrganizationSettingsView
+from apps.organizations.views import (
+    OrganizationMeView,
+    OrganizationLegacyView,
+    OrganizationSettingsView,
+)
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
@@ -77,12 +81,16 @@ class PublicTokenRefreshView(TokenRefreshView):
 router = DefaultRouter()
 router.register(r'pets', PetViewSet, basename='patient')
 router.register(r'owners', OwnerViewSet, basename='owner')
-router.register(r'organizations', OrganizationViewSet, basename='organization')
+# Nota PR-4B / ADR p16: `organizations` ya NO es ModelViewSet — list/create/
+# destroy no se exponen. Dos paths explícitos abajo: /me/ (singleton) y
+# /<int:pk>/ (legacy con validación + Sunset RFC 8594).
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     # Rutas explícitas que colisionarían con el router deben ir ANTES del include del router
     path('api/organizations/settings/', OrganizationSettingsView.as_view()),
+    path('api/organizations/me/', OrganizationMeView.as_view(), name='organization-me'),
+    path('api/organizations/<int:pk>/', OrganizationLegacyView.as_view(), name='organization-legacy'),
     path('api/appointments/', include('apps.appointments.urls')),
     path('api/token/', ThrottledTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/token/refresh/', PublicTokenRefreshView.as_view(), name='token_refresh'),

@@ -120,10 +120,13 @@ Evaluar trade-off: trigger más flexible, FK compuesto más eficiente (sin row l
 
 **Origen:** ADR p9 establece "anchor writers solo en `services.py`". `medical_records/views.py::close_medical_record` (línea ~432) escribe `medical_record.closed_at = timezone.now()` + `closed_at_source = 'service'` desde la view directamente.
 
+**Sub-deuda Día 5 (ADR p17):** El helper `_warn_if_late_closed_at(organization, closed_at)` vive temporalmente en `views.py` (line ~37) por consistencia con A3 — no existe `services.py::close_medical_record_service` todavía. Cuando A3 se cierre, el helper migra al service (o se inlina si el writer es único). El test T8 (`test_late_arrival_observability.py::test_close_mr_backdated_closed_at_emits_warning`) invoca el helper de producción directamente como deletion-resistance gate.
+
 **Riesgo si no se cierra:**
 - Viola contrato analítico (ADR p9). El `'service'` source es técnicamente falso — el writer es la view, no un service.
 - Si un caller futuro (mgmt command, signal) necesita cerrar MR, debe duplicar la lógica.
 - Inconsistente con `billing/services.py` (todos los anchor writers están en services).
+- El helper `_warn_if_late_closed_at` queda en una capa equivocada (view, no service) hasta que A3 se cierre.
 
 **Solución:**
 
@@ -167,6 +170,8 @@ def close_medical_record(request, pk):
 - `audit_anchor_integrity` confirma `closed_at_source='service'` para todos los rows nuevos.
 - Tests existentes (`test_close.py`) pasan sin cambios.
 - View reducida a wrapper delgado.
+- Helper `_warn_if_late_closed_at` migrado al service (o inlinado) — `views.py` deja de exportarlo.
+- T8 en `test_late_arrival_observability.py` re-apunta su import al service.
 
 **Estimación:** 1-2 días (extracción + tests + verificación analytics).
 
@@ -307,6 +312,57 @@ En `close_medical_record_service` (cuando A3 esté implementado), poblar `vet_na
 - Migración + backfill de MR cerrados existentes desde `veterinarian.get_full_name()`.
 - Test: borrar VET → MR cerrado preserva `vet_name_at_close`.
 - Display frontend prefiere `vet_name_at_close` si `veterinarian is None`.
+
+**Estimación:** 1 día.
+
+---
+
+---
+
+## D2 — Sunset operativo `/api/organizations/<pk>/`
+
+**Origen:** PR-4B / ADR p16. Endpoint legacy mantenido por retrocompat 90 días con headers RFC 8594 (`Deprecation`, `Sunset: 17-Aug-2026`, `Link`) y log `DEPRECATED_ENDPOINT_HIT`.
+
+**Estado actual:** fail-safe automático activa 410 Gone post-`_SUNSET_DATETIME` (no requiere acción manual). Pero antes de la fecha, monitorear adopción para confirmar que frontend ya migró a `/me/`.
+
+**Criterio de cierre:**
+- Métrica: `DEPRECATED_ENDPOINT_HIT` rate = 0 durante 7 días consecutivos antes del Sunset.
+- Si rate > 0 cerca de fecha → identificar caller y migrar.
+- Post-Sunset: confirmar 410 Gone funciona en producción + remover el view completo (PR separate).
+
+**Estimación:** 1h tracking + 1h cleanup post-Sunset.
+
+---
+
+## D5 — `OrganizationTimezoneAudit.organization` CASCADE → SET_NULL + snapshot
+
+**Origen:** PR-4B / ADR p16 (señalado por database-architect en review).
+
+**Problema:** análogo a A6 — audit log de cambios de timezone debería sobrevivir hipotético borrado de org. Hoy es CASCADE.
+
+**Solución:** SET_NULL + snapshot `organization_name_at_audit` + `organization_id_at_audit`.
+
+**Riesgo si no se cierra:** bajo (PR-4B blindó User.org PROTECT, las orgs casi nunca se borran). Pero por consistencia con A6.
+
+**Estimación:** 0.5 día.
+
+---
+
+## D6 — `Prescription.medical_record` CASCADE → SET_NULL + snapshot
+
+**Origen:** PR-4B / ADR p16. Database-architect señaló: receta es documento legal entregado al paciente; debería sobrevivir cierre/borrado de MR (análogo a `Invoice.medical_record` SET_NULL).
+
+**Solución:** SET_NULL + snapshot `medical_record_public_id_at_issue` para trazabilidad.
+
+**Estimación:** 0.5 día (migración + backfill).
+
+---
+
+## D7 — `StockMovement.presentation` CASCADE → SET_NULL + snapshot
+
+**Origen:** PR-4B / ADR p16. StockMovement es ledger contable de inventario — borrar Presentation destruye historial.
+
+**Solución:** SET_NULL + snapshot `presentation_name_at_movement` + `presentation_sku_at_movement`.
 
 **Estimación:** 1 día.
 

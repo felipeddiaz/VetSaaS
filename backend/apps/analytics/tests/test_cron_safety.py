@@ -10,15 +10,17 @@ Cron-safety tests for build_daily_metrics:
 - Hash function for lock keys is deterministic and fits PG bigint.
 - TZ drift: command picks "yesterday in org-local TZ", not server TZ.
 """
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from io import StringIO
 from unittest.mock import patch
 
 from django.core.management import call_command
 from django.db import connection, connections
 from django.test import TransactionTestCase
+from django.utils import timezone
 
 from apps.analytics.models import DailyOrgMetrics
+from apps.core.datetime_utils import org_today_local
 from apps.core.db_locks import (
     LockUnavailable, advisory_lock, hash_lock_key, try_advisory_lock,
 )
@@ -129,3 +131,51 @@ class CommandFailureIsolationTests(TransactionTestCase):
         self.assertFalse(
             DailyOrgMetrics.objects.filter(organization=self.org_a).exists()
         )
+
+
+class MidnightBoundaryTests(TransactionTestCase):
+    def setUp(self):
+        self.org_a = Organization.objects.create(name="Midnight A", timezone="UTC")
+        self.org_b = Organization.objects.create(name="Midnight B", timezone="UTC")
+
+    def test_midnight_boundary_deterministic(self):
+        from apps.analytics.services import apply_snapshot
+        from zoneinfo import ZoneInfo
+
+        utc_tz = ZoneInfo('UTC')
+        mock_now_before = datetime(2026, 5, 16, 23, 59, 50, tzinfo=utc_tz)
+        mock_now_after = datetime(2026, 5, 17, 0, 0, 10, tzinfo=utc_tz)
+
+        bucket_date = org_today_local(self.org_a, now=mock_now_before) - timedelta(days=1)
+
+        snap_a_before = apply_snapshot(self.org_a, bucket_date, now=mock_now_before)
+        snap_b_before = apply_snapshot(self.org_b, bucket_date, now=mock_now_before)
+
+        self.assertIsNotNone(snap_a_before)
+        self.assertIsNotNone(snap_b_before)
+
+        snap_a_after = apply_snapshot(self.org_a, bucket_date, now=mock_now_after)
+        snap_b_after = apply_snapshot(self.org_b, bucket_date, now=mock_now_after)
+
+        self.assertEqual(snap_a_before.pk, snap_a_after.pk)
+        self.assertEqual(snap_b_before.pk, snap_b_after.pk)
+
+        value_fields = [
+            'revenue_paid', 'revenue_accrual', 'invoices_paid_count',
+            'appointments_total', 'appointments_done', 'appointments_no_show',
+            'medical_records_closed', 'excluded_anchor_missing',
+        ]
+        for field in value_fields:
+            self.assertEqual(
+                getattr(snap_a_before, field),
+                getattr(snap_a_after, field),
+                f"Field {field} differs between midnight-before and midnight-after for org A",
+            )
+            self.assertEqual(
+                getattr(snap_b_before, field),
+                getattr(snap_b_after, field),
+                f"Field {field} differs between midnight-before and midnight-after for org B",
+            )
+
+        self.assertEqual(snap_a_before.built_at, snap_a_after.built_at)
+        self.assertEqual(snap_b_before.built_at, snap_b_after.built_at)

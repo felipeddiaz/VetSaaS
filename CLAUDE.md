@@ -310,6 +310,15 @@ Cada timestamp usado por analytics (`Invoice.paid_at` / `confirmed_at` / `cancel
 **ADR-12 — Snapshots analytics minimal v1 + read endpoints JSON-first (2026-05-09)**
 App nueva `apps/analytics/` con `DailyOrgMetrics` (7 KPIs minimales) + `DashboardSnapshotAudit`. Reglas: (a) `is_bucket_frozen()` único helper para freeze decisions, (b) `apply_snapshot()` idempotente — 3 runs producen mismos números/state/`built_at`, (c) today NUNCA snapshotteado — siempre live, (d) per-org PG advisory lock en mgmt command para Railway double-fire safety, (e) per-org failure isolation (un org fallido no aborta otros, exit 2 si alguno falló), (f) `lifecycle_state='corrupt'` rows persistidas pero filtradas en read endpoints (visibles solo en `/analytics-health/`). Read endpoints (`/api/v1/dashboard/operations/series/`, `/api/v1/dashboard/financial/series/`) tagean cada datapoint con `source` ∈ `snapshot|live` y `lifecycle_state`. Hard cap 365 días. Ver ADR `2026-05-09-p10` y `docs/modules/analytics.md`.
 
+**ADR-13 — Tenant validators en serializers (2026-05-16)**
+Día 3 P0 #8-9. `InvoiceSerializer` valida 4 FKs (`owner`, `pet`, `appointment`, `medical_record`) contra `request.user.organization`. `PrescriptionItemSerializer`/`WriteSerializer` valida `product` (con chequeo `requires_prescription` DESPUÉS del tenant — no exponer atributo de producto cross-org). Helper local `_validate_same_org` por archivo (no se promueve a `apps/core/` hasta Fase 2 post-beta). Logger separado `apps.tenant_validation` emite `TENANT_VALIDATION_REJECTED` (WARNING) — distinto a `TENANT_MISMATCH_DETECTED` (ERROR) de `HybridPermission.has_object_permission`. Fix 4: `InvoiceSerializer.validate()` resuelve `owner`/`pet` con fallback a `instance` para soportar PATCH parcial. Ver ADR `2026-05-16-p14`.
+
+**ADR-14 — Privilege escalation guard en superuser bootstrap + DRF default permissions (2026-05-17)**
+PR-4A Día 4. `_create_default_superuser` reescrito con predicado `_is_platform_superuser` (requiere `is_superuser=True AND is_staff=True AND role='ADMIN_SAAS' AND email coincide case-insensitive cuando se provee`). TOCTOU race retry vía `IntegrityError` + reclasificación. `create_superuser()` idiomático (no `create_user(is_superuser=True)`). `REST_FRAMEWORK['DEFAULT_PERMISSION_CLASSES'] = ('rest_framework.permissions.IsAuthenticated',)` — vistas nuevas heredan auth por default. `PublicTokenRefreshView` con throttle dedicado. Eventos: `SUPERUSER_BOOTSTRAP_CREATED/SKIPPED/RACE_RESOLVED/INCOMPLETE_ENV`. Ver ADR `2026-05-17-p15`.
+
+**ADR-15 — Cascade lockdown + Organization singleton + ProtectedError handler bounded + audit_orphan_fks (2026-05-17)**
+PR-4B Día 4. 5 FKs `CASCADE → PROTECT`: `User.organization`, `Pet.owner`, `MedicalRecord.pet`, `VaccineRecord.pet`, `Prescription.pet`. `OrganizationViewSet` (ModelViewSet) reemplazado por `OrganizationMeView` (`/me/` singleton) + `OrganizationLegacyView` (`/<pk>/` con validación + headers RFC 8594 Deprecation/Sunset/Link + fail-safe 410 Gone automático post-Sunset 2026-08-17 via `_EndpointSunsetException` en `initial()`). Handler `ProtectedError` con `isinstance()` exacto + probe `[:6]` via `islice` (set no subscriptable) + hard cap 1000 + shape consistente `protected_count: int` + `protected_count_truncated: bool` + sample dict `{type, id, public_id}` (no `str(obj)` — PII leak + N+1) → 409 Conflict. `audit_orphan_fks` mgmt command: schema_version "1.0.0", exit codes 0/1/2, dual output JSON/log, catch-all 32 targets via introspección de `OrganizationalModel`, `all_objects` (no `objects`) para evitar falsos positivos por soft-delete. DELETE bloqueado en `VaccineRecordDetailView`/`PrescriptionDetailView`/`OrganizationAdmin`/`CustomUserAdmin` por consistencia con motivación NOM. Status 409 (no 400) — semántica REST por sobre conveniencia frontend. Ver ADR `2026-05-17-p16`.
+
 ---
 
 ## Reglas analytics (no negociables)
@@ -328,13 +337,17 @@ Validar PR contra esto cuando toque billing/medical_records/appointments/analyti
 ---
 
 ## Tests
-Suite completa: 159 tests en `backend/apps/`
+Suite completa: 294 tests en `backend/apps/` (1 skip esperado en `test_audit_orphan_fks` — dangling FK via SQL bloqueado por Postgres hard FK)
 ```bash
 python manage.py test \
   apps.core.tests.test_security \
   apps.core.tests.test_sanitize \
   apps.core.tests.test_throttling \
   apps.core.tests.test_invoices \
+  apps.core.tests.test_default_permissions \
+  apps.core.tests.test_cascade_lockdown \
+  apps.core.tests.test_exception_handler \
+  apps.core.tests.test_audit_orphan_fks \
   apps.medical_records.tests.test_close \
   apps.medical_records.tests.test_vitals \
   apps.billing.tests.test_money \
@@ -347,7 +360,11 @@ python manage.py test \
   apps.dashboard.tests.test_series_endpoints \
   apps.analytics.tests.test_snapshot_v1 \
   apps.analytics.tests.test_build_command \
-  apps.analytics.tests.test_cron_safety
+  apps.analytics.tests.test_cron_safety \
+  apps.prescriptions.tests.test_multitenancy \
+  apps.users.tests.test_bootstrap \
+  apps.organizations.tests.test_views \
+  apps.patients.tests.test_pet_delete
 ```
 El `test_e2e.py` en la raíz de `backend/` requiere servidor corriendo — no se incluye en la suite normal.
 

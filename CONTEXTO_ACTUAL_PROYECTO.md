@@ -19,6 +19,8 @@ El proyecto está en fase de hardening avanzado. La base multitenant, autenticac
 - **Sprint 2026-05-07**: timeline editorial con Framer Motion (diario clínico agrupado año/mes, animaciones staggered, panel expandido rico), `public_id` en todas las URLs de medical records, `apiError` FIELD_MAP ampliado (30+ campos), RBAC UI usando `can_modify_charges`/`can_close` del backend, errores inline con cleanup onChange en stepper y vitales.
 - **Sprint analytics 2026-05-09 (ADR p9 + p10)**: contrato analítico v0.3 + auditoría de schema (catálogo de "analytics lies") + Capa 1 hardening (anchors writers en services, CHECK constraints, admin status readonly, DELETE bypass cerrado, MR save() guard) + Capa 2 anchor completeness (`Invoice.confirmed_at`/`cancelled_at`, `Appointment.walk_in`, provenance fields con 5 sources, backfill no-naive) + Capa 3 indexes (11 índices compuestos + EXPLAIN validation) + Capa 4 snapshots (`apps/analytics/`, `DailyOrgMetrics`, `apply_snapshot` idempotente, `is_bucket_frozen` único helper, advisory lock per-org en cron) + Capa 5 read endpoints JSON-first (`/api/v1/dashboard/operations/series/`, `/financial/series/`, cada datapoint tagged con `source`+`lifecycle_state`). 159 tests pasando, 0 regresiones.
 - **Sprint concurrencia 2026-05-16 (ADR p12)**: orden global de locks `MedicalRecord → Invoice → Presentation → InvoiceItem → MedicalRecordProduct` + `cancel_invoice()` con lock de Invoice + Presentations + `get_or_create_invoice_for_medical_record()` atómico + MR lockeado + `InvoiceDetailView.update()` bajo lock + `MedicalRecordProduct.save()` con parámetros `locked_presentation`/`previous_quantity` para evitar re-lock redundante + walk-in dedup con `pet=pet` + `walk_in=True`. Tests de concurrencia: 14 OK. Regresión amplia: 90 OK.
+- **Sprint Día 3 hardening 2026-05-16 (ADR p14)**: tenant validators P0 #8-9 en `InvoiceSerializer` (4 FKs) + `PrescriptionItemSerializer`/`WriteSerializer` (incluye chequeo `requires_prescription` después de tenant); helper local `_validate_same_org` con logger separado `apps.tenant_validation` evento `TENANT_VALIDATION_REJECTED`; Fix 4 PATCH partial con fallback a `instance` para owner/pet. 14 tests billing + 7 prescriptions.
+- **Sprint Día 4 hardening 2026-05-17 (ADR p15 + p16)**: PR-4A cerro Issues #12 + #13 (privilege escalation guard `_create_default_superuser` con predicado `is_platform_superuser` + TOCTOU race retry + email case-insensitive; `REST_FRAMEWORK.DEFAULT_PERMISSION_CLASSES = IsAuthenticated`; `PublicTokenRefreshView` con throttle). PR-4B cerro Issues #10 + #11 + entregables operacionales (OrganizationViewSet → singleton `/me/` + legacy `/<pk>/` con 410 Gone post-Sunset 2026-08-17; 5 FKs CASCADE→PROTECT — User.org, Pet.owner, MR.pet, VR.pet, Prescription.pet; handler ProtectedError bounded 409 con shape consistente; `audit_orphan_fks` mgmt command versioned con catch-all 32 targets via introspección; DELETE bloqueado en VaccineRecord/Prescription/Admin Org/Admin User). 294 tests pasando.
 
 ---
 
@@ -193,7 +195,7 @@ Estados válidos: `draft → confirmed → paid` y `draft/confirmed → cancelle
 
 ## 7) Tests
 
-Suite completa: **159 tests** en `backend/apps/`.
+Suite completa: **294 tests** en `backend/apps/` (1 skip esperado — dangling FK creation via SQL bloqueada por Postgres hard FK constraint).
 
 ```bash
 python manage.py test \
@@ -201,6 +203,10 @@ python manage.py test \
   apps.core.tests.test_sanitize \
   apps.core.tests.test_throttling \
   apps.core.tests.test_invoices \
+  apps.core.tests.test_default_permissions \
+  apps.core.tests.test_cascade_lockdown \
+  apps.core.tests.test_exception_handler \
+  apps.core.tests.test_audit_orphan_fks \
   apps.medical_records.tests.test_close \
   apps.medical_records.tests.test_vitals \
   apps.billing.tests.test_money \
@@ -214,7 +220,11 @@ python manage.py test \
   apps.dashboard.tests.test_series_endpoints \
   apps.analytics.tests.test_snapshot_v1 \
   apps.analytics.tests.test_build_command \
-  apps.analytics.tests.test_cron_safety
+  apps.analytics.tests.test_cron_safety \
+  apps.prescriptions.tests.test_multitenancy \
+  apps.users.tests.test_bootstrap \
+  apps.organizations.tests.test_views \
+  apps.patients.tests.test_pet_delete
 ```
 
 `test_e2e.py` en la raíz de `backend/` requiere servidor corriendo — no se incluye en la suite normal.
@@ -628,6 +638,76 @@ else:
 
 **Próximo**: PR-4B (Issue #10 organizations singleton + Issue #11 cascade + `ProtectedError` handler bounded).
 
+### Fixes aplicados 2026-05-17 (Día 4 PR-4B — cascade lockdown + singleton — ADR p16)
+
+**Issues #10 + #11 cerrados.** PR-4B del sprint pre-beta — 4 deliverables agrupados.
+
+**D1 — Issue #10 `OrganizationViewSet` refactor (`apps/organizations/views.py` + `config/urls.py`)**:
+- `ModelViewSet` reemplazado por `OrganizationMeView` (`/api/organizations/me/`, RetrieveUpdateAPIView singleton) + `OrganizationLegacyView` (`/api/organizations/<int:pk>/`, retrocompat 90 días).
+- Legacy view: validación EXPLÍCITA `pk == user.organization_id` → 404 si mismatch (NUNCA filtrado silencioso); headers RFC 8594 (`Deprecation`, `Sunset: 17-Aug-2026`, `Link`) en todo response; log `DEPRECATED_ENDPOINT_HIT` para tracking; **fail-safe automático 410 Gone post-Sunset** via `_EndpointSunsetException(APIException)` raised en `initial()`.
+- Router `register('organizations', ...)` removido — list/create/destroy responden 404.
+- Guard `user.organization=None` en `OrganizationMeView.get_object()` previene crash silencioso al serializar None.
+
+**D2 — Issue #11 CASCADE → PROTECT (5 FKs, 4 migrations)**:
+- `User.organization`, `Pet.owner`, `MedicalRecord.pet`, `VaccineRecord.pet` + **`Prescription.pet`** (agregado al scope por database-architect post-review para consistencia NOM-046 con VaccineRecord).
+- Migrations metadata-only (Postgres no recrea constraint), lock corto, reversibles.
+
+**D3 — Handler `ProtectedError` bounded (`apps/core/exceptions.py`)**:
+- `isinstance(exc, ProtectedError)` exacto (captura subclases como `RestrictedError`).
+- Probe `[:6]` vía `itertools.islice` (`protected_objects` es set, no subscriptable).
+- COUNT solo si saturado, hard cap 1000; shape **consistente**: `protected_count: int` siempre + `protected_count_truncated: bool` separado (sin alternar str numérico/literal).
+- Sample dict `{type, id, public_id}` — NUNCA `str(obj)` (PII leak + N+1).
+- Status **409 Conflict** (override ADR p15 §8 — semántica REST por sobre conveniencia frontend, decisión usuario).
+
+**D4 — `audit_orphan_fks` mgmt command (`apps/core/management/commands/`)**:
+- Infraestructura crítica versionada: `SCHEMA_VERSION="1.0.0"`, exit codes 0/1/2 documentados, dual output (JSON stdout + log stderr estructurado).
+- **Cobertura catch-all 32 targets**: 13 cross-model PROTECT explícitos + 19 `OrganizationalModel.organization` heredados (introspección automática vía `_collect_inherited_org_fks()` — evita drift cuando se añade nuevo OrganizationalModel).
+- **Defense vs soft-delete (security HIGH)**: usa `all_objects` no `objects` — evita falsos positivos cuando parent soft-deleted con children activos.
+- Runbook obligatorio: `docs/runbooks/audit_orphan_fks.md`.
+
+**D5 — Guards `is_generic` + lockdown DELETE asimétrico**:
+- `OwnerViewSet.destroy` guard `is_generic=True` paralelo al de `PetViewSet`. Shape `{code: 'generic_resource_protected', message: ...}` 409 — alineado a handler global.
+- `VaccineRecordDetailView` + `PrescriptionDetailView` removido DELETE (`http_method_names=['get','patch','head','options']`) — post-senior-qa HIGH: lockdown asimétrico (Pet protegido, documento child borrable directo) contradice motivación NOM-007/046.
+- Admin Django: `OrganizationAdmin` + `CustomUserAdmin` con `has_delete_permission=False` — admin NO pasa por `custom_exception_handler`, evita traceback técnico al operador post-PROTECT.
+
+**Decisiones rechazadas (documentadas en ADR p16):**
+- ❌ Soft-delete A5 en este PR — 5-7 días sprint, blast radius incompatible pre-beta. Frontend pivot a "Archivar/Desactivar" (separate PR).
+- ❌ Status 400 ProtectedError (consistencia frontend) — semántica REST 409 correcta.
+- ❌ Scope sin `Prescription.pet` — inconsistencia NOM-046 visible.
+- ❌ `str(obj)` en handler sample — PII leak + N+1 vía `__str__` lazy.
+- ❌ `type(exc) is ProtectedError` — no captura subclases. `isinstance()` estándar.
+- ❌ Headers Sunset sin fail-safe automático — "deprecation" voluntaria sin enforcement.
+- ❌ Lista AUDIT_TARGETS sin introspección — drift permanente.
+- ❌ DELETE permitido en VaccineRecord/Prescription — lockdown asimétrico.
+
+**Deuda generada (visible en `docs/deuda/`):**
+- 🔴 **Fase 2 (post-beta inmediato)**: D2 (sunset tracking), D5 (`OrgTimezoneAudit` CASCADE→SET_NULL), D6 (`Prescription.medical_record` CASCADE→SET_NULL), D7 (`StockMovement.presentation` CASCADE→SET_NULL).
+- 🟠 **Operacional**: D3 (CI gate exit-code `audit_orphan_fks`).
+- 🟡 **Cuando se escale**: C1 (NOT VALID + VALIDATE split para migrations en tablas > 1M filas).
+
+**Reviews aplicados (ola 2)**:
+- Senior-backend-architect (PRINCIPAL diseño): 16 secciones, scope completo.
+- Database-architect: detectó `Prescription.pet` faltante en scope + uso de `str(obj)` PII leak + `protected_objects` es set no subscriptable.
+- Security-auditor: 3 HIGH aplicados (guard null org, 410 Gone fail-safe, audit `all_objects` vs `objects`).
+- Code-reviewer: 3 HIGH aplicados (`isinstance` no `type is`, shape consistente protected_count, doc `<int:pk>` excepción Organization).
+- Senior-qa: 1 BLOCKER (`test_pet_delete.py` asserts viejos) + 3 HIGH (admin DELETE x2, child DELETE x2, doc desactualizado) — todos aplicados.
+
+**Tests nuevos**:
+- `apps/organizations/tests/test_views.py` — 12 tests (singleton + legacy + 410 Gone + guard null org + headers + log)
+- `apps/core/tests/test_cascade_lockdown.py` — 9 tests (5 PROTECT por FK + 2 smoke positivos + 2 DELETE bloqueado VR/Rx)
+- `apps/core/tests/test_exception_handler.py` — 8 tests (shape canónico, dict no str, saturated/non-saturated, regresión IntegrityError no-handled)
+- `apps/core/tests/test_audit_orphan_fks.py` — 6 tests (clean DB exit 0, paridad targets, cross-tenant detect, schema version)
+- `apps/patients/tests/test_pet_delete.py` — actualizados al shape nuevo `{code, message, protected_count, ...}`
+
+**Resultados**: 40/40 nuevos + 287/287 regresión OK.
+
+**Documentación nueva**:
+- `docs/decisions/2026-05-17-p16-pr4b-cascade-and-singleton.md` — ADR completo
+- `docs/runbooks/audit_orphan_fks.md` — runbook operacional
+- `docs/deuda/fase2-prioridad-alta.md` — D2, D5, D6, D7 añadidos
+
+**Próximo**: dark-launch 7 días en staging → merge a main → monitor `DEPRECATED_ENDPOINT_HIT` rate → 2026-08-17 fail-safe 410 Gone automático activo.
+
 ---
 
 ## 11) Índice de ADRs (decisiones de arquitectura)
@@ -653,4 +733,5 @@ else:
 | `2026-05-16-p12-concurrency-lock-order-hardening.md` | 05-16 | Orden global de locks + hardening concurrencia Día 1-2 | Implementado |
 | `2026-05-16-p13-day12-concurrency-remediation.md` | 05-16 | Remediación post-review Día 1-2 (helper F() + asserts + tenant filter + docstring) | Implementado |
 | `2026-05-16-p14-tenant-validators-day3.md` | 05-16 | Día 3 — tenant validators P0 #8-9 + Fix 4 PATCH partial + plan Fase 2 mixin | Implementado |
-| `2026-05-17-p15-day4-cascade-lockdown.md` | 05-17 | Día 4 — PR-4A: privilege escalation guard + default IsAuthenticated. PR-4B (cascade + ProtectedError handler) pendiente | Parcial (PR-4A) |
+| `2026-05-17-p15-day4-cascade-lockdown.md` | 05-17 | Día 4 — PR-4A: privilege escalation guard + default IsAuthenticated. PR-4B (cascade + ProtectedError handler) pendiente | Implementado (PR-4A merged) |
+| `2026-05-17-p16-pr4b-cascade-and-singleton.md` | 05-17 | Día 4 — PR-4B: Organization singleton (`/me/` + legacy 410 Gone) + 5 FKs CASCADE→PROTECT + ProtectedError handler bounded + audit_orphan_fks versioned | Implementado (dark-launch 7 días) |

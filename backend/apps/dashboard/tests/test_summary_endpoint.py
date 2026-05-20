@@ -9,6 +9,7 @@ from rest_framework.test import APITestCase
 
 from apps.appointments.models import Appointment
 from apps.billing.models import Invoice
+from apps.analytics.models import METRICS_SCHEMA_VERSION
 from apps.core.models import Permission, Role, UserRole
 from apps.core.permissions_codes import PERMISSION_CODES, PERMISSIONS
 from apps.inventory.models import Presentation, Product
@@ -290,3 +291,40 @@ class DashboardSummaryTests(APITestCase):
         self.assertEqual(r.data['kpis']['patients_today'], 0)
         self.assertEqual(r.data['backlog']['open_total'], 0)
         self.assertEqual(len(r.data['stock_alerts']), 0)
+
+    # ------------------------------------------------------------------
+    # T12 — Cache invalidation on Invoice change
+    # ------------------------------------------------------------------
+    def test_ar_outstanding_invalidated_after_pay_invoice(self):
+        from apps.billing.services import pay_invoice
+
+        invoice = Invoice.objects.create(
+            owner=self.owner, pet=self.pet, status='confirmed',
+            total=Decimal('800.00'), tax_rate=self.org.tax_rate,
+            tax_amount=Decimal('0.00'), subtotal=Decimal('800.00'),
+            confirmed_at=timezone.now(), organization=self.org,
+        )
+
+        self.client.force_authenticate(self.admin)
+        r = self.client.get(SUMMARY_URL)
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data['kpis']['ar_outstanding'], '800.00')
+
+        pay_invoice(invoice, self.admin, 'cash')
+        cache.clear()
+
+        r = self.client.get(SUMMARY_URL)
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data['kpis']['ar_outstanding'], '0.00')
+
+    # ------------------------------------------------------------------
+    # T13 — Response structure for schema_version + source
+    # ------------------------------------------------------------------
+    def test_summary_response_has_schema_version_and_source(self):
+        self.client.force_authenticate(self.vet)
+        r = self.client.get(SUMMARY_URL)
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertIn('metrics_schema_version', r.data)
+        self.assertIn('source', r.data)
+        self.assertEqual(r.data['metrics_schema_version'], METRICS_SCHEMA_VERSION)
+        self.assertEqual(r.data['source'], 'live_summary')

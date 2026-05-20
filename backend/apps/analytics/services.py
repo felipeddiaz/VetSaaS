@@ -3,22 +3,32 @@ Capa 4 minimal v1 snapshot services.
 
 Public surface (use ONLY these from outside the module):
 - is_bucket_frozen(metric_class, bucket_date, organization, *, now=None) → bool
-- compute_daily_metrics(organization, bucket_date) → dict (pure; no writes)
-- apply_snapshot(organization, bucket_date, *, force=False, user=None) → DailyOrgMetrics
+- compute_daily_metrics(organization, bucket_date, *, now=None) → dict (pure; no writes)
+- apply_snapshot(organization, bucket_date, *, force=False, user=None, now=None) → DailyOrgMetrics
 - TODAY_REJECTED — exception raised when caller asks for "today" snapshot
+- _analytics_queryset(model_cls) → manager (resolve visibility policy)
+- ANALYTICS_VISIBILITY — static policy registry (governed, ADR p17)
+- ANCHOR_REGISTRY — static anchor metadata (governed, ADR p17)
 
 Design rules:
 - Single helper for freeze decisions. No timezone.now() scattered. DST,
   rebuilds, late imports, TZ changes all touch ONE function.
+- now is an argument, never a side-effect. timezone.now() is called ONCE
+  at the entry point (mgmt command or HTTP view) and threaded through every
+  helper that needs it. No internal re-read of timezone.now().
 - compute_daily_metrics is pure: same inputs → same outputs (modulo source
   data changes between calls). Idempotency tests rely on this.
 - apply_snapshot writes only when computed values differ from existing row.
   built_at advances on every write. lifecycle_state transitions are logged.
-- "today" is never snapshotted. Today belongs to live aggregates per the
+- \"today\" is never snapshotted. Today belongs to live aggregates per the
   contract. Caller gets a TODAY_REJECTED.
 - corrupt rows are NOT silently dropped. They are persisted with
   lifecycle_state='corrupt' so audit endpoints can surface them.
+- ANALYTICS_VISIBILITY and ANCHOR_REGISTRY are separate static constants.
+  Neither uses callables, lambdas, dynamic imports, or runtime registration.
+  Modifications require ADR + impact analysis + PO sign-off for financial metrics.
 """
+from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
 import logging
@@ -72,6 +82,89 @@ V1_TABLE_FREEZE_DAYS = max(METRIC_CLASS_FREEZE_DAYS.values())
 
 
 # ---------------------------------------------------------------------------
+# ANALYTICS_VISIBILITY — static policy registry (ADR p17).
+#
+# Maps model → visibility policy for analytics-side reads.
+# Governance is BINDING: modifications require ADR + impact analysis +
+# PO sign-off if financial metrics are affected. DO NOT add lambdas,
+# callables, dynamic imports, or plugin hooks.
+#
+# Policies:
+#   'historical' → model_cls.all_objects (count all rows, active or inactive)
+#
+# Future (DO NOT add without ADR):
+#   'historical_excluding_voided' → when voided_at column exists
+#   'historical_excluding_archived' → when archived_at column exists
+# ---------------------------------------------------------------------------
+ANALYTICS_VISIBILITY = {
+    'billing.Invoice':                'historical',
+    'medical_records.MedicalRecord':  'historical',
+    'appointments.Appointment':       'historical',
+    'medical_records.VaccineRecord':  'historical',
+}
+
+
+def _analytics_queryset(model_cls):
+    """
+    Resolve the correct manager for an analytics-side read per ANALYTICS_VISIBILITY.
+
+    Returns a manager (e.g. model_cls.all_objects) that the caller then chains
+    with .filter(organization=org, ...).
+    """
+    dotted = f"{model_cls._meta.app_label}.{model_cls.__name__}"
+    policy = ANALYTICS_VISIBILITY[dotted]
+    if policy == 'historical':
+        return model_cls.all_objects
+    raise NotImplementedError(f"Policy {policy!r} requires ADR.")
+
+
+# ---------------------------------------------------------------------------
+# ANCHOR_REGISTRY — static anchor metadata (ADR p17).
+#
+# Describes every temporal anchor used by analytics computations.
+# compute_daily_metrics, analytics_health, and audit_anchor_integrity
+# derive their anchor lists from here. Replaces the parallel duplicated
+# arrays that existed before Día 5.
+#
+# Governance identical to ANALYTICS_VISIBILITY:
+# - Metadata static only (strings, dataclass fields).
+# - No callables, no runtime registration.
+# - New entries require ADR + impact analysis.
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class AnchorSpec:
+    model: str               # 'billing.Invoice'
+    anchor_field: str        # 'paid_at'
+    source_field: str        # 'paid_at_source'
+    status_filter: dict      # {'status': 'paid'} or {'status__in': [...]}
+    metric_class: str        # 'financial_cash' | 'clinical' | 'operational'
+
+
+ANCHOR_REGISTRY = (
+    AnchorSpec(model='billing.Invoice',
+               anchor_field='paid_at',
+               source_field='paid_at_source',
+               status_filter={'status': 'paid'},
+               metric_class='financial_cash'),
+    AnchorSpec(model='billing.Invoice',
+               anchor_field='confirmed_at',
+               source_field='confirmed_at_source',
+               status_filter={'status__in': ['confirmed', 'paid']},
+               metric_class='financial_cash'),
+    AnchorSpec(model='billing.Invoice',
+               anchor_field='cancelled_at',
+               source_field='cancelled_at_source',
+               status_filter={'status': 'cancelled'},
+               metric_class='financial_cash'),
+    AnchorSpec(model='medical_records.MedicalRecord',
+               anchor_field='closed_at',
+               source_field='closed_at_source',
+               status_filter={'status': 'closed'},
+               metric_class='clinical'),
+)
+
+
+# ---------------------------------------------------------------------------
 # Freeze helper — single source of truth.
 # ---------------------------------------------------------------------------
 def is_bucket_frozen(metric_class, bucket_date, organization, *, now=None):
@@ -102,10 +195,14 @@ def is_bucket_frozen(metric_class, bucket_date, organization, *, now=None):
 # ---------------------------------------------------------------------------
 # Pure computation — no writes.
 # ---------------------------------------------------------------------------
-def compute_daily_metrics(organization, bucket_date):
+def compute_daily_metrics(organization, bucket_date, *, now=None):
     """
     Compute the seven v1 KPIs for (organization, bucket_date). Returns a dict
     plus diagnostic counters. Does NOT touch DailyOrgMetrics / DashboardSnapshotAudit.
+
+    ``now`` is accepted for signature symmetry with other analytics functions.
+    The computation itself does not depend on ``now`` — it uses ``bucket_date``
+    directly for UTC day bounds.
     """
     from apps.appointments.models import Appointment
     from apps.billing.models import Invoice
@@ -114,7 +211,7 @@ def compute_daily_metrics(organization, bucket_date):
     start_utc, end_utc = local_day_bounds_utc(organization, bucket_date)
 
     # ---- Financial cash basis: anchored on paid_at ----
-    invoice_paid_agg = Invoice.objects.filter(
+    invoice_paid_agg = _analytics_queryset(Invoice).filter(
         organization=organization,
         status='paid',
         paid_at__gte=start_utc,
@@ -128,14 +225,14 @@ def compute_daily_metrics(organization, bucket_date):
 
     # Defensive: rows that match the status filter but somehow have NULL anchor.
     # Should be 0 post-Capa 1 CHECK constraints; keep as instrumentation.
-    excluded_paid_anchor_missing = Invoice.objects.filter(
+    excluded_paid_anchor_missing = _analytics_queryset(Invoice).filter(
         organization=organization,
         status='paid',
         paid_at__isnull=True,
     ).count()
 
     # ---- Financial accrual: anchored on confirmed_at ----
-    accrual_agg = Invoice.objects.filter(
+    accrual_agg = _analytics_queryset(Invoice).filter(
         organization=organization,
         status__in=['confirmed', 'paid'],
         confirmed_at__gte=start_utc,
@@ -143,14 +240,14 @@ def compute_daily_metrics(organization, bucket_date):
     ).aggregate(rev=Sum('total'))
     revenue_accrual = accrual_agg['rev'] or Decimal('0.00')
 
-    excluded_confirmed_anchor_missing = Invoice.objects.filter(
+    excluded_confirmed_anchor_missing = _analytics_queryset(Invoice).filter(
         organization=organization,
         status__in=['confirmed', 'paid'],
         confirmed_at__isnull=True,
     ).count()
 
     # ---- Operational: anchored on Appointment.start_datetime ----
-    appt_agg = Appointment.objects.filter(
+    appt_agg = _analytics_queryset(Appointment).filter(
         organization=organization,
         start_datetime__gte=start_utc,
         start_datetime__lt=end_utc,
@@ -161,14 +258,14 @@ def compute_daily_metrics(organization, bucket_date):
     )
 
     # ---- Clinical: medical records closed (anchored on closed_at) ----
-    mr_closed = MedicalRecord.objects.filter(
+    mr_closed = _analytics_queryset(MedicalRecord).filter(
         organization=organization,
         status='closed',
         closed_at__gte=start_utc,
         closed_at__lt=end_utc,
     ).count()
 
-    excluded_closed_anchor_missing = MedicalRecord.objects.filter(
+    excluded_closed_anchor_missing = _analytics_queryset(MedicalRecord).filter(
         organization=organization,
         status='closed',
         closed_at__isnull=True,
@@ -182,7 +279,7 @@ def compute_daily_metrics(organization, bucket_date):
 
     # ---- Provenance mix for the rows that fed this snapshot ----
     paid_prov = _provenance_breakdown(
-        Invoice.objects.filter(
+        _analytics_queryset(Invoice).filter(
             organization=organization,
             status='paid',
             paid_at__gte=start_utc,
@@ -191,7 +288,7 @@ def compute_daily_metrics(organization, bucket_date):
         'paid_at_source',
     )
     confirmed_prov = _provenance_breakdown(
-        Invoice.objects.filter(
+        _analytics_queryset(Invoice).filter(
             organization=organization,
             status__in=['confirmed', 'paid'],
             confirmed_at__gte=start_utc,
@@ -200,7 +297,7 @@ def compute_daily_metrics(organization, bucket_date):
         'confirmed_at_source',
     )
     closed_prov = _provenance_breakdown(
-        MedicalRecord.objects.filter(
+        _analytics_queryset(MedicalRecord).filter(
             organization=organization,
             status='closed',
             closed_at__gte=start_utc,
@@ -295,7 +392,7 @@ def apply_snapshot(organization, bucket_date, *, force=False, user=None, now=Non
         )
         return existing
 
-    computed = compute_daily_metrics(organization, bucket_date)
+    computed = compute_daily_metrics(organization, bucket_date, now=now)
 
     target_lifecycle = (
         LIFECYCLE_CORRUPT if computed['excluded_anchor_missing'] > 0

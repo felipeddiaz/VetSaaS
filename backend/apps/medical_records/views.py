@@ -35,6 +35,45 @@ from .serializers import (
 events_logger = logging.getLogger("medical_records.events")
 
 
+def _warn_if_late_closed_at(organization, closed_at):
+    """
+    Late-arrival observability for MedicalRecord.closed_at (ADR p17 Día 5,
+    warn-only phase).
+
+    Emits an ``ANCHOR_LATE_ARRIVAL`` warning on the ``analytics.events``
+    logger when ``closed_at`` falls in a bucket already considered frozen
+    for the ``clinical`` metric class. Side-effect free if the bucket is
+    still in the open window.
+
+    TEMPORAL: this helper lives in ``views.py`` because there is no
+    ``medical_records/services.py::close_medical_record_service()`` yet
+    (ADR p9 violation acknowledged in ADR p17 §Deuda). When that service
+    exists, this helper migrates there.
+    """
+    from apps.analytics.services import is_bucket_frozen
+    from apps.core.datetime_utils import org_today_local
+
+    closed_date = org_today_local(organization, now=closed_at)
+    if not is_bucket_frozen('clinical', closed_date, organization):
+        return
+    today = org_today_local(organization)
+    age_days = max(0, (today - closed_date).days)
+    logging.getLogger('analytics.events').warning(
+        'ANCHOR_LATE_ARRIVAL',
+        extra={
+            'event': 'ANCHOR_LATE_ARRIVAL',
+            'anchor_field': 'closed_at',
+            'anchor_value_iso': closed_at.isoformat(),
+            'bucket_date_local_iso': closed_date.isoformat(),
+            'frozen_threshold_days': 2,
+            'age_days': age_days,
+            'organization_id': organization.pk,
+            'writer': 'close_medical_record',
+            'metric_class': 'clinical',
+        },
+    )
+
+
 class MedicalRecordPagination(PageNumberPagination):
     page_size = 10
     page_size_query_param = 'page_size'
@@ -440,6 +479,11 @@ def close_medical_record(request, pk):
             'status', 'closed_at', 'closed_at_source', 'closed_by',
         ])
 
+        # Late-arrival observability (ADR p17 Día 5, warn-only).
+        # Call lives inside the active transaction so the log only emits
+        # if commit succeeds (a rollback unwinds before the helper runs).
+        _warn_if_late_closed_at(medical_record.organization, medical_record.closed_at)
+
         events_logger.info(
             "MEDICAL_RECORD_CLOSED",
             extra={
@@ -474,10 +518,16 @@ class VaccineRecordListCreateView(TenantQueryMixin, generics.ListCreateAPIView):
         )
 
 
-class VaccineRecordDetailView(TenantQueryMixin, generics.RetrieveUpdateDestroyAPIView):
+class VaccineRecordDetailView(TenantQueryMixin, generics.RetrieveUpdateAPIView):
+    """PR-4B / ADR p16: DELETE removido por consistencia con la motivación
+    NOM-007/NOM-046 que justificó VaccineRecord.pet PROTECT. Permitir borrar
+    el registro vacunal directamente contradice "vacuna es documento legal
+    retenido 5 años". Para anular un registro creado por error, usar PATCH
+    (campo notes / status) — soft-delete real es deuda A5 (Fase 2)."""
     serializer_class = VaccineRecordSerializer
     permission_classes = [HybridPermission]
     resource_name = "vaccinerecord"
+    http_method_names = ['get', 'patch', 'head', 'options']
 
     def get_queryset(self):
         return VaccineRecord.objects.for_organization(

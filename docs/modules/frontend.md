@@ -93,6 +93,16 @@ error: (err) => apiError(err, "Error inesperado")
 
 `apiError` extrae el primer mensaje legible en este orden: 429 → detail → error → errors[] → errors{} → message → fallback.
 
+**Shape canónico de errores backend (PR-4B / ADR p16):**
+- Validación (400): `{code: 'validation_error', errors: {field: [messages]}}`
+- Acceso/permisos (403): `{code: 'permission_denied', message}`
+- No encontrado (404): `{code: 'not_found', message}`
+- Conflicto de estado/integridad (409): `{code: 'resource_has_dependencies', message, protected_count: int, protected_count_truncated: bool, protected_sample: [{type, id, public_id}]}` (cuando el backend bloquea por FK PROTECT)
+- Conflicto de recurso genérico (409): `{code: 'generic_resource_protected', message}` (cuando se intenta borrar Owner/Pet genérico)
+- Endpoint deprecado removido (410): `{code: 'endpoint_sunset', message}` (post-Sunset RFC 8594, e.g. `/api/organizations/<pk>/` post-2026-08-17)
+
+Frontend debe distinguir por `code` field, no por status code. El handler `apiError` ya extrae `message` correctamente. Para mostrar acción específica (e.g. "este registro tiene 5 mascotas asociadas"), parsear `protected_count` y `protected_sample`.
+
 ### Manejo centralizado de errores de formularios
 
 - Utilities:

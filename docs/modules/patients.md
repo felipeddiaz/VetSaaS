@@ -29,7 +29,7 @@ Campos:
 - `birth_date` — fecha de nacimiento (obligatoria para nuevos registros)
 - `sex` — choices: `male`, `female`, `unknown`
 - `color` — color (opcional, seleccion en frontend)
-- `owner` — FK a Owner (CASCADE)
+- `owner` — FK a Owner (**PROTECT** desde PR-4B / ADR p16 — antes CASCADE)
 - `is_generic` — marca a la mascota genérica "Paciente Anónimo" de la organización
 
 Existe exactamente una mascota genérica por organización (creada via signal junto al owner genérico).
@@ -113,7 +113,20 @@ Es un flujo de mínimo viable para no interrumpir la agenda.
 
 ## Relacion con otros modulos
 
-- **Citas**: `Appointment.pet` es FK obligatoria (puede ser genérica en walk-in anónimo)
-- **Historial clinico**: `MedicalRecord.pet` es FK obligatoria
-- **Cobros**: `Invoice.owner` es FK obligatoria; `Invoice.pet` es nullable cuando `owner.is_generic = True`
-- **Vacunas**: `VaccineRecord.pet` es FK — ver modulo de historial clinico
+- **Citas**: `Appointment.pet` es FK obligatoria PROTECT (puede ser genérica en walk-in anónimo)
+- **Historial clinico**: `MedicalRecord.pet` es FK obligatoria **PROTECT** (PR-4B)
+- **Cobros**: `Invoice.owner` PROTECT obligatoria; `Invoice.pet` PROTECT nullable cuando `owner.is_generic = True`
+- **Vacunas**: `VaccineRecord.pet` es FK **PROTECT** (PR-4B) — ver modulo de historial clinico
+- **Recetas**: `Prescription.pet` es FK **PROTECT** (PR-4B) — ver modulo de prescripciones
+
+## Cascade lockdown (PR-4B / ADR p16)
+
+`Pet.owner` paso de CASCADE a PROTECT. Justificacion: borrar un Owner cascadeaba todas sus Pets → MedicalRecords → todo el historial clinico (violacion NOM-046, retencion 5 anos).
+
+Comportamiento DELETE actual:
+- `DELETE /api/owners/<public_id>/` con pets asociadas → **409 Conflict** con shape canonico `{code: 'resource_has_dependencies', message, protected_count, protected_count_truncated, protected_sample}` (handler bounded probe `[:6]`).
+- `DELETE /api/pets/<public_id>/` con historial (MR/vaccines/prescriptions/appointments/invoices) → **409 Conflict** mismo shape.
+- Pet generico (`is_generic=True`) → **409 Conflict** con `code: 'generic_resource_protected'` (guard explicito antes del PROTECT-bound DB error).
+- Owner generico (`is_generic=True`) → **409 Conflict** mismo guard.
+
+Frontend pivotara a "Archivar/Desactivar" usando `is_active=False` (separate PR). Soft-delete real es deuda Fase 2 A5.

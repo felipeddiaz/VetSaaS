@@ -1,5 +1,6 @@
 import uuid
 import logging
+from itertools import islice
 from django.db.models.deletion import ProtectedError
 from django.http import Http404 as DjangoHttp404
 from rest_framework.views import exception_handler
@@ -48,14 +49,11 @@ def custom_exception_handler(exc, context):
     if isinstance(exc, DjangoHttp404):
         exc = NotFound()
 
+    # isinstance() acepta subclases (ej. RestrictedError de Django 4.1+ que
+    # es subclase de ProtectedError). Si una subclase específica requiriera
+    # tratamiento distinto, agregar branch separado ANTES de este isinstance.
     if isinstance(exc, ProtectedError):
-        return Response(
-            {
-                'code': 'protected_resource',
-                'error': 'No se puede eliminar este registro porque tiene información asociada.',
-            },
-            status=status.HTTP_409_CONFLICT,
-        )
+        return _handle_protected_error(exc)
 
     response = exception_handler(exc, context)
 
@@ -110,3 +108,98 @@ def custom_exception_handler(exc, context):
 
 def _clean_message(msg: str) -> str:
     return 'Valor inválido.' if any(m in msg for m in _ENGLISH_MARKERS) else msg
+
+
+# Bounded probe / hard cap del handler ProtectedError (PR-4B / ADR p16).
+# - PROBE_LIMIT: si list(exc.protected_objects[:N]) devuelve N elementos sabemos
+#   que hay "al menos N" sin pagar el queryset completo (que en una org con
+#   miles de relaciones puede ser costoso de materializar).
+# - COUNT_CAP: solo se ejecuta count() si el probe está saturado. El cap
+#   evita full-table scan en escenarios extremos: si supera el cap se reporta
+#   ">N" sin la cifra exacta.
+_PROTECTED_PROBE_LIMIT = 6
+_PROTECTED_COUNT_CAP = 1000
+_PROTECTED_SAMPLE_LIMIT = 5
+
+
+def _handle_protected_error(exc: ProtectedError) -> Response:
+    """
+    Mapea django.db.models.deletion.ProtectedError a 409 Conflict con shape
+    canónico del proyecto (ADR p16 override de p15 §8 — semántica REST por
+    sobre conveniencia frontend).
+
+    Diseño defensivo:
+    - isinstance EXACTO con ProtectedError (no IntegrityError/Exception broad)
+      via type(exc) is ProtectedError en el caller — esto evita ocultar bugs
+      de constraint, deadlock, FK compuestos, etc.
+    - Probe via islice(): `exc.protected_objects` es un `set` (Django Collector
+      lo materializa), no es subscriptable — usar islice para tomar primeros N
+      sin convertir el set completo.
+    - COUNT solo si probe saturado. Como `protected_objects` es set ya en
+      memoria, len() es O(1) — sin query a DB. El "cap 1000" queda como
+      defensa para casos futuros donde el handler pudiera recibir un
+      queryset-like (forward-compat). Para set: si len > 1000, reporta
+      ">1000" en lugar del número exacto (consistencia de shape).
+    - Sample con dict {type, id, public_id} — NUNCA str(obj). Razones:
+      a) PII leak: __str__ de Pet/Owner expone nombres en respuesta de error
+      b) N+1: si __str__ accede relations (self.owner.name) → query extra
+         por cada objeto del sample
+      c) Determinismo: shape estable para parsers frontend
+    """
+    objects = exc.protected_objects
+    probe = list(islice(objects, _PROTECTED_PROBE_LIMIT))
+    saturated = len(probe) >= _PROTECTED_PROBE_LIMIT
+
+    # Shape consistente para frontend (code-reviewer HIGH):
+    # - protected_count: SIEMPRE int (cardinalidad real cuando se conoce;
+    #   _PROTECTED_COUNT_CAP cuando se trunca arriba del cap).
+    # - protected_count_truncated: bool — true si la cifra fue capped.
+    # Sin esta separación, count alternaba entre "3" (str numérico) y ">1000"
+    # (str literal), forzando dos parsers en el cliente.
+    protected_count = len(probe)
+    protected_count_truncated = False
+
+    if saturated:
+        try:
+            if hasattr(objects, 'all') and hasattr(objects, 'filter'):
+                # Queryset-like — slicing DB-side con LIMIT cap+1.
+                bounded = objects.all()[:_PROTECTED_COUNT_CAP + 1].count()
+            else:
+                # Set/list ya en memoria (caso común — Django Collector).
+                # len() es O(1) sin query.
+                bounded = len(objects)
+            if bounded > _PROTECTED_COUNT_CAP:
+                protected_count = _PROTECTED_COUNT_CAP
+                protected_count_truncated = True
+            else:
+                protected_count = bounded
+        except Exception:
+            # Si el count falla (timeout, schema raro), degradar reportando
+            # al menos PROBE_LIMIT - 1 con truncated=True (cliente sabe que
+            # la cifra real es ≥ PROBE_LIMIT).
+            logger.warning(
+                "ProtectedError count fallback — degraded to probe size",
+                exc_info=True,
+            )
+            protected_count = _PROTECTED_PROBE_LIMIT - 1
+            protected_count_truncated = True
+
+    sample = [
+        {
+            'type': type(obj)._meta.label,
+            'id': obj.pk,
+            'public_id': str(getattr(obj, 'public_id', '') or '') or None,
+        }
+        for obj in probe[:_PROTECTED_SAMPLE_LIMIT]
+    ]
+
+    return Response(
+        {
+            'code': 'resource_has_dependencies',
+            'message': 'No se puede eliminar este registro porque tiene información asociada.',
+            'protected_count': protected_count,
+            'protected_count_truncated': protected_count_truncated,
+            'protected_sample': sample,
+        },
+        status=status.HTTP_409_CONFLICT,
+    )

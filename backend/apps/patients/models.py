@@ -38,7 +38,7 @@ class Pet(PublicIdMixin, OrganizationalModel):
 
     owner = models.ForeignKey(
         Owner,
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         related_name="pets"
     )
 

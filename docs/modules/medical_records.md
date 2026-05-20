@@ -68,6 +68,37 @@ Al cerrar via `close_medical_record` view (POST `/api/medical-records/<uuid>/clo
 
 > **Deuda técnica:** `close_medical_record` actualmente escribe `closed_at` desde la **view**, no desde un service. Viola ADR p9 (single authoritative writer en `services.py`). El `_source='service'` es técnicamente falso. Migración planificada — ver [deuda A3](../deuda/fase2-prioridad-alta.md#a3---closed_at-writer-fuera-de-service-medical_recordsviewspy432).
 
+### Late-arrival observability (ADR p17 — Día 5)
+
+Después de setear `closed_at`, la view invoca el helper module-level
+`_warn_if_late_closed_at(organization, closed_at)` (en el mismo `transaction.atomic()`).
+
+El helper emite `ANCHOR_LATE_ARRIVAL` (WARNING) en el logger `analytics.events`
+si `closed_at` cae en un bucket ya frozen para el metric_class `clinical`
+(threshold T+2 días). Side-effect free si el bucket está abierto.
+
+Estructura del log (contrato operacional — ver `docs/modules/analytics.md`):
+
+```python
+extra = {
+    'event': 'ANCHOR_LATE_ARRIVAL',
+    'anchor_field': 'closed_at',
+    'anchor_value_iso': '<iso8601>',
+    'bucket_date_local_iso': '<YYYY-MM-DD>',
+    'frozen_threshold_days': 2,
+    'age_days': <int>,
+    'organization_id': <int>,
+    'writer': 'close_medical_record',
+    'metric_class': 'clinical',
+}
+```
+
+Día 5 = warn-only. Hard reject (`LateAnchorError`) queda para Día 7+.
+
+El helper vive temporalmente en `views.py` por consistencia con la deuda A3
+(no existe `services.py::close_medical_record_service` todavía). Migrará junto
+con el writer cuando esa deuda se cierre.
+
 ## Recetas medicas
 
 La receta medica es un documento clinico independiente de la factura.
@@ -472,7 +503,7 @@ Ahora existe el modelo `VaccineRecord` con datos reales.
 ### Modelo
 
 Campos:
-- `pet` — FK a Pet (CASCADE)
+- `pet` — FK a Pet (**PROTECT** desde PR-4B / ADR p16 — antes CASCADE; justificacion NOM-007/046 retencion vacunal)
 - `vaccine_name` — nombre de la vacuna (requerido, no puede estar vacio)
 - `application_date` — fecha de aplicacion (no puede ser futura)
 - `next_due_date` — fecha de proximo refuerzo (opcional; si se envia, debe ser posterior a `application_date`)
@@ -506,12 +537,29 @@ El estado no se almacena en DB. Se calcula como propiedad:
 | `POST`   | `/api/vaccines/`             | Registrar vacuna                         |
 | `GET`    | `/api/vaccines/<id>/`        | Detalle                                  |
 | `PATCH`  | `/api/vaccines/<id>/`        | Editar                                   |
-| `DELETE` | `/api/vaccines/<id>/`        | Eliminar                                 |
+
+**DELETE removido en PR-4B / ADR p16**: el registro vacunal es documento legal (NOM-007/046) — bloquear borrado directo es consistente con la motivacion del flip `VaccineRecord.pet` → PROTECT. `DELETE /api/vaccines/<id>/` ahora responde **405**. Para anular un registro creado por error, usar `PATCH` (campo `notes`); soft-delete real es deuda Fase 2 A5.
 
 ### Indice
 
 Se usa `Index(fields=['pet', 'vaccine_name'])` para optimizar queries frecuentes de historial de vacunacion por mascota.
 El ordenamiento es `-application_date, -id` para desambiguar registros con la misma fecha.
+
+## Cascade lockdown (PR-4B / ADR p16)
+
+| FK | Estado | Motivo |
+|----|--------|--------|
+| `MedicalRecord.pet` | **PROTECT** (era CASCADE) | NOM-046 retencion 5 anos de expediente clinico |
+| `VaccineRecord.pet` | **PROTECT** (era CASCADE) | NOM-007/046 retencion vacunal |
+| `MedicalRecord.veterinarian` | SET_NULL (sin cambio) | Permite borrado de usuarios; snapshot `vet_name_at_close` es deuda Fase 2 A7 |
+| `MedicalRecord.appointment` | SET_NULL (sin cambio) | Cita puede purgarse; expediente sobrevive |
+| `MedicalRecordProduct.medical_record` | CASCADE (sin cambio) | Producto consumido pertenece a la consulta — sin MR pierde semantica |
+| `MedicalRecordService.medical_record` | CASCADE (sin cambio) | Igual que producto |
+| `VitalSigns.medical_record` | CASCADE (sin cambio) | Subrecurso del MR — append-only pero vida atada al padre |
+
+Comportamiento DELETE actual:
+- `DELETE /api/medical-records/<uuid>/` con prescriptions/invoices/vitales asociadas → bloqueado por guard `medical_record_has_clinical_content` (403 antes de tocar PROTECT) o **409 Conflict** del handler global si PROTECT dispara.
+- `DELETE /api/vaccines/<id>/` → **405 Method Not Allowed** (removido en PR-4B).
 
 ## Frontend — patron de submit
 
@@ -525,5 +573,8 @@ Eventos relevantes en logs (`medical_records.events`):
 - `MEDICAL_RECORD_OWNERSHIP_DENIED`
 - `MEDICAL_RECORD_CLOSED_DENIED`
 - `VITAL_SIGNS_CREATED` (INFO) — emitido por `VitalSignsListCreateView.perform_create`
+
+Eventos analytics (logger separado `analytics.events`):
+- `ANCHOR_LATE_ARRIVAL` (WARNING) — emitido por `_warn_if_late_closed_at` cuando `closed_at` cae en un bucket frozen (ADR p17 — Día 5)
 
 Estos eventos permiten auditar intentos de mutacion sobre consultas fuera de policy y el registro de vitales.

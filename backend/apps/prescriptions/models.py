@@ -17,7 +17,7 @@ class Prescription(PublicIdMixin, OrganizationalModel):
     )
     pet = models.ForeignKey(
         'patients.Pet',
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         related_name='prescriptions'
     )
     notes = models.TextField(blank=True)

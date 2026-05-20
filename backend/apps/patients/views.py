@@ -32,8 +32,13 @@ class PetViewSet(PublicIdLookupMixin, TenantQueryMixin, ModelViewSet):
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
         if instance.is_generic:
+            # PR-4B: shape alineado al handler ProtectedError (code + message
+            # en lugar del legacy `error`). Status 409 ya correcto.
             return Response(
-                {"error": "No se puede eliminar el paciente genérico del sistema."},
+                {
+                    "code": "generic_resource_protected",
+                    "message": "No se puede eliminar el paciente genérico del sistema.",
+                },
                 status=status.HTTP_409_CONFLICT,
             )
         return super().destroy(request, *args, **kwargs)
@@ -61,6 +66,24 @@ class OwnerViewSet(PublicIdLookupMixin, TenantQueryMixin, ModelViewSet):
         if search:
             qs = qs.filter(name__icontains=search)[:20]
         return qs
+
+    def destroy(self, request, *args, **kwargs):
+        # PR-4B D5: guard explícito antes de llegar al PROTECT-bound DB error.
+        # El generic owner es el dummy walk-in usado por billing.services para
+        # invoices sin cliente registrado. NUNCA debe borrarse. Sin este guard,
+        # PROTECT lo bloquearía pero con un mensaje genérico de
+        # `resource_has_dependencies` — esto da un mensaje específico y
+        # accionable.
+        instance = self.get_object()
+        if instance.is_generic:
+            return Response(
+                {
+                    "code": "generic_resource_protected",
+                    "message": "No se puede eliminar el cliente genérico walk-in del sistema.",
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+        return super().destroy(request, *args, **kwargs)
 
     def perform_create(self, serializer):
         serializer.save(

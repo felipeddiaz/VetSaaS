@@ -6,6 +6,10 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Late-arrival observability (ADR p17 Día 5 — warn-only).
+# Logger dedicado para que monitoring stack consuma estos eventos sin ruido.
+_analytics_events = logging.getLogger('analytics.events')
+
 from apps.inventory.services import apply_stock_movement
 from apps.inventory.models import Presentation
 from apps.billing.money import money, discount_amount, line_subtotal
@@ -73,6 +77,41 @@ def _lock_presentations(presentation_ids):
 # Sin @transaction.atomic propio; el caller maneja la transacción.
 # ---------------------------------------------------------------------------
 
+def _warn_if_late_arrival(invoice, anchor_field, anchor_value, metric_class, writer_name):
+    """
+    Emit ANCHOR_LATE_ARRIVAL warning if the anchor falls in a frozen bucket.
+
+    Día 5 is warn-only; Día 7+ will raise LateAnchorError.
+    The ``event`` field in the extra dict is an operational contract consumed
+    by the monitoring stack — do not change its value without coordination.
+    """
+    from apps.analytics.services import is_bucket_frozen
+    from apps.core.datetime_utils import org_today_local
+
+    anchor_date_local = org_today_local(invoice.organization, now=anchor_value)
+    if not is_bucket_frozen(metric_class, anchor_date_local, invoice.organization):
+        return
+
+    today_local = org_today_local(invoice.organization)
+    age_days = (today_local - anchor_date_local).days
+    threshold = 2  # T+2 freeze window for financial_cash
+
+    _analytics_events.warning(
+        'ANCHOR_LATE_ARRIVAL',
+        extra={
+            'event': 'ANCHOR_LATE_ARRIVAL',
+            'anchor_field': anchor_field,
+            'anchor_value_iso': anchor_value.isoformat(),
+            'bucket_date_local_iso': anchor_date_local.isoformat(),
+            'frozen_threshold_days': threshold,
+            'age_days': age_days,
+            'organization_id': invoice.organization_id,
+            'writer': writer_name,
+            'metric_class': metric_class,
+        },
+    )
+
+
 def _confirm_locked_invoice(invoice, user):
     """
     Confirma una factura que YA está lockeada con select_for_update().
@@ -136,6 +175,8 @@ def _confirm_locked_invoice(invoice, user):
         'status', 'confirmed_at', 'confirmed_at_source', 'updated_at',
     ])
     _log_status_change(invoice, previous='draft', new='confirmed', user=user)
+    _warn_if_late_arrival(invoice, 'confirmed_at', invoice.confirmed_at,
+                          'financial_cash', 'confirm_invoice')
 
 
 def _pay_locked_invoice(invoice, user, payment_method):
@@ -162,6 +203,8 @@ def _pay_locked_invoice(invoice, user, payment_method):
         'status', 'payment_method', 'paid_at', 'paid_at_source', 'updated_at',
     ])
     _log_status_change(invoice, previous=previous_status, new='paid', user=user)
+    _warn_if_late_arrival(invoice, 'paid_at', invoice.paid_at,
+                          'financial_cash', 'pay_invoice')
     return invoice
 
 
@@ -225,6 +268,8 @@ def cancel_invoice(invoice, user, notes=''):
         'status', 'cancelled_at', 'cancelled_at_source', 'updated_at',
     ])
     _log_status_change(invoice, previous=previous_status, new='cancelled', user=user, notes=notes)
+    _warn_if_late_arrival(invoice, 'cancelled_at', invoice.cancelled_at,
+                          'financial_cash', 'cancel_invoice')
 
 
 @transaction.atomic

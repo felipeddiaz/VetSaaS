@@ -16,6 +16,12 @@ from apps.core.datetime_utils import (
     org_today_local,
 )
 from apps.core.permissions import make_permission
+from apps.analytics.services import (
+    _analytics_queryset,
+    _provenance_breakdown,
+    ANCHOR_REGISTRY,
+)
+from apps.analytics.models import METRICS_SCHEMA_VERSION
 from apps.medical_records.models import MedicalRecord
 from apps.appointments.models import Appointment
 
@@ -43,15 +49,6 @@ class IsAdminSaaS(permissions.BasePermission):
         )
 
 
-def _provenance_dist(model, source_field, org_filter):
-    agg = (
-        model.objects.filter(org_filter)
-        .values(source_field)
-        .annotate(c=Count('id'))
-    )
-    return {row[source_field]: row['c'] for row in agg}
-
-
 def _trust_score(provenance, invariant_violations, unresolved_count):
     """Compute single-letter trust score per the audit doc convention."""
     if invariant_violations > 0:
@@ -69,6 +66,13 @@ def _trust_score(provenance, invariant_violations, unresolved_count):
     if legacy > 0:
         return 'B'
     return 'A'
+
+
+def _resolve_model(dotted):
+    """Resolve 'app_label.ModelName' → model class."""
+    from django.apps import apps
+    app_label, model_name = dotted.split('.')
+    return apps.get_model(app_label, model_name)
 
 
 @api_view(['GET'])
@@ -109,31 +113,41 @@ def analytics_health(request):
     decay_cutoff = now - timedelta(days=LEGACY_DECAY_THRESHOLD_DAYS)
 
     anchors = {
-        'invoice.paid_at': _provenance_dist(Invoice, 'paid_at_source', org_filter),
-        'invoice.confirmed_at': _provenance_dist(Invoice, 'confirmed_at_source', org_filter),
-        'invoice.cancelled_at': _provenance_dist(Invoice, 'cancelled_at_source', org_filter),
-        'medicalrecord.closed_at': _provenance_dist(MedicalRecord, 'closed_at_source', org_filter),
+        f"{spec.model.split('.')[1].lower()}.{spec.anchor_field}":
+            _provenance_breakdown(
+                _analytics_queryset(
+                    _resolve_model(spec.model)
+                ).filter(org_filter),
+                spec.source_field,
+            )
+        for spec in ANCHOR_REGISTRY
     }
 
     invariants = {
         'invoice.paid_status_requires_paid_at':
-            Invoice.objects.filter(org_filter, status='paid', paid_at__isnull=True).count(),
+            _analytics_queryset(Invoice).filter(
+                org_filter, status='paid', paid_at__isnull=True,
+            ).count(),
         'invoice.confirmed_status_requires_confirmed_at':
-            Invoice.objects.filter(
+            _analytics_queryset(Invoice).filter(
                 org_filter, status__in=['confirmed', 'paid'], confirmed_at__isnull=True,
             ).count(),
         'invoice.cancelled_status_requires_cancelled_at':
-            Invoice.objects.filter(org_filter, status='cancelled', cancelled_at__isnull=True).count(),
+            _analytics_queryset(Invoice).filter(
+                org_filter, status='cancelled', cancelled_at__isnull=True,
+            ).count(),
         'medicalrecord.closed_status_requires_closed_at':
-            MedicalRecord.objects.filter(org_filter, status='closed', closed_at__isnull=True).count(),
+            _analytics_queryset(MedicalRecord).filter(
+                org_filter, status='closed', closed_at__isnull=True,
+            ).count(),
     }
 
-    unresolved = Invoice.objects.filter(
+    unresolved = _analytics_queryset(Invoice).filter(
         org_filter & (Q(confirmed_at_source='unresolved') | Q(cancelled_at_source='unresolved'))
     ).count()
 
     walk_in_suspect = (
-        Appointment.objects
+        _analytics_queryset(Appointment)
         .filter(org_filter, walk_in=False, status__in=['in_progress', 'done'])
         .exclude(status_changes__from_status='scheduled')
         .distinct()
@@ -145,13 +159,12 @@ def analytics_health(request):
     fallback_warnings = []
 
     decay_specs = [
-        (Invoice, 'paid_at_source', 'paid_at', 'invoice.paid_at'),
-        (Invoice, 'confirmed_at_source', 'confirmed_at', 'invoice.confirmed_at'),
-        (Invoice, 'cancelled_at_source', 'cancelled_at', 'invoice.cancelled_at'),
-        (MedicalRecord, 'closed_at_source', 'closed_at', 'medicalrecord.closed_at'),
+        (_resolve_model(spec.model), spec.source_field, spec.anchor_field,
+         f"{spec.model.split('.')[1].lower()}.{spec.anchor_field}")
+        for spec in ANCHOR_REGISTRY
     ]
     for model, src_field, anchor_field, label in decay_specs:
-        legacy_qs = model.objects.filter(org_filter, **{src_field: 'legacy'})
+        legacy_qs = _analytics_queryset(model).filter(org_filter, **{src_field: 'legacy'})
         legacy_count = legacy_qs.count()
         if legacy_count == 0:
             continue
@@ -309,10 +322,10 @@ MISSING_DAY_DEFAULTS = {
 }
 
 
-def _parse_range(request, org):
+def _parse_range(request, org, *, now=None):
     """Parse ?from / ?to / ?include_today. Returns (from_date, to_date,
     include_today) or raises ValueError with a human-readable message."""
-    today = org_today_local(org)
+    today = org_today_local(org, now=now)
     raw_to = request.query_params.get('to')
     raw_from = request.query_params.get('from')
     include_today = request.query_params.get('include_today', 'true').lower() != 'false'
@@ -343,7 +356,7 @@ def _parse_range(request, org):
     return from_date, to_date, include_today
 
 
-def _build_series(org, from_date, to_date, fields, include_today):
+def _build_series(org, from_date, to_date, fields, include_today, *, now=None):
     """
     Build the series of (bucket_date → datapoint) for the given inclusive
     range. Snapshots fill historical days. Today is computed live (if
@@ -352,7 +365,7 @@ def _build_series(org, from_date, to_date, fields, include_today):
     from apps.analytics.models import DailyOrgMetrics, LIFECYCLE_CORRUPT
     from apps.analytics.services import compute_daily_metrics
 
-    today = org_today_local(org)
+    today = org_today_local(org, now=now)
 
     # Pull all non-corrupt snapshots in range. Skip today (snapshots never
     # cover today by service rule).
@@ -391,7 +404,7 @@ def _build_series(org, from_date, to_date, fields, include_today):
 
     today_payload = None
     if include_today and from_date <= today <= to_date:
-        live = compute_daily_metrics(org, today)
+        live = compute_daily_metrics(org, today, now=now)
         today_payload = {
             'bucket_date': today,
             'source': 'live',
@@ -435,8 +448,11 @@ def _series_endpoint(request, fields, permission_check):
     if request.user.organization is None:
         raise PermissionDenied("User has no organization assigned.")
     permission_check(request.user)
+    now = timezone.now()
     try:
-        from_date, to_date, include_today = _parse_range(request, request.user.organization)
+        from_date, to_date, include_today = _parse_range(
+            request, request.user.organization, now=now,
+        )
     except ValueError as exc:
         return Response(
             {'detail': str(exc),
@@ -445,6 +461,7 @@ def _series_endpoint(request, fields, permission_check):
         )
     series, today_payload = _build_series(
         request.user.organization, from_date, to_date, fields, include_today,
+        now=now,
     )
 
     notes = []
@@ -523,6 +540,26 @@ def _cache_key(org_id):
 @api_view(['GET'])
 @permission_classes([make_permission('dashboard.summary')])
 def dashboard_summary(request):
+    """
+    Operational dashboard payload — 100%% live point-in-time.
+
+    /dashboard/summary/ does NOT currently expose temporal-bucketed KPIs
+    (revenue, appointments, medical_records_closed). If temporal KPIs are
+    added in the future, they MUST be delegated to
+    apps.analytics.compute_daily_metrics.
+
+    Point-in-time live aggregates currently exposed: in_progress_now,
+    pending_today, low_stock_count, patients_today, ar_outstanding (ADMIN
+    only), waiting_room, backlog, stock_alerts.
+
+    This endpoint is NOT a source of truth for financial reporting or
+    analytical queries. For audited or historical financial data, use:
+      - /dashboard/financial/series/    (snapshots + today via analytics)
+      - /dashboard/operations/series/   (idem)
+
+    Adding new KPIs to this endpoint that are NOT pre-declared as live-only
+    in dashboard-metrics-contract.md §3 requires an ADR.
+    """
     user = request.user
     org = user.organization
     if org is None:
@@ -648,6 +685,8 @@ def dashboard_summary(request):
         })
 
     payload = {
+        'metrics_schema_version': METRICS_SCHEMA_VERSION,
+        'source': 'live_summary',
         'kpis': kpis,
         'timeline': slots,
         'waiting_room': waiting_room,

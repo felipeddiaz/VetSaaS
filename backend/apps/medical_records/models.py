@@ -17,7 +17,7 @@ class MedicalRecord(PublicIdMixin, OrganizationalModel):
         SURGERY   = 'surgery',   'Cirugía'
         EMERGENCY = 'emergency', 'Emergencia'
 
-    pet = models.ForeignKey(Pet, on_delete=models.CASCADE, related_name='medical_records')
+    pet = models.ForeignKey(Pet, on_delete=models.PROTECT, related_name='medical_records')
     veterinarian = models.ForeignKey(User, on_delete=models.SET_NULL, related_name='medical_records', null=True, blank=True)
     appointment = models.ForeignKey("appointments.Appointment", on_delete=models.SET_NULL, null=True, blank=True, related_name='medical_record')
 
@@ -123,7 +123,7 @@ class VaccineRecord(OrganizationalModel):
     STATUS_OVERDUE = 'overdue'
     STATUS_NO_SCHEDULED = 'no_scheduled'
 
-    pet = models.ForeignKey(Pet, on_delete=models.CASCADE, related_name='vaccine_records')
+    pet = models.ForeignKey(Pet, on_delete=models.PROTECT, related_name='vaccine_records')
     vaccine_name = models.CharField(max_length=255)
     application_date = models.DateField()
     next_due_date = models.DateField(null=True, blank=True)

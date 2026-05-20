@@ -76,9 +76,26 @@ This contract spells each one in its native module. Do not normalize across modu
 All monetary fields are `DECIMAL(12, 2)` MXN. No multi-currency in v1. Sums use
 `Coalesce(Sum(...), Decimal('0'))` so empty result sets return `0.00`, never `None`.
 
-### 2.6 Soft-deleted / archived rows
-v1 does not have soft delete. If `is_active` or similar flags are added, every metric
-must be re-stated explicitly (default policy: exclude inactive).
+### 2.6 Visibility policy (analytics-side reads)
+
+v1 defines an explicit `ANALYTICS_VISIBILITY` registry in `apps/analytics/services.py`
+that governs which rows analytics computations see (Issue #14, ADR p17 Día 5).
+
+The registry maps model → policy enum:
+
+| Model | Policy | Manager used | Rationale |
+|-------|--------|-------------|-----------|
+| `billing.Invoice` | `historical` | `all_objects` | Revenue/AR metrics must count all invoices including soft-deleted. A voided invoice (future) should not silently disappear from historical revenue. |
+| `medical_records.MedicalRecord` | `historical` | `all_objects` | Clinical activity counts must include all records. |
+| `appointments.Appointment` | `historical` | `all_objects` | Appointment counts must include all appointments. |
+| `medical_records.VaccineRecord` | `historical` | `all_objects` | Vaccine records are permanent clinical data. |
+
+Future policies require ADR + impact analysis + PO sign-off (§4.2 gobernanza).
+`historical_excluding_voided` is planned when `Invoice.voided_at` exists — it will
+NOT be silently added without governance.
+
+**Constraint:** `Model.objects` (TenantManager, filters `is_active=True`) is NEVER
+used for analytics reads. Always resolve via `_analytics_queryset(model_cls)`.
 
 ### 2.7 Event authority
 
@@ -94,7 +111,7 @@ Authoritative writers (current state — annotated against real schema):
 | `Invoice.confirmed_at` | `billing/services.py::confirm_invoice`, `pay_direct_sale` | billing | ✅ Column exists. Two writers, both in `services.py`. |
 | `Invoice.paid_at` | `billing/services.py::pay_invoice`, `pay_direct_sale` | billing | ✅ Column exists. Two writers, both in `services.py`. `pay_direct_sale` escribe `confirmed_at` + `paid_at` atomicamente. |
 | `Invoice.cancelled_at` | `billing/services.py::cancel_invoice` | billing | ✅ Column exists. Writer in `services.py`. |
-| `MedicalRecord.closed_at` | `medical_records/views.py::close_medical_record` | medical_records | ✅ Column exists, writer is canonical. CHECK constraint active (M16). |
+| `MedicalRecord.closed_at` | `medical_records/views.py::close_medical_record` | medical_records | ⚠️ Writer is in views.py, not services.py (ADR p9 violation). CHECK constraint active (M16). Late-arrival observability added in Día 5 as temporary bridge. Migration to `medical_records/services.py::close_medical_record_service()` pending (Día 7+). |
 | `Appointment.done_at` | not stored — derived from `AppointmentStatusChange.created_at` | appointments | ✅ Acceptable per §3.2.2 (anchor on `start_datetime` instead). |
 | `VaccineRecord.application_date` | model write at create | medical_records | ✅ DateField, daily granularity. |
 | `Appointment` cancel transition | `appointments/views.py::update_status` | appointments | ⚠️ `destroy()` bypasses `update_status`. Pending fix C3. |
@@ -154,8 +171,15 @@ bucket. This happens during:
 - Admin manual correction of a timestamp.
 - Backdated data entry.
 
-Default policy: **rejected at the writer**. The authoritative service refuses to set an
-anchor in a frozen bucket. The writer raises `LateAnchorError` which the API layer maps
+**Día 5 (current): WARN-only.** Every anchor writer emits a structured
+`ANCHOR_LATE_ARRIVAL` warning log (logger `analytics.events`, level `WARNING`)
+with fields: `event`, `anchor_field`, `anchor_value_iso`, `bucket_date_local_iso`,
+`frozen_threshold_days`, `age_days`, `organization_id`, `writer`, `metric_class`.
+The write is NOT blocked. The `event` field is an operational contract — the
+monitoring stack consumes it.
+
+**Día 7+ (planned): Hard reject.** The authoritative service will refuse to set an
+anchor in a frozen bucket, raising `LateAnchorError` which the API layer maps
 to HTTP 400 with `meta.frozen_bucket_date` populated.
 
 Override: a management command `import_with_backdated_anchors --org=X --allow-frozen
@@ -170,6 +194,16 @@ normal flow — no override needed.
 ---
 
 ## 3. Metric catalog
+
+> **Note on `/dashboard/summary/` (ADR p17 Día 5):** The `/api/v1/dashboard/summary/`
+> endpoint is an operational dashboard payload, NOT an analytics API. Metrics marked
+> "live-only" below are computed directly by the summary endpoint. Temporal KPIs that
+> the summary exposes (revenue, appointments, medical_records_closed for today) are
+> **derived** from `apps.analytics.services.compute_daily_metrics(today)`. For audited
+> or historical financial data, use `/dashboard/financial/series/` and
+> `/dashboard/operations/series/`. Any frontend consuming the summary for financial
+> reporting does so at its own risk — the summary contract may evolve independently.
+> Modifications to the summary that break this policy require an ADR.
 
 Each metric block follows the same shape:
 

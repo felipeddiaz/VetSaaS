@@ -22,6 +22,7 @@ Covers the rules the user explicitly asked to validate:
 """
 from datetime import date, datetime, time, timedelta, timezone as dt_timezone
 from decimal import Decimal
+import unittest
 
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError
@@ -31,6 +32,7 @@ from django.utils import timezone
 from apps.analytics.models import (
     DailyOrgMetrics, DashboardSnapshotAudit,
     LIFECYCLE_CORRUPT, LIFECYCLE_FROZEN, LIFECYCLE_PROVISIONAL, LIFECYCLE_REBUILT,
+    METRICS_SCHEMA_VERSION,
 )
 from apps.analytics.services import (
     TODAY_REJECTED, V1_TABLE_FREEZE_DAYS,
@@ -369,3 +371,96 @@ class ProvenanceMixTests(_SnapshotFixtureMixin, TestCase):
         # Service-written invoice → at least one 'service' entry.
         paid_mix = snap.provenance_mix['paid_at']
         self.assertGreaterEqual(paid_mix.get('service', 0), 1)
+
+
+class SoftDeleteVisibilityTests(_SnapshotFixtureMixin, TestCase):
+    """T1 & T2: ANALYTICS_VISIBILITY 'historical' uses all_objects,
+    so soft-deleted (is_active=False) rows are still counted in snapshots."""
+
+    def test_snapshot_includes_soft_deleted_invoice_rows(self):
+        """T1: revenue_paid includes soft-deleted (is_active=False) invoices."""
+        day = date(2026, 5, 7)
+        inv = self._paid_invoice_on(day)
+        # Soft-delete via direct queryset update (bypasses save())
+        Invoice.objects.filter(pk=inv.pk).update(is_active=False)
+        inv.refresh_from_db()
+        self.assertFalse(inv.is_active)
+
+        metrics = compute_daily_metrics(self.org, day)
+        self.assertEqual(metrics['invoices_paid_count'], 1,
+                         "Soft-deleted paid invoice must be counted")
+        self.assertGreater(metrics['revenue_paid'], Decimal('0.00'),
+                           "Soft-deleted paid invoice must contribute to revenue")
+
+    def test_snapshot_includes_soft_deleted_mr_rows(self):
+        """T2: medical_records_closed counts soft-deleted (is_active=False)
+        medical records."""
+        day = date(2026, 5, 7)
+        mr = MedicalRecord.objects.create(
+            pet=self.pet, veterinarian=self.user, organization=self.org,
+            status='closed',
+            closed_at=_utc_dt(day.year, day.month, day.day, 12),
+            closed_at_source='service',
+            diagnosis='Test diagnosis',
+            treatment='Test treatment',
+        )
+        # Soft-delete via direct queryset update
+        MedicalRecord.objects.filter(pk=mr.pk).update(is_active=False)
+        mr.refresh_from_db()
+        self.assertFalse(mr.is_active)
+
+        metrics = compute_daily_metrics(self.org, day)
+        self.assertEqual(metrics['medical_records_closed'], 1,
+                         "Soft-deleted closed MR must be counted")
+
+
+class ReplayParityTests(_SnapshotFixtureMixin, TestCase):
+    """T3: Historical replay parity — the GATE test.
+    For a frozen bucket, snapshot values MUST be bit-exact equal to a live
+    recompute."""
+
+    def test_historical_replay_parity(self):
+        # 5 paid invoices 3 days ago (frozen under T+2 freeze window)
+        day = date(2026, 5, 7)
+        now = _utc_dt(2026, 5, 10, 12)  # T+3 — bucket is frozen
+
+        for _ in range(5):
+            self._paid_invoice_on(day)
+
+        # Apply snapshot (will be frozen since T+3 > T+2 threshold)
+        snap = apply_snapshot(self.org, day, now=now)
+
+        # Assert frozen
+        self.assertEqual(snap.lifecycle_state, LIFECYCLE_FROZEN)
+
+        # Live recompute
+        live = compute_daily_metrics(self.org, day)
+
+        # Bit-exact comparison of ALL value fields
+        self.assertEqual(snap.revenue_paid, live['revenue_paid'])
+        self.assertEqual(snap.revenue_accrual, live['revenue_accrual'])
+        self.assertEqual(snap.invoices_paid_count, live['invoices_paid_count'])
+        self.assertEqual(snap.appointments_total, live['appointments_total'])
+        self.assertEqual(snap.appointments_done, live['appointments_done'])
+        self.assertEqual(snap.appointments_no_show, live['appointments_no_show'])
+        self.assertEqual(snap.medical_records_closed, live['medical_records_closed'])
+        self.assertEqual(snap.excluded_anchor_missing, live['excluded_anchor_missing'])
+        self.assertEqual(snap.provenance_mix, live['provenance_mix'])
+
+        # Schema version matches constant
+        self.assertEqual(snap.metrics_schema_version, METRICS_SCHEMA_VERSION)
+
+        # Lifecycle state coherent with is_bucket_frozen
+        self.assertTrue(is_bucket_frozen('v1_table', day, self.org, now=now))
+        self.assertEqual(snap.lifecycle_state, LIFECYCLE_FROZEN)
+
+
+class VisibilityPolicyFutureProofTests(TestCase):
+    """T14: Visibility policy future-proof placeholder."""
+
+    @unittest.skip("Placeholder for historical_excluding_voided policy (ADR required)")
+    def test_visibility_excludes_voided_when_policy_is_excluding_voided(self):
+        """When ANALYTICS_VISIBILITY gains a 'historical_excluding_voided'
+        policy, verify that voided rows (is_active=False with voided_at)
+        are excluded from analytics counts."""
+        pass

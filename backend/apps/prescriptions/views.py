@@ -34,11 +34,16 @@ class PrescriptionListCreateView(TenantQueryMixin, generics.ListCreateAPIView):
         )
 
 
-class PrescriptionDetailView(PublicIdLookupMixin, TenantQueryMixin, generics.RetrieveUpdateDestroyAPIView):
+class PrescriptionDetailView(PublicIdLookupMixin, TenantQueryMixin, generics.RetrieveUpdateAPIView):
+    """PR-4B / ADR p16: DELETE removido por consistencia con motivación
+    NOM-046 que justificó Prescription.pet PROTECT. La receta es documento
+    legal entregado al paciente — borrarla destruye trazabilidad
+    farmacológica. Para anular, PATCH notes o cancelar via UI separado."""
     serializer_class = PrescriptionSerializer
     permission_classes = [HybridPermission]
     resource_name = "prescription"
     lookup_url_kwarg = 'pk'
+    http_method_names = ['get', 'patch', 'head', 'options']
 
     def get_queryset(self):
         return Prescription.objects.for_organization(self.request.user.organization)

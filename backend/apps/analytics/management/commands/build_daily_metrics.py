@@ -36,6 +36,7 @@ import traceback
 from datetime import datetime, timedelta
 
 from django.core.management.base import BaseCommand, CommandError
+from django.utils import timezone
 
 from apps.analytics.services import TODAY_REJECTED, apply_snapshot
 from apps.core.datetime_utils import org_today_local
@@ -60,10 +61,19 @@ class Command(BaseCommand):
                             help='Restrict to a single organization id.')
         parser.add_argument('--force', action='store_true',
                             help='Rebuild rows whose lifecycle_state is frozen.')
+        parser.add_argument('--mock-now', type=str, default=None,
+                            help=(
+                                'Inject a fixed "now" ISO timestamp for deterministic '
+                                'replays. ONLY available under DEBUG=True or pytest. '
+                                'Format: YYYY-MM-DDTHH:MM:SS±HH:MM'
+                            ))
 
     def handle(self, *args, **opts):
         if opts['date'] and (opts['date_from'] or opts['date_to']):
             raise CommandError("Use --date OR --from/--to, not both.")
+
+        # Capture now ONCE — threaded through entire chain for determinism (ADR p17 #17).
+        now = self._resolve_now(opts.get('mock_now'))
 
         orgs = (
             Organization.objects.filter(pk=opts['org'])
@@ -90,11 +100,12 @@ class Command(BaseCommand):
                 'from': opts['date_from'],
                 'to': opts['date_to'],
                 'force': opts['force'],
+                'mock_now': now.isoformat() if opts.get('mock_now') else None,
             },
         )
 
         for org in orgs:
-            self._process_org(org, opts, run_summary)
+            self._process_org(org, opts, run_summary, now=now)
 
         run_summary['duration_seconds'] = round(time.monotonic() - run_started, 2)
         logger.info("DASH_BUILD_RUN_COMPLETED", extra=run_summary)
@@ -103,11 +114,20 @@ class Command(BaseCommand):
             f"Run summary: {run_summary}"
         ))
 
-        # Non-zero exit if any org failed — cron alert can wire on this.
         if run_summary['orgs_failed'] > 0:
             sys.exit(2)
 
-    def _process_org(self, org, opts, run_summary):
+    def _resolve_now(self, mock_now_str):
+        from django.conf import settings
+        if mock_now_str:
+            if not (settings.DEBUG or 'pytest' in sys.modules):
+                raise CommandError(
+                    "--mock-now is only available under DEBUG=True or pytest."
+                )
+            return datetime.fromisoformat(mock_now_str)
+        return timezone.now()
+
+    def _process_org(self, org, opts, run_summary, *, now):
         lock_key = hash_lock_key('analytics', 'build_daily_metrics', 'org', org.pk)
         org_started = time.monotonic()
         try:
@@ -122,13 +142,13 @@ class Command(BaseCommand):
                         f"  org={org.pk} skipped — advisory lock busy"
                     ))
                     return
-                dates = self._dates_for(org, opts)
+                dates = self._dates_for(org, opts, now=now)
                 logger.info(
                     "DASH_BUILD_ORG_STARTED",
                     extra={'organization_id': org.pk, 'days': len(dates)},
                 )
                 for d in dates:
-                    self._build_one(org, d, opts, run_summary)
+                    self._build_one(org, d, opts, run_summary, now=now)
         except Exception:
             run_summary['orgs_failed'] += 1
             logger.exception(
@@ -152,9 +172,9 @@ class Command(BaseCommand):
             },
         )
 
-    def _build_one(self, org, d, opts, run_summary):
+    def _build_one(self, org, d, opts, run_summary, *, now):
         try:
-            snap = apply_snapshot(org, d, force=opts['force'])
+            snap = apply_snapshot(org, d, force=opts['force'], now=now)
             run_summary['snapshots_built'] += 1
             self.stdout.write(self.style.SUCCESS(
                 f"  org={org.pk} date={d.isoformat()} "
@@ -167,7 +187,7 @@ class Command(BaseCommand):
                 f"  skipped today: {e}"
             ))
 
-    def _dates_for(self, org, opts):
+    def _dates_for(self, org, opts, *, now):
         if opts['date']:
             return [self._parse(opts['date'])]
         if opts['date_from'] or opts['date_to']:
@@ -180,7 +200,7 @@ class Command(BaseCommand):
             days = (end - start).days
             return [start + timedelta(days=i) for i in range(days + 1)]
         # Default: yesterday per org-local TZ.
-        today = org_today_local(org)
+        today = org_today_local(org, now=now)
         return [today - timedelta(days=1)]
 
     def _parse(self, s):

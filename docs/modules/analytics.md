@@ -56,11 +56,15 @@ v1 usa `'v1_table'` clase con T+2 conservador. `now=` injectable para tests.
 Nunca duplicar esta logica en otro lugar — DST, rebuilds, late imports
 y TZ changes deben pasar por una sola funcion.
 
-### `compute_daily_metrics(organization, bucket_date)`
+### `compute_daily_metrics(organization, bucket_date, *, now=None)`
 
 **Pure**. No writes. Retorna dict con los 7 KPIs + `excluded_anchor_missing`
 + `provenance_mix`. Usado tanto por el snapshot job como por el read endpoint
 para computar today (consistencia matematica).
+
+Usa `_analytics_queryset(model_cls)` para resolver el manager correcto segun
+`ANALYTICS_VISIBILITY` (Issue #14). `now=` es injectable por simetria — el
+calculo en si no depende de `now`.
 
 ### `apply_snapshot(organization, bucket_date, *, force=False, user=None, now=None)`
 
@@ -214,9 +218,97 @@ Agregar un KPI al snapshot row:
 Agregar un anchor temporal nuevo:
 1. Migration con columna + provenance source field + CHECK constraint.
 2. Authoritative writer en `services.py` del modulo dueño.
-3. Test bulk-bypass resistance.
-4. Actualizar `audit_anchor_integrity` y `/analytics-health/`.
-5. Ver ADR `2026-05-09-p9` para el patron completo.
+3. Agregar entrada en `ANCHOR_REGISTRY` (ver abajo).
+4. Test bulk-bypass resistance.
+5. Actualizar `audit_anchor_integrity` y `/analytics-health/`.
+6. Ver ADR `2026-05-09-p9` para el patron completo.
+
+## ANALYTICS_VISIBILITY (ADR p17 Día 5)
+
+Registry estático en `apps/analytics/services.py` que declara, por modelo,
+qué política de visibilidad aplica para lecturas analytics:
+
+```python
+ANALYTICS_VISIBILITY = {
+    'billing.Invoice':                'historical',
+    'medical_records.MedicalRecord':  'historical',
+    'appointments.Appointment':       'historical',
+    'medical_records.VaccineRecord':  'historical',
+}
+```
+
+Helper `_analytics_queryset(model_cls)` resuelve el manager según la política.
+`compute_daily_metrics` y `analytics_health` usan este helper en vez de
+`Model.objects` directamente.
+
+**Gobernanza (BINDING, ver ADR p17):**
+- Modificaciones requieren ADR + impact analysis + PO sign-off si afecta métricas financieras.
+- Prohibido: lambdas, callables, query-builders, dynamic imports, plugin hooks.
+- Cada nueva policy enum requiere ADR formal.
+
+**Constraints duras:**
+- Solo metadata estática (strings, enums, ints).
+- NO fusionar con `ANCHOR_REGISTRY` — son constantes separadas con dominios distintos.
+
+## ANCHOR_REGISTRY (ADR p17 Día 5)
+
+Constante estática `tuple` de `AnchorSpec` frozen dataclasses que describe
+cada anchor temporal usado por analytics:
+
+```python
+@dataclass(frozen=True)
+class AnchorSpec:
+    model: str               # 'billing.Invoice'
+    anchor_field: str        # 'paid_at'
+    source_field: str        # 'paid_at_source'
+    status_filter: dict      # {'status': 'paid'}
+    metric_class: str        # 'financial_cash'
+```
+
+`compute_daily_metrics`, `analytics_health` y `audit_anchor_integrity` derivan
+sus listas de anchors de aqui. Reemplaza los arrays paralelos duplicados.
+
+Constraints duras identicas a `ANALYTICS_VISIBILITY`:
+- Metadata estática. Sin callables. Sin runtime registration.
+- Agregar entrada nueva: ADR + analisis de impacto.
+
+## `now` policy (ADR p17 Día 5)
+
+`timezone.now()` se llama UNA vez en el entry point (mgmt command o HTTP view).
+Helpers internos (`is_bucket_frozen`, `compute_daily_metrics`, `apply_snapshot`,
+`_dates_for`, `org_today_local`) reciben `now` como parametro explícito.
+Nunca re-leen `timezone.now()` internamente.
+
+Esto garantiza:
+- Builds de 100 orgs que cruzan midnight usan el mismo `now` para todas.
+- Replays deterministas: mismo `--mock-now` → mismo resultado.
+- Tests no flaky cerca de medianoche.
+
+## Late-arrival observability (ADR p17 Día 5)
+
+Cada writer autoritativo de anchor emite un log estructurado `ANCHOR_LATE_ARRIVAL`
+(logger `analytics.events`, level `WARNING`) cuando el anchor cae en un bucket
+frozen. Writers cubiertos en Día 5:
+
+| Writer | Anchor | Ubicación |
+|--------|--------|-----------|
+| `confirm_invoice` / `pay_direct_sale` | `confirmed_at` | `billing/services.py` |
+| `pay_invoice` / `pay_direct_sale` | `paid_at` | `billing/services.py` |
+| `cancel_invoice` | `cancelled_at` | `billing/services.py` |
+| `close_medical_record` | `closed_at` | `medical_records/views.py` ⚠️ (ADR p9 violation temporal) |
+
+Contrato del log (campos `extra` requeridos):
+- `event='ANCHOR_LATE_ARRIVAL'` (contrato operacional para monitoring)
+- `anchor_field`, `anchor_value_iso`, `bucket_date_local_iso`
+- `frozen_threshold_days`, `age_days`, `organization_id`, `writer`, `metric_class`
+
+Día 5 = warn-only. Hard reject (`LateAnchorError`) → Día 7+.
+
+El log para `closed_at` se emite desde `medical_records/views.py::close_medical_record`
+a través del helper module-level `_warn_if_late_closed_at(organization, closed_at)`.
+La extracción a helper habilita testabilidad directa (T8 llama el helper de producción —
+sin inline-clone). Migrará a `medical_records/services.py::close_medical_record_service()`
+cuando ese service exista (ADR p9 compliance).
 
 ## Prohibido
 
